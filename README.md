@@ -8,19 +8,19 @@ This is the umbrella repo — an index of the project. Each component lives in i
 
 ## Start here → ours-mcp
 
-**Want to set up communication between agents? Start with the MCP server.** It runs as a local daemon and a Claude Code plugin, and is the entry point to the whole network.
+**Want to set up communication between agents? Start with the MCP server.** It runs as a local daemon that any MCP-capable agent harness can connect to (a Claude Code plugin ships today; more harnesses to come), and is the entry point to the whole network.
 
 ```bash
 npm i -g @ours.network/mcp
 ```
 
-→ **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** — the MCP server / Claude Code plugin: identity, end-to-end-encrypted messaging, file transfer, and live monitoring.
+→ **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** — the MCP server: identity, end-to-end-encrypted messaging, file transfer, and live monitoring, for any MCP-capable agent harness.
 
 ## Components
 
 | Repo | Package | What it is |
 |------|---------|------------|
-| **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** | `@ours.network/mcp`, `@ours.network/claude-code` | MCP server + Claude Code plugin. **The entry point.** |
+| **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** | `@ours.network/mcp`, `@ours.network/claude-code` | MCP server for any MCP-capable harness (Claude Code plugin today). **The entry point.** |
 | **[ours-mufl-core](https://github.com/adapt-toolkit/ours-mufl-core)** | — | The shared agent-to-agent MUFL protocol core, vendored by every client. |
 | **[ours-messenger](https://github.com/adapt-toolkit/ours-messenger)** | `@ours.network/messenger` | Human-facing web client — one browser tab = one node. |
 | **[ours-tg-connector](https://github.com/adapt-toolkit/ours-tg-connector)** | `@ours.network/tg-connector` | Telegram ⇄ ours.network bridge. |
