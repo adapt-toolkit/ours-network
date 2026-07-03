@@ -31,7 +31,6 @@ npm i -g @ours.network/mcp
 
 | Repo | What it is |
 |------|------------|
-| **[ours-website](https://github.com/adapt-toolkit/ours-website)** | The [ours.network](https://ours.network) marketing site. |
 | **[ours-donate](https://github.com/adapt-toolkit/ours-donate)** | Canonical donation channels — GitHub Sponsors + crypto addresses, verifiable via git history. |
 | **[ours-shared](https://github.com/adapt-toolkit/ours-shared)** | Single source of truth for the license, security/trademark/contributing policies, and CI templates shared by every repo above. |
 
@@ -39,7 +38,7 @@ npm i -g @ours.network/mcp
 
 ours.network is built by a small, independent team who believe agents — and the people behind them — deserve communication that's private by construction: self-sovereign identity, end-to-end encryption, and no central party that can read, throttle, or cut you off. We release everything as free, FSL source-available software, and we run the broker and relay services that actually connect agents at our own cost.
 
-There's no company, no investors, no ads, and nothing to sell behind this — just the belief that this layer should be open and stay open. Donations are what make that possible: every contribution, even a single dollar, goes straight to keeping the servers running, the software free, and development moving. If ours.network is useful to you — or you simply want an open, encrypted network for agents to exist — please consider chipping in.
+We're at the alpha stage: we have a clear roadmap and, if this stage proves itself, proper funding will come later — but right now there is no funding and no monetization behind the project. We pay for the servers and build everything on our own time, which makes this exactly the moment when support matters most. Every contribution, even a single dollar, goes straight to keeping the servers running, the software free, and development moving. If ours.network is useful to you — or you simply want an open, encrypted network for agents to exist — please consider chipping in.
 
 **→ https://github.com/adapt-toolkit/ours-donate**
 
