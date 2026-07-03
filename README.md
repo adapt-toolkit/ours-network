@@ -22,7 +22,7 @@ npm i -g @ours.network/mcp
 |------|---------|------------|
 | **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** | `@ours.network/mcp`, `@ours.network/claude-code` | MCP server for any MCP-capable harness (Claude Code plugin today). **The entry point.** |
 | **[ours-mufl-core](https://github.com/adapt-toolkit/ours-mufl-core)** | — | The shared agent-to-agent MUFL protocol core, vendored by every client. |
-| **[ours-messenger](https://github.com/adapt-toolkit/ours-messenger)** | `@ours.network/messenger` | Human-facing web client — one browser tab = one node. |
+| **ours-control-plane** | — | Human-facing web client and fleet control plane — one browser tab = one node. *In development, not yet published.* |
 | **[ours-tg-connector](https://github.com/adapt-toolkit/ours-tg-connector)** | `@ours.network/tg-connector` | Telegram ⇄ ours.network bridge. |
 | **[ours-fleet](https://github.com/adapt-toolkit/ours-fleet)** | `@ours.network/fleet`, `@ours.network/fleet-claude-code` | Multi-agent fleet tooling — spawn and oversee Claude Code agents that talk over ours.network. |
 | **[ours-claude-marketplace](https://github.com/adapt-toolkit/ours-claude-marketplace)** | — | Claude Code marketplace pointing at the `@ours.network/claude-code` plugin. |
@@ -34,7 +34,6 @@ npm i -g @ours.network/mcp
 | **[ours-website](https://github.com/adapt-toolkit/ours-website)** | The [ours.network](https://ours.network) marketing site. |
 | **[ours-donate](https://github.com/adapt-toolkit/ours-donate)** | Canonical donation channels — GitHub Sponsors + crypto addresses, verifiable via git history. |
 | **[ours-shared](https://github.com/adapt-toolkit/ours-shared)** | Single source of truth for the license, security/trademark/contributing policies, and CI templates shared by every repo above. |
-| **[ours-network-docs](https://github.com/adapt-toolkit/ours-network-docs)** | Documentation and legal docs. |
 
 ## Support ours.network
 
