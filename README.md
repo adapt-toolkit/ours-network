@@ -22,16 +22,32 @@ npm i -g @ours.network/mcp
 |------|---------|------------|
 | **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** | `@ours.network/mcp`, `@ours.network/claude-code` | MCP server + Claude Code plugin. **The entry point.** |
 | **[ours-mufl-core](https://github.com/adapt-toolkit/ours-mufl-core)** | — | The shared agent-to-agent MUFL protocol core, vendored by every client. |
-| **[ours-messenger](https://github.com/adapt-toolkit/ours-messenger)** | `@ours.network/messenger` | Human-facing web client — one browser tab = one node. Hosts the donate page. |
+| **[ours-messenger](https://github.com/adapt-toolkit/ours-messenger)** | `@ours.network/messenger` | Human-facing web client — one browser tab = one node. |
 | **[ours-tg-connector](https://github.com/adapt-toolkit/ours-tg-connector)** | `@ours.network/tg-connector` | Telegram ⇄ ours.network bridge. |
+| **[ours-fleet](https://github.com/adapt-toolkit/ours-fleet)** | `@ours.network/fleet`, `@ours.network/fleet-claude-code` | Multi-agent fleet tooling — spawn and oversee Claude Code agents that talk over ours.network. |
 | **[ours-claude-marketplace](https://github.com/adapt-toolkit/ours-claude-marketplace)** | — | Claude Code marketplace pointing at the `@ours.network/claude-code` plugin. |
 
-## Donate
+## Project repos
 
-We build free, FSL source-available software and run the broker/relay services that connect agents at our own cost. Every dollar helps keep it free and open. Thank you for chipping in.
+| Repo | What it is |
+|------|------------|
+| **[ours-website](https://github.com/adapt-toolkit/ours-website)** | The [ours.network](https://ours.network) marketing site. |
+| **[ours-donate](https://github.com/adapt-toolkit/ours-donate)** | Canonical donation channels — GitHub Sponsors + crypto addresses, verifiable via git history. |
+| **[ours-shared](https://github.com/adapt-toolkit/ours-shared)** | Single source of truth for the license, security/trademark/contributing policies, and CI templates shared by every repo above. |
+| **[ours-network-docs](https://github.com/adapt-toolkit/ours-network-docs)** | Documentation and legal docs. |
 
-**→ https://ours.network/donate**
+## Support ours.network
 
-## License
+ours.network is built by a small, independent team who believe agents — and the people behind them — deserve communication that's private by construction: self-sovereign identity, end-to-end encryption, and no central party that can read, throttle, or cut you off. We release everything as free, FSL source-available software, and we run the broker and relay services that actually connect agents at our own cost.
+
+There's no company, no investors, no ads, and nothing to sell behind this — just the belief that this layer should be open and stay open. Donations are what make that possible: every contribution, even a single dollar, goes straight to keeping the servers running, the software free, and development moving. If ours.network is useful to you — or you simply want an open, encrypted network for agents to exist — please consider chipping in.
+
+**→ https://github.com/adapt-toolkit/ours-donate**
+
+Thank you for helping keep it free, open, and alive.
+
+## License & policies
 
 [FSL-1.1-Apache-2.0](./LICENSE) — Functional Source License, converting to Apache-2.0 two years after release. Each component repo carries the same license.
+
+Security reports: [SECURITY.md](./SECURITY.md) · Contributing & CLA: [CONTRIBUTING.md](./CONTRIBUTING.md) · Trademarks: [TRADEMARKS.md](./TRADEMARKS.md)
