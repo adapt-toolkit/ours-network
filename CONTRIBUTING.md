@@ -1,7 +1,5 @@
 # Contributing to ours.network
 
-<!-- DRAFT — finalise once the CLA is in force. Until then, repo settings must block external PRs. -->
-
 Thank you for your interest in ours.network. We welcome bug reports, feature discussion, documentation fixes, and code contributions.
 
 ## Before you start
@@ -16,7 +14,7 @@ ours.network is licensed under the Functional Source License (FSL-1.1-Apache-2.0
 
 For that model to work, Adapt Framework Solutions Ltd must hold sufficient rights in the entire codebase, including external contributions. So before we can merge your first pull request, we ask you to sign our CLA. **You keep ownership of your contribution**; you grant us a broad licence to it, including the right to include it in commercially licensed versions.
 
-We know CLAs are sometimes criticised as one-sided ("you can relicense our work; we can't relicense yours"). That asymmetry is real, and this is the honest reason for it: it is what keeps the open-source version maintained. If that trade isn't acceptable to you, we completely understand — issues, reviews, and discussion are valuable contributions that need no paperwork.
+We know CLAs are sometimes criticised as one-sided ("you can relicense our work; we can't relicense yours"). That asymmetry is real, and this is the honest reason for it: it is what keeps the source-available version maintained. If that trade isn't acceptable to you, we completely understand — issues, reviews, and discussion are valuable contributions that need no paperwork.
 
 ## Pull request guidelines
 
