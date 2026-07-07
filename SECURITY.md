@@ -1,8 +1,10 @@
 # Security Policy
 
-<!-- DRAFT — confirm the contact mailbox exists and is monitored before publication. -->
-
 ours.network is security software. We take vulnerability reports seriously and we appreciate the work of security researchers.
+
+## Disclaimer
+
+ours.network is early, alpha-stage software. It has **not** been independently security-audited. It is provided **"as is", without warranty of any kind**, and you use it **at your own risk**. See the [LICENSE](./LICENSE) for the full warranty disclaimer. Reporting a vulnerability under this policy does not create any warranty or liability on our part.
 
 ## Reporting a vulnerability
 
