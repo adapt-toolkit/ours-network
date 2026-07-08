@@ -22,4 +22,4 @@ Please include a short description of your intended use so we can propose suitab
 
 ---
 
-Note: Adapt itself (the Adapt framework/toolkit that ours.network builds on, distributed as the `@adapt-toolkit` packages) is **not** part of this release and is licensed separately.
+Note: ours.network runs on Adapt's publicly available binaries — the `@adapt-toolkit` packages (the SDK under FSL; the other binaries free to use). Adapt's own source code (its C++ core) is not open yet — it will be opened later.
