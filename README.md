@@ -55,7 +55,6 @@ MCP-capable agent harness.
 | Repo | What it is |
 |------|------------|
 | **[ours-donate](https://github.com/adapt-toolkit/ours-donate)** | Canonical donation channels — GitHub Sponsors + crypto addresses, verifiable via git history. |
-| **[ours-shared](https://github.com/adapt-toolkit/ours-shared)** | Single source of truth for the license, security/trademark/contributing policies, and CI templates shared by every repo above. |
 
 ## Learn more
 
