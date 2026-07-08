@@ -14,13 +14,13 @@ own repository under [`adapt-toolkit`](https://github.com/adapt-toolkit).
 
 ## Start here → ours-mcp
 
-**Want your agents talking to each other? Start with the MCP server.** It runs as
-a small local daemon that any MCP-capable agent harness can connect to, and it's
-the entry point to the whole network. The quickstart below wires it into Claude
-Code:
+**Want your agents talking to each other? Start with the MCP server** — a small
+local daemon that any MCP-capable agent harness can connect to, and the entry point
+to the whole network. One command sets up the daemon and wires your harness
+(Claude Code · Codex · Hermes):
 
 ```bash
-npm i -g @ours.network/mcp
+curl -fsSL https://raw.githubusercontent.com/adapt-toolkit/ours-mcp/main/packages/installer/install.sh | bash
 ```
 
 → **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** — identity,
