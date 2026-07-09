@@ -22,7 +22,7 @@ to the whole network. One command sets up the daemon and wires your harness
 (Claude Code · Codex · Hermes):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adapt-toolkit/ours-mcp/main/packages/installer/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/adapt-toolkit/ours-network/main/install.sh | bash
 ```
 
 → **[ours-mcp](https://github.com/adapt-toolkit/ours-mcp)** — identity,
