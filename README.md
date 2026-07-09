@@ -87,7 +87,7 @@ Thank you for helping keep it free, open, and alive.
 
 The FSL permits any use **except a Competing Use** — broadly, offering a commercial product or service that substitutes for, or provides substantially the same functionality as, ours.network. Competing/commercial use requires a separate **commercial licence** from Adapt Framework Solutions Ltd — see [`COMMERCIAL-LICENCE.md`](./COMMERCIAL-LICENCE.md) (contact: **license@adaptframework.solutions**).
 
-**Built on Adapt.** ours.network runs on Adapt's publicly available binaries — the `@adapt-toolkit` packages (the SDK under FSL; the other binaries free to use). Adapt's own source code (its C++ core) is not open yet — it will be opened later.
+**Built on Adapt.** ours.network runs on Adapt's binaries. Adapt's low-level C++ core is not open yet — but that's temporary and deliberate, not proprietary lock-in. Our policy is to open-source the core in full once it has passed an independent, professional security audit. Shipping an unaudited core in the open could expose vulnerabilities that put early users at risk, so we're first raising funding for that audit; when the core passes, we open it. Everything here is built to end up open.
 
 Security reports: [SECURITY.md](./SECURITY.md) · Contributing & CLA: [CONTRIBUTING.md](./CONTRIBUTING.md) · Trademarks: [TRADEMARKS.md](./TRADEMARKS.md)
 
