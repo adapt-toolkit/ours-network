@@ -19,8 +19,11 @@
 #   OURS_PORT=3050                           daemon HTTP port (default: keep the daemon's current)
 #   OURS_ASSUME_YES=1                        accept defaults; never prompt (implies no tty needed)
 #   OURS_NPM="npm"                           npm binary to use
+#   OURS_CODEX_LIVE=yes|no                   report Codex live launcher or standard mode
+#   OURS_CODEX_MARKETPLACE_SOURCE=<source>   override the Codex marketplace (testing/dev)
 #   OURS_INSTALLER_MJS=/path/install.mjs     run this Node installer directly (dev/testing)
 #   OURS_INSTALLER_BASE=<url>                base URL to download the installer file set from
+#   OURS_INSTALL_REF=<git ref>               fetch the installer from this branch/tag
 set -euo pipefail
 
 say(){ printf 'ours: %s\n' "$1"; }
@@ -67,7 +70,7 @@ fi
 CLEANUP=""
 if [ -z "$MJS" ]; then
   # Piped run: download the (small, stable) installer file set, preserving the lib/ layout.
-  BASE="${OURS_INSTALLER_BASE:-https://raw.githubusercontent.com/adapt-toolkit/ours-mcp/main/packages/installer}"
+  BASE="${OURS_INSTALLER_BASE:-https://raw.githubusercontent.com/adapt-toolkit/ours-mcp/${OURS_INSTALL_REF:-main}/packages/installer}"
   fetch(){ if command -v curl >/dev/null 2>&1; then curl -fsSL "$1"; else wget -qO- "$1"; fi; }
   TMP="$(mktemp -d)"; CLEANUP="$TMP"
   mkdir -p "$TMP/lib"
