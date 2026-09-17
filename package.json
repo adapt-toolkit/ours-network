@@ -1,0 +1,12 @@
+{
+  "name": "ours-network-workspace",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/installer"
+  ],
+  "scripts": {
+    "test": "npm test --workspace @ours.network/install",
+    "test:release": "node --test scripts/*.test.mjs"
+  }
+}

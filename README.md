@@ -98,3 +98,24 @@ The FSL permits any use **except a Competing Use** — broadly, offering a comme
 Security reports: [SECURITY.md](./SECURITY.md) · Contributing & CLA: [CONTRIBUTING.md](./CONTRIBUTING.md) · Trademarks: [TRADEMARKS.md](./TRADEMARKS.md)
 
 Copyright 2026 Adapt Framework Solutions Ltd.
+
+
+## Installer development and release ownership
+
+`packages/installer` owns `@ours.network/install` and its `ours-install` command.
+The installer source, tests, Docker/native assets and versioning now live here;
+MCP no longer bumps or publishes this package. Run `npm ci`, `npm test` and
+`npm run test:release` from this repository.
+
+The product release inputs are [stable](releases/stable.json) and
+[nightly](releases/nightly.json). A release packs one channel-matching exact
+component set into its immutable npm archive; it does not fetch mutable manifests
+from GitHub at installation time. See [release preparation](releases/README.md).
+The initial review migration has no qualified release set and intentionally
+refuses production packing/publication until these inputs are bound.
+
+Release blocker: the migrated runtime still creates platform-specific dependency
+locks during acquisition. Before shipping the hard-pinned product, enforce the
+embedded release's versions/integrities against the actual native/server/Docker
+installation graph before activation (or replay a suitable verified lock).
+CI's archive/graph check alone does not establish that runtime invariant.

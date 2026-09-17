@@ -1,0 +1,55 @@
+name: Installer
+on:
+  pull_request:
+    branches: [main, prerelease]
+  push:
+    branches: [main, prerelease]
+  workflow_dispatch:
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:release
+      - run: npm test
+  publish:
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prerelease')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Verify product version and publication channel
+        run: |
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          const version=JSON.parse(fs.readFileSync('packages/installer/package.json')).version;
+          const nightly=/^\d+\.\d+\.\d+-nightly\.\d+$/.test(version);
+          const stable=/^\d+\.\d+\.\d+$/.test(version);
+          if (process.env.GITHUB_REF==='refs/heads/prerelease' ? !nightly : !stable) throw new Error('Installer version/branch mismatch');
+          JS
+      - run: node scripts/verify-release.mjs
+      - name: Pack immutable product manifest
+        run: npm pack --workspace @ours.network/install --pack-destination "$RUNNER_TEMP"
+      - name: Publish installer after its selected components
+        run: |
+          if [ "$GITHUB_REF" = refs/heads/prerelease ]; then
+            npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag nightly --access public
+          else
+            npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag latest --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
