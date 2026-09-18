@@ -17,12 +17,12 @@ function fixture(status = 'ok') {
 const finalOutput = effects => effects.recorder.out.join('\n').split('Client setup incomplete').at(-1);
 
 // Interpret only our generated fixture command with the platform shell. The
-// function captures argv without invoking the installer or touching a profile.
+// shell captures argv without invoking the installer or touching a profile.
 function retryOptions(output) {
   const command = output.match(/re-run (ours-install client install[^\n]*)/)?.[1];
   assert(command, 'summary contains a complete retry command');
-  const captured = execFileSync('/bin/sh', ['-c', `ours-install() { printf '%s\\0' "$@"; }; ${command}`], { encoding: 'utf8' });
-  return parseSetupArgs(captured.split('\0').slice(0, -1), { home: '/home/me' });
+  const captured = execFileSync('/bin/sh', ['-c', `set -- ${command}; printf '%s\\0' "$@"`], { encoding: 'utf8' });
+  return parseSetupArgs(captured.split('\0').slice(1, -1), { home: '/home/me' });
 }
 
 for (const [command, label] of [['marketplace', 'Register Codex marketplace'], ['add', 'Install Codex plugin']]) {
