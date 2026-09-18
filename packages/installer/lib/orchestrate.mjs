@@ -1273,14 +1273,32 @@ async function executeServerCommand(args, effects) {
   if (record.buildTransition && !['stop', 'status', record.buildTransition.operation].includes(args.operation)) {
     throw new Error(`Server build activation is incomplete; repeat server ${record.buildTransition.operation} before other mutations`);
   }
+  const showInstallProgress = args.operation === 'install' && !(existing && (record.schema === 1 || record.layoutConversion));
+  const installStageCount = existing ? 7 : 9;
+  let completedInstallStages = 0;
+  const installStage = async (label, explanation, action) => {
+    if (!showInstallProgress) return action();
+    effects.out(progress(completedInstallStages, installStageCount, label, explanation));
+    try {
+      const result = await action();
+      completedInstallStages += 1;
+      effects.out(ok(`${label} complete`));
+      return result;
+    } catch (error) {
+      effects.out(warn(`Server installation stopped during ${label.toLowerCase()}.`));
+      throw error;
+    }
+  };
   if ((!existing || args.operation === 'update') && !record.buildTransition) {
-    const policy = args.sources ? effects.readJson(args.sources) : effects.packagedSourcePolicy();
-    args.resolvedSources = await effects.resolveSourcePolicy(policy, 'server');
+    args.resolvedSources = await installStage('Package selection', 'Resolve the selected server packages before installation.', async () => {
+      const policy = args.sources ? effects.readJson(args.sources) : effects.packagedSourcePolicy();
+      return effects.resolveSourcePolicy(policy, 'server');
+    });
   }
   if (!existing && args.sources) record.sourcePolicyHash = effects.sourcePolicyHash(args.sources);
-  await effects.serverPreflight(record, args.operation, {
+  await installStage('Prerequisite checks', record.mode === 'docker' ? 'Check Docker Engine and Docker Compose.' : 'Check native tools and the user service manager.', () => effects.serverPreflight(record, args.operation, {
     existing, sourcePath: args.sources ?? record.sourcesPath, sourceManifest: args.resolvedSources,
-  });
+  }));
   if (existing && (record.schema === 1 || record.layoutConversion)
     && ['install', 'start', 'restart', 'update', 'rebuild'].includes(args.operation)) {
     record = record.mode === 'docker'
@@ -1295,16 +1313,19 @@ async function executeServerCommand(args, effects) {
     await effects.stopPendingConversion(record);
   } else if (args.operation === 'install') {
     if (!existing) {
-      await effects.initializeSelection(record, args.resolvedSources);
-      effects.writeJson(recordPath, JSON.stringify(record, null, 2) + '\n');
+      await installStage('Installation setup', 'Save the selected packages and installation settings.', async () => {
+        await effects.initializeSelection(record, args.resolvedSources);
+        effects.writeJson(recordPath, JSON.stringify(record, null, 2) + '\n');
+      });
     }
-    await effects.prepareInstallation(record);
+    await installStage('Runtime preparation', record.mode === 'docker' ? 'Prepare the Docker runtime. Downloads and builds may take several minutes.' : 'Download and prepare the native runtime packages. This may take several minutes.', () => effects.prepareInstallation(record));
     // A repeated setup repairs delivery with the retained master and exact packages.
-    await effects.serverLifecycle(record, 'stop');
-    await effects.serverAccess(record, 'access-init', { migrate: !!args.migrate });
-    await effects.serverAccess(record, 'access-issue');
-    await effects.recordInstallationBuild(record);
-    await effects.serverLifecycle(record, 'start');
+    await installStage('Service shutdown', 'Stop managed services before configuring access.', () => effects.serverLifecycle(record, 'stop'));
+    await installStage('Credential initialization', 'Initialize or retain the installation credentials.', () => effects.serverAccess(record, 'access-init', { migrate: !!args.migrate }));
+    await installStage('Credential delivery', 'Prepare access for the selected services.', () => effects.serverAccess(record, 'access-issue'));
+    await installStage('Build verification', 'Record the installed runtime and selected package versions.', () => effects.recordInstallationBuild(record));
+    await installStage('Service startup', 'Start the daemon and selected services, then check readiness.', () => effects.serverLifecycle(record, 'start'));
+    if (showInstallProgress) effects.out(progress(installStageCount, installStageCount, 'Installation complete', 'The selected services are ready.'));
   } else if (['backup', 'restore', 'reset'].includes(args.operation)) {
     await effects.serverMaintenance(record, args);
   } else if (['update', 'rebuild'].includes(args.operation)) {
