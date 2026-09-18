@@ -139,10 +139,15 @@ test('interactive answers and equivalent CLI presets execute the same server wor
   manual.effects.interactive = true;
   manual.effects.username = () => 'Test Human';
   manual.effects.askLine = async (question, fallback) => {
-    if (question === 'Set up all, server, or client? ') return 'server';
-    if (question === 'Private installation root: ') return root;
+    if (/folder/i.test(question)) return root;
     return fallback;
   };
+  manual.effects.select = async (_question, choices, fallback) => {
+    if (choices.some(choice => choice.value === 'server')) return 'server';
+    if (choices.some(choice => choice.value === 'custom')) return 'custom';
+    return fallback;
+  };
+  manual.effects.multiselect = async (_question, _choices, fallback) => fallback;
   manual.effects.ask = async () => true;
   assert.equal(await runSetup([], manual.effects), 0);
   const preset = fixture();
@@ -162,4 +167,18 @@ test('client environment conflicts fail before server changes or package resolut
     await assert.rejects(prepareSetupPlan(input, effects), new RegExp(`${name} conflicts`));
     assert.deepEqual(events, []);
   }
+});
+
+test('migration uses the retained Human name and rejects environment overrides before source operations', async () => {
+  const migration = { ...options, scope: 'server', integrations: undefined, migrateFrom: '/private/old/config.json', compatible: true, identityName: undefined };
+  for (const name of ['OURS_API_TOKEN', 'OURS_API_VISIBILITY', 'OURS_STATE_DIR', 'OURS_PORT', 'OURS_DAEMON_ID', 'OURS_DATABASE_PROVIDER', 'OURS_DATABASE_URL']) {
+    const { effects, events } = fixture(); effects.env[name] = 'conflict';
+    effects.inspectLegacyMigration = () => assert.fail('must refuse before source operations');
+    await assert.rejects(prepareSetupPlan(migration, effects), new RegExp(name));
+    assert.deepEqual(events, []);
+  }
+  const { effects } = fixture();
+  effects.inspectLegacyMigration = async () => ({ source: { rootName: 'Retained Human' }, journal: { sourcePolicy: policy } });
+  const plan = await prepareSetupPlan(migration, effects);
+  assert.equal(plan.identityName, 'Retained Human');
 });

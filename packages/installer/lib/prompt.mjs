@@ -1,6 +1,6 @@
 // Interactive prompts drawn on the controlling terminal (/dev/tty), so they work under
 // `curl | bash` (where stdin/stdout are the pipe). Synchronous, dependency-free: line prompts via
-// fs.readSync, and a raw-mode checkbox multi-select. When there is no tty or OURS_ASSUME_YES is
+// fs.readSync, and raw-mode single/multiple choices. When there is no tty or OURS_ASSUME_YES is
 // set, every prompt returns its default without reading — the headless/CI path never blocks.
 import { readSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -30,77 +30,66 @@ function readByte(fd) {
   }
 }
 
-// askLine: print `prompt` and read a line. We read in RAW mode with signal generation OFF (stty
-// -icanon -echo -isig) so Ctrl+C arrives as the byte 0x03 that we turn into a clean InstallCancelled
-// — rather than a SIGINT that a blocked synchronous readSync would defer forever (the old
-// "^C^C^C… and keeps going" bug). We echo/backspace ourselves since -echo is off. If stty isn't
-// available (not a real tty), fall back to a plain cooked read. Throws InstallCancelled on Ctrl+C.
-export function askLine(write, fd, prompt, def = '') {
+// Decode incrementally: a terminal read may split a UTF-8 code point across bytes.
+// Fatal decoding rejects malformed input instead of storing a corrupted name or path.
+function textEntry(write, fd, prompt, def, secret, {
+  read = readByte, enterRaw = enterSelectionMode,
+} = {}) {
   if (fd == null || ASSUME_YES()) return def;
-  write(prompt);
-
-  const saved = spawnSync('stty', ['-g'], { stdio: [fd, 'pipe', 'ignore'], encoding: 'utf8' });
-  const rawOk = saved.status === 0
-    && spawnSync('stty', ['-icanon', '-echo', '-isig', 'min', '1', 'time', '0'], { stdio: [fd, 'ignore', 'ignore'] }).status === 0;
-  const restore = () => { if (rawOk) spawnSync('stty', (saved.stdout || '').trim() ? [(saved.stdout || '').trim()] : ['sane'], { stdio: [fd, 'ignore', 'ignore'] }); };
-
-  let s = '';
+  let restore;
+  try { restore = enterRaw(fd); } catch (error) {
+    // A secret must never fall back to an echoing cooked terminal.
+    if (secret && isCancel(error)) { write(`${prompt}\n`); return null; }
+    throw error;
+  }
+  let decoder = new TextDecoder('utf-8', { fatal: true });
+  let pending = false;
+  const characters = [];
   try {
+    write(prompt);
     for (;;) {
-      const b = readByte(fd);
-      if (b === null || b === 0x04) break;               // EOF / Ctrl+D → take the default
-      if (b === 0x03) { restore(); write('^C'); throw new InstallCancelled(); } // Ctrl+C
-      if (b === 0x0a || b === 0x0d) { if (rawOk) write('\n'); break; }          // Enter
-      if (b === 0x7f || b === 0x08) { if (s.length) { s = s.slice(0, -1); if (rawOk) write('\b \b'); } continue; } // backspace
-      if (b < 0x20) continue;                            // ignore other control bytes
-      s += String.fromCharCode(b);
-      if (rawOk) write(String.fromCharCode(b));           // manual echo
+      const byte = read(fd);
+      if (byte == null || byte === 0x03 || byte === 0x04) throw new InstallCancelled();
+      if (byte === 0x7f || byte === 0x08) {
+        if (pending) {
+          decoder = new TextDecoder('utf-8', { fatal: true });
+          pending = false;
+        } else if (characters.length) {
+          characters.pop();
+          if (!secret) write('\b \b');
+        }
+        continue;
+      }
+      if (byte === 0x0a || byte === 0x0d) {
+        try { decoder.decode(); } catch { throw new InstallCancelled(); }
+        write('\n');
+        const answer = characters.join('').trim();
+        return answer === '' ? def : answer;
+      }
+      if (byte < 0x20) {
+        if (pending) throw new InstallCancelled();
+        continue;
+      }
+      let decoded;
+      try { decoded = decoder.decode(Uint8Array.of(byte), { stream: true }); }
+      catch { throw new InstallCancelled(); }
+      pending = decoded.length === 0;
+      for (const character of decoded) {
+        characters.push(character);
+        if (!secret) write(character);
+      }
     }
   } finally {
     restore();
   }
-  const ans = s.trim();
-  return ans === '' ? def : ans;
 }
 
-// Secret variant of askLine: identical cancellation/backspace/default semantics, but typed
-// characters are never echoed (not even as placeholder stars). This keeps provider keys out of
-// terminal scrollback, curl|bash output, and captured CI logs.
-export function askSecret(write, fd, prompt, def = '') {
-  if (fd == null || ASSUME_YES()) return def;
+export function askLine(write, fd, prompt, def = '', controls) {
+  return textEntry(write, fd, prompt, def, false, controls);
+}
 
-  const saved = spawnSync('stty', ['-g'], { stdio: [fd, 'pipe', 'ignore'], encoding: 'utf8' });
-  const rawOk = saved.status === 0
-    && spawnSync('stty', ['-icanon', '-echo', '-isig', 'min', '1', 'time', '0'], { stdio: [fd, 'ignore', 'ignore'] }).status === 0;
-  const restore = () => {
-    if (rawOk) spawnSync('stty', (saved.stdout || '').trim() ? [(saved.stdout || '').trim()] : ['sane'], { stdio: [fd, 'ignore', 'ignore'] });
-  };
-  if (!rawOk) {
-    // Fail closed: a cooked fallback would echo the secret. Returning null lets the caller
-    // explain that secure input is unavailable without ever reading a credential.
-    write(`${prompt}\n`);
-    return null;
-  }
-  // Disable echo BEFORE displaying the prompt. Otherwise an automated or very fast typist can
-  // submit bytes in the small prompt→stty window and have the terminal driver echo the secret.
-  write(prompt);
-
-  let s = '';
-  try {
-    for (;;) {
-      const b = readByte(fd);
-      if (b === null || b === 0x04) break;
-      if (b === 0x03) { restore(); write('^C'); throw new InstallCancelled(); }
-      if (b === 0x0a || b === 0x0d) { write('\n'); break; }
-      if (b === 0x7f || b === 0x08) { if (s.length) s = s.slice(0, -1); continue; }
-      if (b < 0x20) continue;
-      s += String.fromCharCode(b);
-    }
-  } finally {
-    restore();
-  }
-  const ans = s.trim();
-  return ans === '' ? def : ans;
+export function askSecret(write, fd, prompt, def = '', controls) {
+  return textEntry(write, fd, prompt, def, true, controls);
 }
 
 // askYesNo: y/n with a default shown in caps. Returns boolean.
@@ -111,69 +100,74 @@ export function askYesNo(write, fd, prompt, def = false) {
   return /^y/i.test(ans);
 }
 
-// checkboxSelect: raw-mode multi-select drawn on the tty. ↑/↓ (or k/j) move, Space toggles, Enter
-// confirms, a/n = all/none, q cancels (selects nothing). Returns the selected names in order.
-// `specs` are { name, label } (optionally { checked }). No-tty → returns pre-checked defaults.
-export function checkboxSelect(write, fd, specs, { title } = {}) {
-  const names = specs.map((s) => s.name);
-  const labels = specs.map((s) => s.label);
-  const sel = specs.map((s) => (s.checked ? 1 : 0));
-  const n = specs.length;
-  const chosen = () => names.filter((_, i) => sel[i] === 1);
-
-  if (fd == null) return chosen();
-
-  // Enter raw mode via `stty` on the tty fd (NOT tty.ReadStream.setRawMode, which would flip the
-  // fd to non-blocking and break our fs.readSync). Save the current settings and restore them
-  // after. If stty is unavailable / this isn't a real tty, fall back to the pre-checked defaults.
+// Keep terminal controls injectable so key sequences and cleanup can be checked without a TTY.
+function enterSelectionMode(fd) {
   const saved = spawnSync('stty', ['-g'], { stdio: [fd, 'pipe', 'ignore'], encoding: 'utf8' });
-  if (saved.status !== 0) return chosen();
-  const savedMode = (saved.stdout || '').trim();
-  const setRaw = spawnSync('stty', ['-echo', '-icanon', 'min', '1', 'time', '0'], { stdio: [fd, 'ignore', 'ignore'] });
-  if (setRaw.status !== 0) return chosen();
-  const restore = () => spawnSync('stty', savedMode ? [savedMode] : ['sane'], { stdio: [fd, 'ignore', 'ignore'] });
+  if (saved.status !== 0 || !saved.stdout?.trim()) throw new InstallCancelled();
+  const restore = () => spawnSync('stty', [saved.stdout.trim()], { stdio: [fd, 'ignore', 'ignore'] });
+  const raw = spawnSync('stty', ['-echo', '-icanon', '-isig', 'min', '1', 'time', '0'], { stdio: [fd, 'ignore', 'ignore'] });
+  if (raw.status !== 0) { restore(); throw new InstallCancelled(); }
+  return restore;
+}
 
-  let cur = 0;
-  let drawn = 0;
-
-  const redraw = () => {
-    if (drawn) write(`\x1b[${n}A`); // rewind over the previous frame
-    drawn = 1;
-    for (let i = 0; i < n; i++) {
-      const box = sel[i] ? c.green('[x]') : '[ ]';
-      const point = i === cur ? c.cyan('> ') : '  ';
-      write(`\r\x1b[K  ${point}${box} ${labels[i]}\n`);
-    }
+function choose(write, fd, question, choices, defaults, multiple, {
+  read = readByte, enterRaw = enterSelectionMode,
+} = {}) {
+  if (!choices.length) throw new Error('A choice prompt requires at least one choice');
+  const selected = choices.map(choice => defaults.includes(choice.value));
+  let current = Math.max(0, selected.indexOf(true));
+  const result = () => multiple
+    ? choices.filter((_, i) => selected[i]).map(choice => choice.value)
+    : choices[current].value;
+  if (fd == null || ASSUME_YES()) return result();
+  const restore = enterRaw(fd);
+  let drawn = false;
+  const next = () => {
+    const byte = read(fd);
+    if (byte == null || byte === 0x03 || byte === 0x04) throw new InstallCancelled();
+    return byte;
   };
-
-  write(`  ${title || 'Choose — ' + c.bold('↑/↓') + ' move, ' + c.bold('Space') + ' toggle, ' + c.bold('Enter') + ' confirm (a=all, n=none)'}:\n`);
-  redraw();
-
-  loop: for (;;) {
-    const b = readByte(fd);
-    if (b === null) break;
-    switch (b) {
-      case 0x1b: { // ESC — arrow key sequence \x1b [ A/B
-        const b1 = readByte(fd);
-        if (b1 === 0x5b || b1 === 0x4f) { // '[' or 'O'
-          const b2 = readByte(fd);
-          if (b2 === 0x41) cur = (cur - 1 + n) % n; // up
-          else if (b2 === 0x42) cur = (cur + 1) % n; // down
-        }
-        break;
-      }
-      case 0x6b: case 0x4b: cur = (cur - 1 + n) % n; break; // k/K
-      case 0x6a: case 0x4a: cur = (cur + 1) % n; break;     // j/J
-      case 0x20: sel[cur] = 1 - sel[cur]; break;            // space
-      case 0x61: case 0x41: for (let i = 0; i < n; i++) sel[i] = 1; break; // a/A
-      case 0x6e: case 0x4e: for (let i = 0; i < n; i++) sel[i] = 0; break; // n/N
-      case 0x71: case 0x51: for (let i = 0; i < n; i++) sel[i] = 0; break loop; // q/Q cancel
-      case 0x0d: case 0x0a: break loop; // enter
-      default: break;
-    }
+  const redraw = () => {
+    if (drawn) write(`\x1b[${choices.length}A`);
+    drawn = true;
+    choices.forEach((choice, i) => {
+      const marker = multiple ? (selected[i] ? c.green('[x]') : '[ ]') : (i === current ? c.green('(●)') : '( )');
+      write(`\r\x1b[K  ${i === current ? c.cyan('> ') : '  '}${marker} ${choice.label}\n`);
+    });
+  };
+  try {
+    write(`\x1b[?25l  ${question}\n  ${c.bold('↑/↓')} move${multiple ? ', ' + c.bold('Space') + ' toggle' : ''}, ${c.bold('Enter')} confirm\n`);
     redraw();
+    for (;;) {
+      const byte = next();
+      if (byte === 0x0d || byte === 0x0a) return result();
+      if (byte === 0x1b) {
+        const prefix = next();
+        if (prefix === 0x5b || prefix === 0x4f) {
+          const direction = next();
+          if (direction === 0x41) current = (current - 1 + choices.length) % choices.length;
+          if (direction === 0x42) current = (current + 1) % choices.length;
+        }
+      } else if (multiple && byte === 0x20) selected[current] = !selected[current];
+      redraw();
+    }
+  } finally {
+    try { restore(); } finally { write('\x1b[?25h'); }
   }
+}
 
-  restore();
-  return chosen();
+export function select(write, fd, question, choices, defaultValue, controls) {
+  return choose(write, fd, question, choices, [defaultValue], false, controls);
+}
+
+export function multiselect(write, fd, question, choices, defaults = [], controls) {
+  return choose(write, fd, question, choices, defaults, true, controls);
+}
+
+// Preserve the existing component selection API using the same keyboard implementation.
+export function checkboxSelect(write, fd, specs, { title } = {}) {
+  if (!specs.length) return [];
+  return multiselect(write, fd, title || 'Choose components',
+    specs.map(({ name, label }) => ({ value: name, label })),
+    specs.filter(spec => spec.checked).map(spec => spec.name));
 }

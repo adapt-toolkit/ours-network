@@ -31,8 +31,10 @@ export const USAGE = `ours-install — interactive setup or complete CLI presets
   --port N                  daemon port (default 3050 on a fresh installation)
   --cowork-port N           cowork port (default 3052)
   --messenger-port N        messenger port (default 8420)
-  --compatible              required attestation for server updates of retained state
-  --migrate                 explicit legacy access migration during install
+  --compatible              required for server updates and legacy state migration
+  --migrate-from CONFIG     migrate an existing daemon into a new managed root; install only
+                           requires an absolute config path and --compatible
+  --migrate                 explicit legacy credential migration; separate from --migrate-from
   --dry-run                 show the validated plan without changing anything
   --help, -h                show help
   --version, -V             print installer version

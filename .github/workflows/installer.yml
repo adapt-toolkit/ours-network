@@ -21,6 +21,8 @@ jobs:
       - run: npm ci
       - run: npm run test:release
       - run: npm test
+      - name: Verify legacy Docker import and persistent management runtime
+        run: node scripts/verify-legacy-runtime.mjs
       - name: Verify selected registry artifacts and dependency graph
         run: node scripts/verify-release.mjs --installed
       - name: Pack and verify installer release contents
