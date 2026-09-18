@@ -44,3 +44,27 @@ for (const status of ['absent', 'alias', 'unsafe']) {
     assert.doesNotMatch(output, /Permission denied|Server installation failed/);
   });
 }
+
+test('client diagnostics redact common credentials and strip terminal controls', async () => {
+  const f = fixture();
+  f.effects.run = async () => { throw new Error('\x1b[31mDenied Authorization: Bearer very-private-token apiToken=another-secret https://user:private-password@example.test/path\x1b[0m'); };
+  assert.equal(await runClientCommand({ operation: 'install' }, f.effects), 2);
+  const output = f.effects.recorder.out.join('\n');
+  assert.doesNotMatch(output, /very-private-token|another-secret|private-password|\x1b/);
+  assert.match(output, /redacted/);
+});
+
+test('retry retains all selected integrations and safely quotes saved paths', async () => {
+  const f = fixture();
+  const original = f.effects.importClientProfile;
+  f.effects.importClientProfile = options => {
+    const result = original(options);
+    return { ...result, configPath: "/private/user's settings/profile.json", settings: { ...result.settings, sourcesPath: "/private/user's settings/sources.json" } };
+  };
+  f.effects.run = async () => { throw new Error('registration denied'); };
+  assert.equal(await runClientCommand({ operation: 'install', integrations: ['codex', 'claude-code'] }, f.effects), 2);
+  const output = finalOutput(f.effects);
+  assert.match(output, /--integrations 'codex,claude-code'/);
+  assert(output.includes("'/private/user'\\''s settings/profile.json'"));
+  assert(output.includes("'/private/user'\\''s settings/sources.json'"));
+});

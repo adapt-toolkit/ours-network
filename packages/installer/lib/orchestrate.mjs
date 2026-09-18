@@ -86,6 +86,41 @@ async function perform(effects, dryRun, label, thunk) {
 
 const reason = (error) => (error instanceof Error ? error.message : String(error));
 
+function clientDiagnostic(error) {
+  return reason(error)
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+    .replace(/((?:api[_-]?key|api[_-]?token|access[_-]?token|refresh[_-]?token|token|password|secret|authorization|credential)\s*["']?\s*[:=]\s*["']?)[^\s"',;]+/gi, '$1[redacted]')
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
+    .replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 700);
+}
+
+function clientRetry(effects, imported, integrations) {
+  effects.out(info(`Saved server connection: ${imported.configPath}.`));
+  if (integrations.includes('fleet') && !imported.settings.fleetSettingsPath) {
+    effects.out(info('Saved profile and settings retained. Run ours-install, choose Connect to an existing server, and reuse the saved profile to finish the interactive Fleet configuration.'));
+    return;
+  }
+  const args = ['client', 'install', '--config', imported.configPath, '--integrations', integrations.join(','), '--sources', imported.settings.sourcesPath];
+  if (imported.settings.fleetSettingsPath) args.push('--fleet-settings', imported.settings.fleetSettingsPath);
+  const command = `ours-install client install ${args.slice(2).map((value, i) => i % 2 === 0 ? value : shellQuote(value)).join(' ')}`;
+  effects.out(info(`Saved profile and settings retained; re-run ${command}`));
+}
+
+function explainClientFailure(effects, name, row) {
+  const label = { codex: 'Codex', 'claude-code': 'Claude Code', fleet: 'Fleet' }[name];
+  const command = name === 'claude-code' ? 'claude' : name;
+  if (row?.note === 'not installed') {
+    effects.out(warn(`${label}: executable not found on PATH. Install ${label} or make its executable available in this shell, then check ${command} --version before retrying.`));
+  } else if (row?.manual) {
+    effects.out(warn(`${label}: cannot register the plugin automatically — ${clientDiagnostic(row.note)}. Use the real executable (check ${command} --version), or register the displayed local marketplace manually.`));
+  } else {
+    effects.out(warn(`${label}: ${row?.failedStep ?? 'integration setup'} failed. ${clientDiagnostic(row?.detail ?? row?.note ?? 'The integration did not report successful completion. Review the messages above.')} Fix the reported command error before retrying.`));
+    if (row?.failedCommand) effects.out(info(`Failed command: ${row.failedCommand.map(shellQuote).join(' ')}`));
+  }
+}
+
+
 function semverMajor(version) {
   const match = /^(?:[~^<>= ]*)(\d+)\./.exec(String(version ?? '').trim());
   return match ? Number(match[1]) : null;
@@ -193,11 +228,11 @@ async function prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatc
  * rather than one harness. So a failure here is one honest line plus whatever
  * the caller wants to say about retrying, and the walk continues.
  */
-async function attempt(effects, dryRun, label, thunk) {
+async function attempt(effects, dryRun, label, thunk, formatReason = reason) {
   try {
     return { ok: true, ...(await perform(effects, dryRun, label, thunk)) };
   } catch (error) {
-    effects.out(warn(`${label} — did not complete: ${reason(error)}`));
+    effects.out(warn(`${label} — did not complete: ${formatReason(error)}`));
     return { ok: false, error };
   }
 }
@@ -817,6 +852,9 @@ export async function runIdentityPhase(args, effects, { target, mcpReady }) {
 export async function runHarnessPhase(args, effects, { target, isDefaultStateDir, exactSuite = null }) {
   effects.out(heading('Harness plugins'));
   const detected = (await effects.detectHarnesses()).filter(h => !args.clientIntegrations || args.clientIntegrations.includes(h.name));
+  for (const name of args.clientIntegrations ?? []) {
+    if (name !== 'fleet' && !detected.some(h => h.name === name)) detected.push({ name, status: 'absent' });
+  }
   for (const h of detected) {
     if (h.status === 'ok') effects.out(ok(`'${h.command ?? h.name}'  → ${h.detail ?? 'real program'} (its plugin can be installed)`));
     else if (h.status === 'alias') effects.out(warn(`'${h.command ?? h.name}'  → ${h.detail} (I won't call it — manual steps below)`));
@@ -826,7 +864,7 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
   if (detected.every((h) => h.status === 'absent')) {
     effects.out(info('No Claude Code, Codex or Hermes found — install one and re-run to wire it up.'));
     effects.out(info('Your daemon is unaffected; nothing else in this run depends on a harness.'));
-    return [];
+    return args.clientIntegrations ? detected.map(h => ({ key: h.name, state: 'skipped', note: 'not installed' })) : [];
   }
 
   const plans = planHarnessPlugins({
@@ -851,7 +889,7 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
     if (plan.action === 'manual' && exactSuite?.localPackages?.[plan.name]) {
       const root = await effects.prepareClientMarketplace(plan.name, exactSuite.localPackages[plan.name]);
       effects.out(warn(`${plan.label} requires manual registration of exact local marketplace ${root}; ${target.managed ? 'the saved client default is retained' : `keep OURS_CONFIG=${target.configPath}`}.`));
-      rows.push({ ...row, state: 'failed', note: 'native executable unavailable' });
+      rows.push({ ...row, state: 'failed', note: plan.reason, manual: true });
       continue;
     }
     if (plan.action === 'manual') {
@@ -873,7 +911,7 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
       effects.out(warn(`${plan.label} — ${plan.reason}; install it yourself with:`));
       for (const step of manual) effects.out(info(`  ${step}`));
       if (plan.envLine) effects.out(info(`Before later native launches, set:  ${plan.envLine}`));
-      rows.push({ ...row, state: 'skipped', note: plan.reason });
+      rows.push({ ...row, state: 'skipped', note: plan.reason, manual: true });
       continue;
     }
 
@@ -884,13 +922,16 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
       const steps = plan.name === 'codex'
         ? [['codex', 'plugin', 'marketplace', 'add', registration], ['codex', 'plugin', 'add', 'ours@ours-codex-marketplace']]
         : [['claude', 'plugin', 'marketplace', 'add', registration], ['claude', 'plugin', await effects.hasClaudePlugin() ? 'update' : 'install', 'ours@ours.network']];
-      let failed = false;
+      let failure = null;
       for (const step of steps) {
-        const outcome = await attempt(effects, false, step.join(' '), () => effects.run(step[0], step.slice(1), { env: profileEnv(target) }));
-        if (!outcome.ok) { failed = true; break; }
+        const outcome = await attempt(effects, false, step.join(' '), () => effects.run(step[0], step.slice(1), { env: profileEnv(target) }), clientDiagnostic);
+        if (!outcome.ok) {
+          failure = { failedCommand: step, failedStep: step[2] === 'marketplace' ? `Register ${plan.label} marketplace` : `Install ${plan.label} plugin`, detail: clientDiagnostic(outcome.error) };
+          break;
+        }
       }
       effects.out(info(target.managed ? `Native ${plan.name} launches use the saved client default.` : `Native ${plan.name} launches must retain OURS_CONFIG=${target.configPath}.`));
-      rows.push({ ...row, state: failed ? 'failed' : 'installed' });
+      rows.push({ ...row, state: failure ? 'failed' : 'installed', ...(failure ?? {}) });
       continue;
     }
 
@@ -1428,29 +1469,36 @@ export async function runClientCommand(command, effects) {
   }
   effects.out(progress(0, 4, 'Client configuration', 'Prepare the selected integrations and private connection profile.'));
   const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh: !!command.preset });
+  let phase = 'Validate saved server connection';
   try {
     await effects.verifyHostProfile(imported.configPath);
     effects.out(progress(1, 4, 'Client packages', 'Acquire and verify the selected client package versions.'));
+    phase = 'Acquire client packages';
     const exactSuite = await effects.acquireClientPackages(imported.configPath, imported.settings.sourcesPath, integrations, { refresh: !!command.preset });
     const args = { assumeYes: true, dryRun: false, channel: 'latest', clientIntegrations: integrations,
       acquiredFleet: exactSuite.fleetBin, fleetSettingsPath: imported.settings.fleetSettingsPath };
     const target = { mode: 'host-profile', managed: true, configPath: imported.configPath, profile: imported.profile, endpoint: imported.profile.endpoint };
     effects.out(progress(2, 4, 'Client integrations', 'Register the selected agent integrations.'));
+    phase = 'Register client integrations';
     const summary = await runHarnessPhase(args, effects, { target, isDefaultStateDir: false, exactSuite });
     if (integrations.includes('fleet')) {
       effects.out(progress(3, 4, 'Fleet configuration', 'Apply prepared settings or open the selected Fleet wizard.'));
+      phase = 'Configure Fleet';
       summary.push(await runFleetPhase(args, effects, { target, isDefaultStateDir: false }));
     }
     const incomplete = integrations.filter(name => !summary.some(row => row.key === name && row.state === 'installed'));
     if (effects.env.OURS_CONFIG && resolve(effects.env.OURS_CONFIG) !== imported.configPath)
       effects.out(warn('This shell has an explicit OURS_CONFIG override. Unset it for new clients to use the saved default; installer did not edit your shell.'));
-    effects.out(incomplete.length
-      ? warn(`Client setup incomplete (${incomplete.join(', ')}); saved profile and settings retained. Re-run ours-install client install.`)
-      : ok(`Client setup complete. New clients discover ${imported.configPath}; no OURS_CONFIG export is required.`));
+    if (incomplete.length) {
+      effects.out(warn(`Client setup incomplete (${incomplete.join(', ')}). The selected client integrations need attention:`));
+      for (const name of incomplete) explainClientFailure(effects, name, summary.find(row => row.key === name));
+      clientRetry(effects, imported, integrations);
+    } else effects.out(ok(`Client setup complete. New clients discover ${imported.configPath}; no OURS_CONFIG export is required.`));
     if (!incomplete.length) effects.out(progress(4, 4, 'Client setup complete', 'All selected integrations are configured.'));
     return incomplete.length ? EXIT_REFUSED : EXIT_OK;
   } catch (error) {
-    effects.out(warn(`Client setup incomplete: ${reason(error)}. Saved profile and settings retained; re-run ours-install client install.`));
+    effects.out(warn(`Client setup incomplete: ${phase} failed — ${clientDiagnostic(error)}. Fix this error before retrying.`));
+    clientRetry(effects, imported, integrations);
     return EXIT_REFUSED;
   }
 }
