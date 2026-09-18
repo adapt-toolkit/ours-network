@@ -9,10 +9,11 @@ import { qualifyDockerRuntime, refreshDockerPolicyCopy } from '../lib/docker-run
 function fixture(t, options = {}) {
   const root = fs.mkdtempSync(join(tmpdir(), 'ours-repair-test-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workDir = join(root, 'runtime'); fs.mkdirSync(workDir, { mode: 0o700 });
   const source = '{"packages":{}}\n';
-  const record = { root, workDir: root, project: 'ours-fixture', sourcesPath: join(root, 'sources.json'), uid: 12345, gid: 12345 };
+  const record = { root, workDir, project: 'ours-fixture', sourcesPath: join(root, 'sources.json'), uid: 12345, gid: 12345 };
   fs.writeFileSync(record.sourcesPath, source, { mode: 0o600 });
-  fs.writeFileSync(join(root, 'Dockerfile'), 'FROM node:24\nCOPY sources.json /opt/ours/sources.json\n');
+  fs.writeFileSync(join(workDir, 'Dockerfile'), 'FROM node:24\nCOPY sources.json /opt/ours/sources.json\n');
   const hash = createHash('sha256').update(source).digest('hex');
   const id = 'sha256:' + 'a'.repeat(64), repairedId = 'sha256:' + 'b'.repeat(64);
   const config = { User: '1000:1000', Env: ['X=y'], Entrypoint: ['/bin/sh', '/entrypoint'], Cmd: null, Labels: { 'network.ours.build-context': '1' } };
@@ -96,10 +97,13 @@ test('retained Dockerfile normalization is narrow and refuses links', async t =>
 
 test('owner asset copied with mode0664 inside private runtime is normalized and refreshed', t => {
   const f = fixture(t), path = join(f.record.workDir, 'Dockerfile');
+  const unrelated = join(f.record.root, 'unrelated'); fs.writeFileSync(unrelated, 'keep', { mode: 0o640 });
   fs.chmodSync(path, 0o664);
   refreshDockerPolicyCopy(f.record);
   assert.equal(fs.statSync(path).mode & 0o777, 0o600);
   assert.match(fs.readFileSync(path, 'utf8'), /COPY --chmod=644/);
+  assert.equal(fs.readFileSync(unrelated, 'utf8'), 'keep');
+  assert.equal(fs.statSync(unrelated).mode & 0o777, 0o640);
   fs.chmodSync(path, 0o664); // Current instruction still needs mode normalization.
   refreshDockerPolicyCopy(f.record);
   assert.equal(fs.statSync(path).mode & 0o777, 0o600);
