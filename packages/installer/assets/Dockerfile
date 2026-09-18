@@ -3,7 +3,9 @@ FROM node:24 AS toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 ca-certificates git && rm -rf /var/lib/apt/lists/*
 FROM toolchain AS build
 WORKDIR /opt/ours
-COPY sources.json /opt/ours/sources.json
+# The host selection is private (0600); this non-secret image policy must be
+# readable by arbitrary runtime UIDs while remaining root-owned and non-writable.
+COPY --chmod=644 sources.json /opt/ours/sources.json
 COPY scripts/build/*.mjs /build-scripts/
 COPY scripts/maintenance/build-context.mjs scripts/maintenance/provenance-compare.mjs scripts/maintenance/release-graph.mjs /maintenance/
 RUN --mount=type=secret,id=github_token --mount=type=cache,id=ours-dist-2-npm,target=/root/.npm,sharing=locked node /build-scripts/build.mjs
