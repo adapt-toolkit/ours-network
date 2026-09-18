@@ -20,7 +20,7 @@ export function refreshDockerPolicyCopy(record) {
   }
   const path = join(record.workDir, 'Dockerfile');
   let fd;
-  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
   catch (error) { fail(`Unsafe retained Dockerfile: cannot open a regular unlinked file (${error.code})`); }
   try {
     const stat = fstatSync(fd);

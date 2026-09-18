@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { qualifyDockerRuntime, refreshDockerPolicyCopy } from '../lib/docker-runtime-repair.mjs';
 
@@ -109,7 +110,7 @@ test('owner asset copied with mode0664 inside private runtime is normalized and 
   assert.equal(fs.statSync(path).mode & 0o777, 0o600);
 });
 
-for (const boundary of ['shared-directory', 'linked-directory', 'hardlinked-file', 'special-mode']) {
+for (const boundary of ['shared-directory', 'linked-directory', 'hardlinked-file', 'special-mode', 'fifo']) {
   test(`Dockerfile normalization refuses ${boundary}`, t => {
     const f = fixture(t), path = join(f.record.workDir, 'Dockerfile');
     if (boundary === 'shared-directory') fs.chmodSync(f.record.workDir, 0o775);
@@ -117,6 +118,7 @@ for (const boundary of ['shared-directory', 'linked-directory', 'hardlinked-file
       const alias = f.record.root + '-alias'; fs.symlinkSync(f.record.root, alias); t.after(() => fs.unlinkSync(alias)); f.record.workDir = alias;
     }
     if (boundary === 'hardlinked-file') fs.linkSync(path, join(f.record.root, 'other-link'));
+    if (boundary === 'fifo') { fs.unlinkSync(path); execFileSync('mkfifo', [path]); }
     if (boundary === 'special-mode') fs.chmodSync(path, 0o2644);
     assert.throws(() => refreshDockerPolicyCopy(f.record), /Unsafe/);
   });
