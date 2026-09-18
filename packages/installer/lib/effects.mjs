@@ -538,12 +538,30 @@ export function networkEffects(effects) {
     OURS_MESSENGER_PORT: String(record.messengerPort ?? 8420),
     OURS_MESSENGER_IDENTITY: record.messengerIdentity ?? '',
   });
-  const compose = (record, args, options = {}) => effects.run('docker', [
+  const composeArgs = (record, args) => [
     'compose', '--project-directory', record.workDir, '--file', join(record.workDir,
       record.schema === 1 && existsSync(join(record.workDir, 'docker-compose.legacy.yaml'))
         ? 'docker-compose.legacy.yaml' : 'docker-compose.yaml'),
     '--project-name', record.project, ...args,
-  ], { ...options, env: { ...baseEnv(record), ...options.env } });
+  ];
+  const compose = (record, args, options = {}) => effects.run('docker', composeArgs(record, args),
+    { ...options, env: { ...baseEnv(record), ...options.env } });
+  const dockerStartupError = async (record, service, cause) => {
+    const args = ['logs', '--no-color', '--tail', '50', '--timestamps', service];
+    const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+    const command = `OURS_DAEMON_ID=${quote(record.instanceId)} docker ${composeArgs(record, args).map(quote).join(' ')}`;
+    let detail;
+    try {
+      const logs = await compose(record, args);
+      // Limit terminal diagnostics; container output must not inject terminal controls.
+      detail = (logs.stdout ?? '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').trim().slice(-6000);
+      detail = detail ? `Recent ${service} logs:\n${detail}` : 'The container produced no readable logs.';
+    } catch {
+      detail = 'Container logs could not be read.';
+    }
+    return new Error(`Docker service "${service}" failed to start or become healthy.\n${detail}\nStartup error: ${cause.message}\nInspect logs: ${command}`, { cause });
+  };
   const bin = (record, name) => join(record.workDir, 'node_modules', '.bin', name);
   const localEnv = (record, service = 'daemon') => {
     const paths = installationPaths(record);
@@ -687,7 +705,7 @@ export function networkEffects(effects) {
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
         const image = await effects.run('docker', ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
-        if (image.code !== 0) await compose(record, ['build', 'daemon']);
+        if (image.code !== 0) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         if (runtimeOnly) return;
         await compose(record, ['run', '--rm', '--no-deps', '-T', 'prepare', 'prepare']);
       } else {
@@ -695,8 +713,8 @@ export function networkEffects(effects) {
           const sourceRoot = join(record.root, `build-${randomUUID()}`);
           ensurePrivateDirectory(sourceRoot);
           try {
-            await effects.run(process.execPath, [join(record.workDir, 'scripts/build/build.mjs')], { cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir, OURS_SOURCE_ROOT: sourceRoot } });
-            await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: record.workDir });
+            await effects.run(process.execPath, [join(record.workDir, 'scripts/build/build.mjs')], { stream: true, cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir, OURS_SOURCE_ROOT: sourceRoot } });
+            await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { stream: true, cwd: record.workDir });
             await effects.run(process.execPath, [join(record.workDir, 'scripts/build/record-build.mjs')], { cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir } });
             writePrivateNew(join(record.workDir, '.packages-ready'), 'ready\n');
           } finally { rmSync(sourceRoot, { recursive: true, force: true }); }
@@ -1089,13 +1107,19 @@ export function networkEffects(effects) {
           if ((await effects.serverLifecycle(record, 'status', selected)).length) throw new Error('Writers did not stop');
           return;
         }
-        if (selected.includes('daemon')) await compose(record, ['up', '-d', '--no-build', '--no-deps', '--wait', 'daemon']);
+        const start = async service => {
+          effects.out(`Starting ${service}; waiting for readiness...`);
+          try { await compose(record, ['up', '-d', '--no-build', '--no-deps', '--wait', service]); }
+          catch (cause) { throw await dockerStartupError(record, service, cause); }
+          effects.out(`${service} is ready.`);
+        };
+        if (selected.includes('daemon')) await start('daemon');
         const failures = [];
         for (const service of selected.filter(s => s !== 'daemon')) {
-          try { await compose(record, ['up', '-d', '--no-build', '--no-deps', '--wait', service]); }
-          catch { failures.push(service); }
+          try { await start(service); }
+          catch (error) { failures.push({ service, error }); }
         }
-        if (failures.length) throw new Error(`Application readiness failed: ${failures.join(', ')}. Check owning prerequisites; no identities were created.`);
+        if (failures.length) throw new Error(`Application readiness failed: ${failures.map(f => f.service).join(', ')}. Check owning prerequisites; no identities were created.\n${failures.map(f => f.error.message).join('\n\n')}`);
         return;
       }
       return nativeLifecycle(record, operation, selected, { effects, localEnv, ownerCommand, bin });

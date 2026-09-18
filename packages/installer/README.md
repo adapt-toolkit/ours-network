@@ -175,6 +175,11 @@ is unavailable, the installer explains how to install/start it or use
 `server install --mode packages --state-dir <new-empty-directory>` instead.
 Native Windows installations require WSL with a working systemd user manager.
 The installer never switches an existing installation's mode automatically.
+Server installation shows each stage before it starts, streams Docker builds and
+native package acquisition, and reports completion only after service readiness.
+If a Docker service fails, the error includes its last 50 log lines (bounded in
+size) and a command to inspect the logs. A failed daemon prevents consumers from
+starting; a failed consumer does not prevent checks of unrelated consumers.
 Server runtime installation selects SDK/CLI, main MCP, Telegram, Cowork and
 Messenger. Main MCP is injected into the daemon, not started as a second daemon.
 The daemon starts first; consumers are checked through their owning readiness
