@@ -157,9 +157,12 @@ export async function collectSetupOptions(effects) {
   if (options.scope !== 'client' && options.operation === 'install') {
     const defaultConfig = join(effects.home, '.ours', 'config.json');
     const legacy = !existing ? effects.readJson(defaultConfig) : null;
+    const legacyState = nonempty(legacy?.stateDir) ? legacy.stateDir
+      : legacy && legacy.stateDir === undefined && nonempty(effects.readJson(join(effects.home, '.ours', 'root.json'))?.name)
+        ? join(effects.home, '.ours') : null;
     if (pendingMigration) options.migrateFrom = pendingMigration;
-    else if (nonempty(legacy?.stateDir)) {
-      effects.out(`Found an existing ours installation at ${legacy.stateDir}. Upgrade it to keep its identities, messages and settings. The old server will stop; its original state is kept as a recovery copy.`);
+    else if (legacyState) {
+      effects.out(`Found an existing ours installation at ${legacyState}. Upgrade it to keep its identities, messages and settings. The old server will stop; its original state is kept as a recovery copy.`);
       if (await effects.ask('Upgrade this existing ours installation and keep its data?', true)) options.migrateFrom = defaultConfig;
       else {
         effects.out('A separate installation creates a different server. It does not move or share the identities and messages in the existing installation.');

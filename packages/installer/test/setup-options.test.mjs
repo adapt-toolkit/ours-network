@@ -200,3 +200,12 @@ test('existing managed target refuses unrelated migration but offers a pending t
   assert.equal(options.operation, 'install'); assert.equal(options.migrateFrom, '/private/old/config.json');
   assert(pending.questions.find(row => row[0] === 'What should happen?')[3].some(choice => choice.label === 'Resume the unfinished migration'));
 });
+
+test('default legacy config without stateDir offers migration and retains its Human identity', async () => {
+  const f = interactiveFixture({ legacy: {}, answers: { [migrationConsent]: true } });
+  const options = await collectSetupOptions(f.effects);
+  assert.equal(options.migrateFrom, '/home/fixture/.ours/config.json');
+  assert.equal(options.identityName, 'Retained Human');
+  assert(f.output.some(line => line.includes('Found an existing ours installation at /home/fixture/.ours.')));
+  assert(!f.questions.some(row => row[0] === 'What name should others see? '));
+});
