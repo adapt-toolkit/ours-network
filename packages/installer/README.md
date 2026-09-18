@@ -140,9 +140,9 @@ both channels.
 ## Selected network installations (2.0)
 
 The installed package carries its compatible `assets/sources.json` policy.
-`--sources` remains available as an explicit development override. Feature
-revisions in the testing delivery remain unpublished; local build evidence does
-not prove remote fetchability or compatibility of a replacement source set.
+`--sources` remains available as an explicit development override. Published releases bind that policy to exact component versions and registry
+SHA-512 values. Acquisition validates the ours dependency graph before activation.
+A development override without a release binding is not a qualified product release.
 
 ```sh
 ours-install server install --mode docker --state-dir /private/ours-install

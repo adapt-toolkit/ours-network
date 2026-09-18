@@ -111,11 +111,11 @@ The product release inputs are [stable](releases/stable.json) and
 [nightly](releases/nightly.json). A release packs one channel-matching exact
 component set into its immutable npm archive; it does not fetch mutable manifests
 from GitHub at installation time. See [release preparation](releases/README.md).
-The initial review migration has no qualified release set and intentionally
-refuses production packing/publication until these inputs are bound.
+The nightly manifest selects published component versions and SHA-512 integrity
+values. Stable remains unbound until a stable component set is selected.
 
-Release blocker: the migrated runtime still creates platform-specific dependency
-locks during acquisition. Before shipping the hard-pinned product, enforce the
-embedded release's versions/integrities against the actual native/server/Docker
-installation graph before activation (or replay a suitable verified lock).
-CI's archive/graph check alone does not establish that runtime invariant.
+PR CI verifies the selected registry archives and nested ours dependency graph,
+then packs and inspects the installer archive. Runtime acquisition checks the
+release-bound ours packages before activating server builds or client integrations.
+This fixes the ours component set; third-party dependencies are still resolved
+by npm for the target platform rather than replayed from one universal lockfile.

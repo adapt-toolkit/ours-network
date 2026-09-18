@@ -41,6 +41,7 @@ if(process.argv[2]==='pack'){
     assert.deepEqual(JSON.parse(readFileSync(join(dir,'packages/installer/assets/release.json'))),manifest);
     const sources=JSON.parse(readFileSync(join(dir,'packages/installer/assets/sources.json')));
     assert.equal(Object.keys(sources.packages).length,9);
+    assert.deepEqual(sources.release,manifest);
     assert.deepEqual(sources.packages['@ours.network/sdk'],{type:'npm',version:'9.9.9'});
    }
   }finally{rmSync(dir,{recursive:true,force:true});}
