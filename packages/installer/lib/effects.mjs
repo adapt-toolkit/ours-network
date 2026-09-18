@@ -13,12 +13,13 @@
 
 import { spawnSync, execFileSync } from 'node:child_process';
 import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, userInfo, platform as osPlatform, release as osRelease } from 'node:os';
+import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
 import { validateHostProfile } from './target.mjs';
+import { createServerOnboarding } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { askYesNo, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
@@ -333,7 +334,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     version,
     interactive: ttyFd != null,
     // Preflight reads the machine rather than asking the orchestrator to.
-    platform: { platform: osPlatform(), release: osRelease() },
+    platform: { platform: osPlatform(), release: osRelease(), arch: osArch() },
     nodeVersion: process.versions.node,
     exists: (path) => existsSync(path),
     knownStateDirs: () => knownStateDirsIn(home),
@@ -589,6 +590,7 @@ export function networkEffects(effects) {
     }
   };
   return {
+    ...createServerOnboarding(effects, { compose, localEnv, bin }),
     sourcePolicyHash(path) {
       return createHash('sha256').update(readFileSync(path)).digest('hex');
     },
@@ -1119,7 +1121,7 @@ export function networkEffects(effects) {
           try { await start(service); }
           catch (error) { failures.push({ service, error }); }
         }
-        if (failures.length) throw new Error(`Application readiness failed: ${failures.map(f => f.service).join(', ')}. Check owning prerequisites; no identities were created.\n${failures.map(f => f.error.message).join('\n\n')}`);
+        if (failures.length) throw new Error(`Application readiness failed: ${failures.map(f => f.service).join(', ')}. Check the selected application prerequisites.\n${failures.map(f => f.error.message).join('\n\n')}`);
         return;
       }
       return nativeLifecycle(record, operation, selected, { effects, localEnv, ownerCommand, bin });
@@ -1142,7 +1144,7 @@ export function networkEffects(effects) {
       // Full metadata and authenticated capability validation follows before publication.
       return validateHostProfile({ endpoint: url.origin, expectedInstanceId: selection.instanceId, credentialPath: resolve(credentialPath) });
     },
-    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath }) {
+    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh = false }) {
       const root = join(home, '.ours-client');
       const configPath = join(root, 'profile.json');
       const credentialPath = join(root, 'credential');
@@ -1153,13 +1155,13 @@ export function networkEffects(effects) {
       const credential = readFileSync(profile.credentialPath, 'utf8');
       if (!credential.trim()) throw new Error('Client credential is empty');
       // Read every supplied input before any publication. Existing setup settings win on retry.
-      const sources = current ? null : resolvedSources
+      const sources = current && !refresh ? null : resolvedSources
         ? Buffer.from(`${JSON.stringify(resolvedSources, null, 2)}\n`)
         : readFileSync(sourcesPath);
-      const fleetSettings = !current && fleetSettingsPath ? readFileSync(fleetSettingsPath) : null;
+      const fleetSettings = (!current || refresh) && fleetSettingsPath ? readFileSync(fleetSettingsPath) : null;
       if (fleetSettings) JSON.parse(fleetSettings.toString());
       ensurePrivateDirectory(root);
-      if (current) {
+      if (current && !refresh) {
         assertPrivateRegularFile(credentialPath, 'managed credential');
         if (readFileSync(credentialPath, 'utf8') !== credential) atomicWriteConfig(credentialPath, credential);
         return { configPath, profile: validateHostProfile(current), settings: current.installer };
@@ -1174,12 +1176,13 @@ export function networkEffects(effects) {
       atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
       return { configPath, profile: validateHostProfile(saved), settings };
     },
-    async acquireClientPackages(configPath, sourcesPath, integrations) {
+    async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false } = {}) {
       const manifest = JSON.parse(readFileSync(sourcesPath, 'utf8'));
       // Public SDK client APIs are actual integration dependencies; Fleet also owns CLI usage.
       const selected = [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
       const packages = selectSourcePackages(manifest, 'client', selected);
-      const root = join(home, '.ours-client-install', createHash('sha256').update(configPath).digest('hex').slice(0, 16));
+      const selectionKey = refresh ? JSON.stringify([configPath, manifest, integrations]) : configPath;
+      const root = join(home, '.ours-client-install', createHash('sha256').update(selectionKey).digest('hex').slice(0, 16));
       const hasGit = Object.values(packages).some(selection => selection.source);
       await effects.run('npm', ['--version']);
       if (hasGit) {
@@ -1199,12 +1202,12 @@ export function networkEffects(effects) {
           const sourceRoot = join(root, `build-${randomUUID()}`);
           ensurePrivateDirectory(sourceRoot);
           try {
-            await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/build/build.mjs')], { cwd: root, env: { OURS_BUILD_ROOT: root, OURS_SOURCE_ROOT: sourceRoot, OURS_BUILD_PACKAGES: selected.join(',') } });
+            await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/build/build.mjs')], { stream: true, cwd: root, env: { OURS_BUILD_ROOT: root, OURS_SOURCE_ROOT: sourceRoot, OURS_BUILD_PACKAGES: selected.join(',') } });
           } finally { rmSync(sourceRoot, { recursive: true, force: true }); }
         } else {
           writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ours-native-clients', private: true, dependencies: Object.fromEntries(Object.entries(packages).map(([name, selection]) => [name, selection.version])) }), { mode: 0o600 });
         }
-        await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: root });
+        await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { stream: true, cwd: root });
         verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
         writePrivateNew(join(root, '.packages-ready'), 'ready\n');
       }
@@ -1417,5 +1420,5 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       failures.push(service);
     }
   }
-  if (failures.length) throw new Error(`Application readiness failed: ${failures.join(', ')}. Check owning prerequisites; no identities were created.`);
+  if (failures.length) throw new Error(`Application readiness failed: ${failures.join(', ')}. Check the selected application prerequisites.`);
 }

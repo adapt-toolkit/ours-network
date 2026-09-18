@@ -39,7 +39,7 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
   if (options.mode === 'native') options.mode = 'packages';
   if (server && !['packages', 'docker'].includes(options.mode)) throw new Error('Mode must be packages (or native) or docker');
   if (server && options.config !== undefined) throw new Error('--config is only valid for client scope');
-  if (!server) for (const key of ['mode', 'stateDir', 'identityName', ...Object.keys(defaults), 'compatible', 'dryRun', 'migrate']) {
+  if (!server) for (const key of ['mode', 'stateDir', 'identityName', ...Object.keys(defaults), 'compatible', 'migrate']) {
     if (options[key] !== undefined) throw new Error(`${key} is only valid for server or all scope`);
   }
   if (!client && (options.integrations !== undefined || options.fleetSettingsPath !== undefined)) throw new Error('--integrations and --fleet-settings require all or client scope');
@@ -49,7 +49,7 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
   }
   if (options.fleetSettingsPath !== undefined && !options.integrations?.includes('fleet')) throw new Error('--fleet-settings requires the fleet integration');
   for (const key of paths) if (options[key] !== undefined && !nonempty(options[key])) throw new Error(`Invalid path for ${key}`);
-  for (const key of ['compatible', 'dryRun', 'migrate']) if (options[key] !== undefined && typeof options[key] !== 'boolean') throw new Error(`${key} must be a boolean`);
+  for (const key of ['compatible', 'migrate']) if (options[key] !== undefined && typeof options[key] !== 'boolean') throw new Error(`${key} must be a boolean`);
   if (server) {
     options.identityName = options.identityName.trim();
     for (const [key, fallback] of Object.entries(defaults)) {

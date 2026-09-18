@@ -1,141 +1,59 @@
-# @ours.network/install — `ours-install`
+# @ours.network/install — one installer for the whole stack
 
-The all-in-one installer for the ours.network stack. One run installs and
-configures the shared daemon, MCP adapter, cowork, Telegram connector, Fleet,
-and plugins for every safely detected agent harness.
+Requires Node.js 22+ and npm. Install the selected release channel:
 
 ```sh
-npm install --global @ours.network/install
+npm install -g @ours.network/install@nightly
 ours-install
 ```
 
-### Stable and nightly channels
+With no arguments, the console form collects the installation choices: server
+and clients (default), runtime mode, installation directory, install/update,
+Human identity name, ports, client integrations and Fleet settings. Linux x64
+recommends native mode; macOS and Windows recommend Docker. On Windows run the
+installer inside WSL with Docker Desktop integration. This recommendation concerns
+packaging and isolation, not a guarantee that emulated x64 is faster on ARM Macs.
 
-Installing `@ours.network/install@latest` selects the stable channel; installing
-`@ours.network/install@nightly` selects the nightly channel. Before changing the
-machine, the installer resolves `@ours.network/mcp`,
-`@ours.network/claude-code`, and `@ours.network/codex`, verifies that their
-selected dist-tags expose one exact lockstep version, and fails closed if they
-do not. MCP and the Codex launcher are installed by exact version, and local
-Claude Code and Codex marketplace manifests pin the corresponding plugin
-packages to that same version.
-
-`OURS_CHANNEL=latest|nightly` (or the legacy `OURS_INSTALL_CHANNEL`) remains an
-explicit override. Without an override, the installed package's own version
-selects the channel.
-
-The normal flow uses one daemon at `~/.ours` on port 3050, shows an eight-stage
-progress bar, and asks only for information it cannot safely infer (normally the
-Human identity's display name). Existing daemon conflicts and moving a Telegram
-connector from another daemon still require explicit confirmation.
-
-## What the installer does
-
-- Installs `@ours.network/cli`, `@ours.network/mcp`,
-  `@ours.network/tg-connector`, `@ours.network/cowork`, and
-  `@ours.network/fleet` on one release channel.
-- Configures, starts, and enables the single shared daemon with a CLI-managed
-  user systemd service on Linux or LaunchAgent on macOS.
-- Creates the daemon's Human identity (historically called the root identity),
-  or preserves the existing one on a re-run.
-- Installs the ours plugin into safely detected Claude Code, Codex, and Hermes
-  installations.
-- Configures and starts cowork as a durable shim over the shared daemon.
-- Configures and starts Telegram as a durable shim over the same daemon.
-- Runs Fleet's native initialization through prepared settings or its interactive wizard. Fleet owns and
-  publishes its v2 configuration, including subscriptions, models, roles,
-  templates, and permissions. The installer does not start Fleet roles.
-
-The operator CLI owns daemon configuration, lifecycle, and boot persistence.
-The MCP package is only the stdio adapter spawned by agent harnesses; the
-installer never asks `ours-mcp` to start a daemon.
-
-Daemon state is temporarily scoped to its package major version. On a same-major
-update, the installer refreshes the packages and runs `ours daemon restart`; the
-CLI streams structured startup phases until restore is complete instead of
-appearing to hang. A different-major update is detected before package
-replacement. The installer explains the incompatibility and, only in an
-interactive run, offers to stop the CLI-managed daemon, copy the complete state
-directory to a timestamped directory under `~/.ours-backups/`, remove the
-managed service and old state, then initialize the new major. The default answer is no, and
-`OURS_ASSUME_YES` never authorizes this purge.
-
-## What remains stopped
-
-Only Fleet is intentionally not started. Review and activate it when ready:
+The same installer accepts complete CLI presets. It reports missing answers before
+changing the machine and never opens hidden prompts when arguments are supplied.
+Both forms show the same preparation, identity, update and readiness progress.
 
 ```sh
-# After completing Fleet's wizard and reviewing ~/fleet.yaml:
-ours-fleet doctor
-ours-fleet config
-ours-fleet up
-ours-fleet ls
+# Whole stack, with prepared Fleet settings and no interactive prompts:
+ours-install --mode docker --state-dir "$HOME/ours-docker" \
+  --identity-name "Your Name" --integrations codex,fleet \
+  --fleet-settings "$HOME/fleet-settings.json"
+
+# Native server only; native and packages mean the same mode:
+ours-install server --mode native --state-dir "$HOME/ours-native" \
+  --identity-name "Your Name"
+
+# Clients connected to an existing server:
+ours-install client --config /private/client/profile.json \
+  --integrations codex,fleet --fleet-settings /private/fleet-settings.json
+
+# Update a retained complete installation and its clients:
+ours-install all update --mode docker --state-dir "$HOME/ours-docker" \
+  --identity-name "Your Name" --integrations codex,fleet \
+  --fleet-settings "$HOME/fleet-settings.json" --compatible
 ```
 
-The final installer screen repeats these commands and provides a copy-paste
-prompt for Claude Code, Codex, or Hermes. The agent should guide local bot-token
-entry without asking the user to paste the secret into chat.
+`server` and `client` are presets of the same flow, not separate interactive
+installers. `--integrations none` explicitly skips client integrations. Use
+`--dry-run` with a complete preset to preview it, and `--help` for all options.
+Fleet's own wizard is available only in interactive setup; CLI Fleet setup requires
+its JSON settings file. Fleet stays stopped until you review and activate it.
 
-## Preview and automation
+The server installs the daemon/SDK/CLI, main MCP, Telegram, Cowork and Messenger.
+It starts the daemon, preserves the existing Human identity (or creates it once),
+then starts its applications. Full-stack setup issues a separate local client
+credential and configures the selected Codex, Claude Code and Fleet integrations.
+Existing identity keys and names are retained on update. An update's storage
+compatibility must be reviewed before supplying `--compatible`.
 
-```sh
-ours-install --dry-run
-OURS_ASSUME_YES=1 ours-install
-ours-install --state-dir /absolute/path --port 3070
-```
-
-Dry-run walks the real plan without writing files, installing packages, starting
-processes, or changing services. `OURS_ASSUME_YES=1` uses the OS username for a
-new Human identity and asks no ordinary setup questions, but it never bypasses
-selection conflicts, connector moves, or destructive safeguards.
-
-A non-default daemon must be selected coherently with a config file or matching
-port and state directory. Hermes and the generated Fleet role persist that
-selection through `OURS_CONFIG`. Claude Code and Codex plugin registrations
-cannot store an environment value; for those harnesses the installer prints the
-exact `export OURS_CONFIG=...` line that must be added to the shell profile
-before starting the harness. There is no per-application daemon.
-
-`OURS_CONFIG` may also name a prepared private host profile containing the
-complete `endpoint`, `expectedInstanceId`, and absolute `credentialPath` tuple.
-The profile and credential must already be regular current-user files with
-private permissions. In this mode the installer verifies `/selection` before
-sending the credential to `/version`, installs only MCP, detected Claude/Codex
-plugins, and Fleet client support, and never creates, starts, stops, or services
-a host daemon. Telegram, cowork, messenger, daemon voice, and daemon state stay
-Compose-owned. If `OURS_CONFIG` is unset, the same profile is discovered at
-`~/.ours/config.json`; a legacy config there keeps the existing local behavior.
-
-## Uninstall
-
-```sh
-ours-uninstall --state-dir "$HOME/.ours"
-ours-uninstall --state-dir "$HOME/.ours" --purge
-```
-
-The uninstaller delegates service and daemon removal to the `ours` CLI. Identity
-state is retained by default. Purging requires the existing destructive gates and
-targets only the explicit state directory.
-
-When `OURS_CONFIG` selects a host profile, uninstall removes only selected
-client attachments. The operator-owned profile and shared credential are kept
-even with `--purge`, and no Compose daemon, service, or state is touched.
-
-## Release channel
-
-`OURS_CHANNEL=nightly` (or `OURS_INSTALL_CHANNEL`) selects the packages' nightly
-dist-tags. Without an override, the installer's own version selects the channel.
-The operator CLI intentionally has no nightly dist-tag and remains untagged on
-both channels.
-
-## Environment
-
-- `OURS_ASSUME_YES=1`: accept safe defaults without prompting.
-- `OURS_INSTALL_DRY_RUN=1`: preview without mutation.
-- `OURS_NPM`: npm executable.
-- `OURS_CONFIG`: explicit legacy daemon config or prepared private host profile.
-- `OURS_STATE_DIR`: explicit daemon state directory.
-- `OURS_CHANNEL`: `latest` or `nightly`.
+The installer embeds exact component versions and SHA-512 values for its release.
+An existing server's retained release selects matching local clients. Secrets are
+read from protected files, and client setup never copies the daemon API master.
 
 ## Selected network installations (2.0)
 
@@ -145,8 +63,8 @@ SHA-512 values. Acquisition validates the ours dependency graph before activatio
 A development override without a release binding is not a qualified product release.
 
 ```sh
-ours-install server install --mode docker --state-dir /private/ours-install
-ours-install server install --mode packages --state-dir /private/ours-install
+ours-install server install --mode docker --state-dir /private/ours-install --identity-name "Your Name"
+ours-install server install --mode packages --state-dir /private/ours-install --identity-name "Your Name"
 ours-install server status --state-dir /private/ours-install
 ours-install server stop --state-dir /private/ours-install
 ours-install server start --state-dir /private/ours-install
@@ -230,7 +148,7 @@ client-owned installer settings:
 ```
 
 ```sh
-ours-install client install --config /private/client/profile.json
+ours-install client install --config /private/client/profile.json --integrations codex,claude-code
 ```
 
 Optional `sourcesPath` and `fleetSettingsPath` values are absolute or resolved
@@ -280,7 +198,7 @@ For a managed server, maintenance runs on the server machine through the install
 ours-install server backup server snapshot --state-dir /path/to/installation
 ours-install server restore server snapshot --state-dir /path/to/installation
 ours-install server rebuild --state-dir /path/to/installation
-ours-install server update --state-dir /path/to/installation --compatible
+ours-install server update --mode docker --state-dir /path/to/installation --identity-name "Your Name" --compatible
 ```
 
 Backup and restore support the full server or an individual `daemon`, `telegram`,

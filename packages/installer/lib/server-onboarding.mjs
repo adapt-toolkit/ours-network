@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { installationPaths } from './plan.mjs';
 import { validateHostProfile } from './target.mjs';
 
-function validateIdentityName(name) {
+export function validateIdentityName(name) {
   if (typeof name !== 'string' || [...name].length < 1 || [...name].length > 64 || name !== name.normalize('NFC')
       || /[\\/\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(name)
       || ['.', '..', 'contact-book', 'root.json', 'bindings.json'].includes(name)) {

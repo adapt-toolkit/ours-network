@@ -1266,6 +1266,7 @@ async function executeServerCommand(args, effects) {
   } else {
     if (args.operation !== 'install' || !args.mode) throw new Error('First server install requires --mode');
     record = effects.newInstallation(args.stateDir, args.mode);
+    for (const key of ['port', 'coworkPort', 'messengerPort']) if (args[key] !== undefined) record[key] = args[key];
   }
   if (record.layoutConversion && !['install', 'start', 'stop', 'status'].includes(args.operation)) {
     throw new Error('Layout conversion is incomplete; resume with server install or server start before changing state or authority');
@@ -1274,7 +1275,7 @@ async function executeServerCommand(args, effects) {
     throw new Error(`Server build activation is incomplete; repeat server ${record.buildTransition.operation} before other mutations`);
   }
   const showInstallProgress = args.operation === 'install' && !(existing && (record.schema === 1 || record.layoutConversion));
-  const installStageCount = existing ? 7 : 9;
+  const installStageCount = (existing ? 7 : 9) + (args.identityName ? 2 : 0);
   let completedInstallStages = 0;
   const installStage = async (label, explanation, action) => {
     if (!showInstallProgress) return action();
@@ -1291,7 +1292,7 @@ async function executeServerCommand(args, effects) {
   };
   if ((!existing || args.operation === 'update') && !record.buildTransition) {
     args.resolvedSources = await installStage('Package selection', 'Resolve the selected server packages before installation.', async () => {
-      const policy = args.sources ? effects.readJson(args.sources) : effects.packagedSourcePolicy();
+      const policy = args.sourcePolicy ?? (args.sources ? effects.readJson(args.sources) : effects.packagedSourcePolicy());
       return effects.resolveSourcePolicy(policy, 'server');
     });
   }
@@ -1324,7 +1325,15 @@ async function executeServerCommand(args, effects) {
     await installStage('Credential initialization', 'Initialize or retain the installation credentials.', () => effects.serverAccess(record, 'access-init', { migrate: !!args.migrate }));
     await installStage('Credential delivery', 'Prepare access for the selected services.', () => effects.serverAccess(record, 'access-issue'));
     await installStage('Build verification', 'Record the installed runtime and selected package versions.', () => effects.recordInstallationBuild(record));
-    await installStage('Service startup', 'Start the daemon and selected services, then check readiness.', () => effects.serverLifecycle(record, 'start'));
+    if (args.identityName) {
+      await installStage('Daemon startup', 'Start the daemon and restore its retained identities.', () => effects.serverLifecycle(record, 'start', ['daemon']));
+      const identity = await installStage('Human identity', 'Keep the existing Human identity, or create it on a fresh daemon.', () => effects.serverEnsureIdentity(record, args.identityName));
+      record.messengerIdentity = identity.name;
+      effects.writeJson(recordPath, JSON.stringify(record, null, 2) + '\n');
+      await installStage('Application startup', 'Start the selected applications and check readiness.', () => effects.serverLifecycle(record, 'start', record.services.filter(name => name !== 'daemon')));
+    } else {
+      await installStage('Service startup', 'Start the daemon and selected services, then check readiness.', () => effects.serverLifecycle(record, 'start'));
+    }
     if (showInstallProgress) effects.out(progress(installStageCount, installStageCount, 'Installation complete', 'The selected services are ready.'));
   } else if (['backup', 'restore', 'reset'].includes(args.operation)) {
     await effects.serverMaintenance(record, args);
@@ -1362,18 +1371,18 @@ async function executeServerCommand(args, effects) {
   return EXIT_OK;
 }
 
-async function runClientCommand(command, effects) {
+export async function runClientCommand(command, effects) {
   const managedPath = join(effects.home, '.ours-client', 'profile.json');
   const saved = effects.readManagedClientProfile();
   let configPath = command.config;
   if (!configPath && saved) {
-    if (effects.interactive && !await effects.ask(`Reuse saved client server ${saved.endpoint}?`, true))
+    if (!command.preset && effects.interactive && !await effects.ask(`Reuse saved client server ${saved.endpoint}?`, true))
       throw new InstallUsageError('Saved client default retained; use an explicit prepared profile to validate replacement input');
     configPath = managedPath;
   }
   let profile;
   if (configPath) profile = validateHostProfile(effects.readProfile(configPath));
-  else if (effects.interactive) {
+  else if (!command.preset && effects.interactive) {
     const endpoint = await effects.askLine('Server HTTP endpoint: ', 'http://127.0.0.1:3050');
     const credentialPath = await effects.askLine('Private issued-token file: ', '');
     if (!credentialPath) throw new InstallUsageError('Client setup requires an issued-token file');
@@ -1390,40 +1399,51 @@ async function runClientCommand(command, effects) {
   await effects.verifyPackagedMcp(configPath || profile);
   const settings = saved?.installer ?? (configPath ? effects.readJson(configPath)?.installer : undefined);
   const settingsBase = saved ? dirname(managedPath) : configPath ? dirname(configPath) : process.cwd();
-  let integrations = settings?.integrations;
-  if (!integrations && effects.interactive) {
+  let integrations = command.integrations ?? settings?.integrations;
+  if (!integrations && !command.preset && effects.interactive) {
     integrations = [];
     for (const name of ['codex', 'claude-code', 'fleet']) if (await effects.ask(`Install ${name}?`, name !== 'fleet')) integrations.push(name);
   }
   if (!Array.isArray(integrations) || !integrations.length || integrations.some(name => !['codex', 'claude-code', 'fleet'].includes(name)) || new Set(integrations).size !== integrations.length) throw new InstallUsageError('installer.integrations must select codex, claude-code and/or fleet');
-  let fleetSettingsPath = settings?.fleetSettingsPath;
+  let fleetSettingsPath = command.preset ? command.fleetSettingsPath : settings?.fleetSettingsPath;
+  if (command.nonInteractive && integrations.includes('fleet') && !fleetSettingsPath) throw new InstallUsageError('Fleet in CLI mode requires --fleet-settings; no interactive wizard will be opened');
   if (fleetSettingsPath !== undefined && (typeof fleetSettingsPath !== 'string' || !fleetSettingsPath))
     throw new InstallUsageError('installer.fleetSettingsPath must be a non-empty path when supplied');
   if (fleetSettingsPath) fleetSettingsPath = resolve(settingsBase, fleetSettingsPath);
   const selectedClients = [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
   let sourcesPath = settings?.sourcesPath;
   let resolvedSources;
-  if (saved) sourcesPath = resolve(settingsBase, sourcesPath);
+  if (command.sourcePolicy) {
+    resolvedSources = await effects.resolveSourcePolicy(command.sourcePolicy, 'client', selectedClients);
+    sourcesPath = undefined;
+  } else if (saved) sourcesPath = resolve(settingsBase, sourcesPath);
   else {
     if (sourcesPath) sourcesPath = resolve(settingsBase, sourcesPath);
     const policy = sourcesPath ? effects.readJson(sourcesPath) : effects.packagedSourcePolicy();
     resolvedSources = await effects.resolveSourcePolicy(policy, 'client', selectedClients);
   }
-  const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath });
+  effects.out(progress(0, 4, 'Client configuration', 'Prepare the selected integrations and private connection profile.'));
+  const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh: !!command.preset });
   try {
     await effects.verifyHostProfile(imported.configPath);
-    const exactSuite = await effects.acquireClientPackages(imported.configPath, imported.settings.sourcesPath, integrations);
+    effects.out(progress(1, 4, 'Client packages', 'Acquire and verify the selected client package versions.'));
+    const exactSuite = await effects.acquireClientPackages(imported.configPath, imported.settings.sourcesPath, integrations, { refresh: !!command.preset });
     const args = { assumeYes: true, dryRun: false, channel: 'latest', clientIntegrations: integrations,
       acquiredFleet: exactSuite.fleetBin, fleetSettingsPath: imported.settings.fleetSettingsPath };
     const target = { mode: 'host-profile', managed: true, configPath: imported.configPath, profile: imported.profile, endpoint: imported.profile.endpoint };
+    effects.out(progress(2, 4, 'Client integrations', 'Register the selected agent integrations.'));
     const summary = await runHarnessPhase(args, effects, { target, isDefaultStateDir: false, exactSuite });
-    if (integrations.includes('fleet')) summary.push(await runFleetPhase(args, effects, { target, isDefaultStateDir: false }));
+    if (integrations.includes('fleet')) {
+      effects.out(progress(3, 4, 'Fleet configuration', 'Apply prepared settings or open the selected Fleet wizard.'));
+      summary.push(await runFleetPhase(args, effects, { target, isDefaultStateDir: false }));
+    }
     const incomplete = integrations.filter(name => !summary.some(row => row.key === name && row.state === 'installed'));
     if (effects.env.OURS_CONFIG && resolve(effects.env.OURS_CONFIG) !== imported.configPath)
       effects.out(warn('This shell has an explicit OURS_CONFIG override. Unset it for new clients to use the saved default; installer did not edit your shell.'));
     effects.out(incomplete.length
       ? warn(`Client setup incomplete (${incomplete.join(', ')}); saved profile and settings retained. Re-run ours-install client install.`)
       : ok(`Client setup complete. New clients discover ${imported.configPath}; no OURS_CONFIG export is required.`));
+    if (!incomplete.length) effects.out(progress(4, 4, 'Client setup complete', 'All selected integrations are configured.'));
     return incomplete.length ? EXIT_REFUSED : EXIT_OK;
   } catch (error) {
     effects.out(warn(`Client setup incomplete: ${reason(error)}. Saved profile and settings retained; re-run ours-install client install.`));
