@@ -2,6 +2,7 @@
 import * as fs from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
@@ -35,7 +36,23 @@ try {
   const help = execFileSync(process.execPath, [entry, '--help'], { encoding: 'utf8' });
   assert.match(help, /ours-install/);
   assert.equal(await prepareMigrationCliRuntime({ root: target }, { ...effects, run: () => assert.fail('ready management runtime must be reused') }), entry);
-  console.log('Verified named-volume import, ownership remapping, retry preservation and persistent management runtime.');
+  // Treat the first installation as an ephemeral npx source, then delete it.
+  const temporaryModule = await import(pathToFileURL(join(target, 'launcher-runtime/node_modules/@ours.network/install/lib/legacy-migration.mjs')));
+  const retainedRoot = join(root, 'retained'); fs.mkdirSync(retainedRoot, { mode: 0o700 });
+  const partialEntry = join(retainedRoot, 'launcher-runtime/node_modules/@ours.network/install/install.mjs');
+  await assert.rejects(temporaryModule.prepareMigrationCliRuntime({ root: retainedRoot }, { ...effects, async run(command, args) {
+    if (command === 'npm' && args[0] === 'install') {
+      fs.mkdirSync(join(partialEntry, '..'), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(partialEntry, 'throw new Error("incomplete runtime")');
+      throw new Error('simulated interrupted dependency installation');
+    }
+    return effects.run(command, args);
+  } }), /simulated interrupted/);
+  assert(!fs.existsSync(join(retainedRoot, 'launcher-runtime/.ready')));
+  const retainedEntry = await temporaryModule.prepareMigrationCliRuntime({ root: retainedRoot }, effects);
+  fs.rmSync(target, { recursive: true, force: true });
+  assert.match(execFileSync(process.execPath, [retainedEntry, '--help'], { encoding: 'utf8' }), /ours-install/);
+  console.log('Verified named-volume import, ownership remapping, repair after interruption, and management commands after deleting their original installer.');
 } finally {
   try { execFileSync('docker', ['volume', 'rm', volume], { stdio: 'ignore' }); } catch { /* no volume if preparation failed */ }
   fs.rmSync(root, { recursive: true, force: true });

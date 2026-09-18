@@ -71,8 +71,9 @@ export async function prepareMigrationCliRuntime(record, effects) {
   const packageRoot = fileURLToPath(new URL('..', import.meta.url));
   const packed = parse(await effects.run('npm', ['pack', packageRoot, '--ignore-scripts', '--pack-destination', root, '--json']));
   if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0].filename !== 'string' || basename(packed[0].filename) !== packed[0].filename) throw new Error('Cannot prepare the persistent installer package');
-  await effects.run('npm', ['install', '--prefix', root, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(root, packed[0].filename)], { stream: true });
+  await effects.run('npm', ['install', '--prefix', root, '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund', join(root, packed[0].filename)], { stream: true });
   if (!existsSync(entry)) throw new Error('Persistent installer entry is missing');
+  await effects.run(process.execPath, [entry, '--help']);
   atomicWriteConfig(ready, 'ready\n');
   return entry;
 }

@@ -22,7 +22,7 @@ function fixture(t) {
   const record = { schema: 2, root: targetRoot, mode: 'packages', sourcesPath: join(targetRoot, 'sources.json'), port: 4050, instanceId: '12345678-1234-1234-1234-123456789abc' };
   const readJson = path => existsSync(path) ? JSON.parse(readFileSync(path)) : null;
   const deps = {
-    prepareMigrationCliRuntime: async () => '/fixture/install.mjs',
+    prepareMigrationCliRuntime: async () => { at('prepare-cli'); return '/fixture/install.mjs'; },
     inspectManagedCli: async () => ({ originalProgram: 'ours' }),
     installManagedCli: async () => at('cli-cutover'),
     ensureLegacyLockSupport: async () => at('lock-support'),
@@ -165,4 +165,12 @@ test('repeating a completed migration verifies retained identities without invok
   assert.equal(f.events.filter(event => event === 'copy-state').length, copied);
   assert.equal(f.events.filter(event => event === 'daemon:stop').length, stopped);
   assert.equal(readFileSync(f.sourceConfig, 'utf8'), f.sourceConfigBytes);
+});
+
+ test('persistent management preparation failure leaves the source running and resumes before shutdown', async t => {
+  const f = fixture(t); f.fail('prepare-cli');
+  await assert.rejects(f.run(), /before activation/);
+  assert(!f.events.includes('daemon:stop')); assert(!f.events.includes('daemon:uninstall-service'));
+  assert.equal(readFileSync(f.sourceConfig, 'utf8'), f.sourceConfigBytes);
+  assert.equal(await f.run(), 0);
 });
