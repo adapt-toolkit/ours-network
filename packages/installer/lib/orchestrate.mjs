@@ -1298,7 +1298,7 @@ async function executeServerCommand(args, effects) {
   }
   if (!existing && args.sources) record.sourcePolicyHash = effects.sourcePolicyHash(args.sources);
   await installStage('Prerequisite checks', record.mode === 'docker' ? 'Check Docker Engine and Docker Compose.' : 'Check native tools and the user service manager.', () => effects.serverPreflight(record, args.operation, {
-    existing, sourcePath: args.sources ?? record.sourcesPath, sourceManifest: args.resolvedSources,
+    existing, sourcePath: args.sources ?? record.sourcesPath, sourceManifest: args.resolvedSources, identityName: args.identityName,
   }));
   if (existing && (record.schema === 1 || record.layoutConversion)
     && ['install', 'start', 'restart', 'update', 'rebuild'].includes(args.operation)) {

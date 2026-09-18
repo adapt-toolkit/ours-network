@@ -7,6 +7,7 @@ import { banner, heading, info, ok, warn, progress } from './ui.mjs';
 import { isCancel } from './prompt.mjs';
 import { USAGE } from './usage.mjs';
 import { validateIdentityName } from './server-onboarding.mjs';
+import { validateFleetSettings } from './fleet-settings.mjs';
 
 const maintenance = new Set(['status', 'start', 'stop', 'restart', 'rebuild', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
 const clientPackages = integrations => [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
@@ -31,7 +32,7 @@ export async function prepareSetupPlan(options, effects) {
   if (effects.platform?.platform === 'win32') throw new InstallUsageError('Run ours-install inside WSL with Docker Desktop integration on Windows. Direct Windows Node installations are not supported.');
   const plan = { ...options };
   if (options.scope !== 'client') validateIdentityName(options.identityName);
-  if (options.fleetSettingsPath) readObject(effects, options.fleetSettingsPath, 'Fleet settings');
+  if (options.fleetSettingsPath) validateFleetSettings(readObject(effects, options.fleetSettingsPath, 'Fleet settings'));
   const policy = options.sources ? readObject(effects, options.sources, 'Source policy') : effects.packagedSourcePolicy();
   plan.sourcePolicy = policy;
   if (options.scope !== 'client') {

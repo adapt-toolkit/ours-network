@@ -626,7 +626,7 @@ export function networkEffects(effects) {
       const project = `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
       return { schema: 2, root, mode, instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES], port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
     },
-    async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest } = {}) {
+    async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName } = {}) {
       if (existing) {
         privateDirectory(record.root);
         assertPrivateRegularFile(join(record.root, 'installation.json'), 'selection');
@@ -636,10 +636,11 @@ export function networkEffects(effects) {
       if (record.mode === 'docker') {
         const nativeRoot = existing ? '/path/to/new-empty-directory' : record.root;
         const quotedRoot = `'${String(nativeRoot).replaceAll("'", "'\\''")}'`;
+        const quotedName = `'${String(identityName ?? record.messengerIdentity ?? 'Your Name').replaceAll("'", "'\\''")}'`;
         const recovery = [
           'Please install Docker Desktop on macOS/Windows, or Docker Engine with the Compose plugin on Linux, and start Docker before retrying.',
           'Docker is recommended for macOS and Windows.',
-          `Alternatively, use native installation: ours-install server install --mode packages --state-dir ${quotedRoot}`,
+          `Alternatively, use native installation: ours-install server install --mode packages --state-dir ${quotedRoot} --identity-name ${quotedName}`,
           'Native mode requires systemd user services on Linux/WSL or a launchd GUI session on macOS.',
           ...(existing ? ['Keep this existing Docker installation in Docker mode; use a separate empty directory for a new native installation.'] : []),
         ].join('\n');

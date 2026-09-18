@@ -41,7 +41,6 @@ test('unknown, duplicate, conflicting and malformed CLI values fail closed', () 
     ['server', ...server, '--scope=server'], ['server', 'install', ...server, '--action=update'],
     ['server', ...server, '--integrations=none'], ['server', ...server, '--config=/private/profile'],
     ['client', '--config=/private/profile', '--integrations=none', '--mode=docker'],
-    ['client', '--config=/private/profile', '--integrations=none', '--dry-run'],
     ['all', ...server, '--integrations=none,codex'], ['all', ...server, '--integrations=codex,codex'],
     ['all', ...server, '--integrations=none', '--fleet-settings=/private/fleet'],
     ['server', ...server, '--port=3052'], ['server', ...server, '--port=65536'],
@@ -106,4 +105,16 @@ test('interactive setup refuses absent TTY and cancellation without initiating w
   await assert.rejects(collectSetupOptions({ interactive: false, askLine: () => { throw new Error('must not prompt'); } }), /TTY/);
   const f = interactiveFixture({ answers: { 'Continue with this setup?': false } });
   await assert.rejects(collectSetupOptions(f.effects), /cancelled/);
+});
+
+
+test('client presets support a non-mutating dry-run', () => {
+  assert.equal(parse(['client', '--config=/private/profile', '--integrations=none', '--dry-run']).dryRun, true);
+});
+
+
+test('interactive setup does not silently replace a legacy global installation with a new root', async () => {
+  const f = interactiveFixture();
+  f.effects.readJson = path => path === '/home/fixture/.ours/config.json' ? { stateDir: '/home/fixture/.ours', port: 3050 } : null;
+  await assert.rejects(collectSetupOptions(f.effects), /existing global daemon.*cannot migrate/is);
 });

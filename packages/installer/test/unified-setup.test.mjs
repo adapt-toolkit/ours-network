@@ -116,3 +116,12 @@ test('invalid Human names fail before acquiring a server lock', async () => {
   await assert.rejects(prepareSetupPlan({ ...options, identityName: '../invalid' }, effects), /Invalid Human identity name/);
   assert.deepEqual(events, []);
 });
+
+
+test('incomplete Fleet JSON rejects the complete preset before server or client changes', async () => {
+  const { effects, files, events } = fixture();
+  files.set('/private/fleet.json', {});
+  effects.resolveSourcePolicy = () => assert.fail('Fleet answers must validate before package resolution');
+  await assert.rejects(prepareSetupPlan({ ...options, integrations: ['fleet'], fleetSettingsPath: '/private/fleet.json' }, effects), /Fleet|subscriptions|required/i);
+  assert.deepEqual(events, []);
+});

@@ -120,13 +120,17 @@ export async function collectSetupOptions(effects) {
     options.stateDir = await effects.askLine('Private installation root: ', join(effects.home, '.ours-install'));
     options.stateDir = expandPaths({ stateDir: options.stateDir }, effects.home).stateDir;
     existing = effects.readJson(join(options.stateDir, 'installation.json'));
+    const legacyRoot = join(effects.home, '.ours');
+    const legacy = !existing ? effects.readJson(join(legacyRoot, 'config.json')) : null;
+    if (legacy?.stateDir === legacyRoot) throw new Error(`An existing global daemon was found at ${legacyRoot}, without a managed installation record for the selected root. This form cannot migrate that installation yet. Keep its state; use explicit CLI presets with a different empty directory only if you intend a separate installation.`);
   }
   options.operation = (await effects.askLine('Install or update? ', existing ? 'update' : 'install')).trim();
   if (options.scope !== 'client') {
     const recommendation = recommendedMode({ ...effects.platform, arch: effects.platform?.arch ?? process.arch });
-    effects.out(recommendation.reason);
-    options.mode = await effects.askLine('Runtime mode (packages or docker): ', existing?.mode ?? recommendation.mode);
-    options.identityName = await effects.askLine('What name should others see? ', existing?.identityName ?? effects.username?.() ?? 'me');
+    effects.out(`Detected ${effects.platform?.platform ?? 'unknown'} / ${effects.platform?.arch ?? process.arch}. ${recommendation.reason}`);
+    const defaultMode = existing?.mode ?? recommendation.mode;
+    options.mode = await effects.askLine('Runtime mode (native or docker): ', defaultMode === 'packages' ? 'native' : defaultMode);
+    options.identityName = await effects.askLine('What name should others see? ', existing?.messengerIdentity ?? effects.username?.() ?? 'me');
     for (const [key, fallback] of Object.entries(defaults)) {
       const label = { port: 'Daemon', coworkPort: 'Cowork', messengerPort: 'Messenger' }[key];
       const value = await effects.askLine(`${label} port: `, String(existing?.[key] ?? fallback));
