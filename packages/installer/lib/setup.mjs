@@ -127,6 +127,7 @@ export async function runSetup(argv, effects) {
     if (argv.includes('--help') || argv.includes('-h')) { effects.out(USAGE); return 0; }
     if (argv.length === 1 && ['--version', '-V'].includes(argv[0])) { effects.out(effects.version ?? 'unknown'); return 0; }
     if (argv[0] === 'server' && maintenance.has(argv[1])) return await runServerCommand(parseNetworkArgs(argv), effects);
+    if (!argv.length && effects.env?.OURS_ASSUME_YES) throw new InstallUsageError('OURS_ASSUME_YES cannot fill an interactive setup plan. Supply complete CLI presets for unattended installation.');
     if (!argv.length) { effects.out(banner()); effects.out(heading('Interactive setup')); }
     const options = argv.length ? parseSetupArgs(argv, { home: effects.home }) : await collectSetupOptions(effects);
     const plan = await prepareSetupPlan(options, effects);

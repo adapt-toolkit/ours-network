@@ -125,3 +125,29 @@ test('incomplete Fleet JSON rejects the complete preset before server or client 
   await assert.rejects(prepareSetupPlan({ ...options, integrations: ['fleet'], fleetSettingsPath: '/private/fleet.json' }, effects), /Fleet|subscriptions|required/i);
   assert.deepEqual(events, []);
 });
+
+
+test('legacy assume-yes environment cannot silently answer the interactive form', async () => {
+  const { effects, events } = fixture();
+  effects.interactive = true; effects.env.OURS_ASSUME_YES = '1';
+  assert.equal(await runSetup([], effects), 2);
+  assert.deepEqual(events, []);
+});
+
+test('interactive answers and equivalent CLI presets execute the same server workflow', async () => {
+  const manual = fixture();
+  manual.effects.interactive = true;
+  manual.effects.username = () => 'Test Human';
+  manual.effects.askLine = async (question, fallback) => {
+    if (question === 'Set up all, server, or client? ') return 'server';
+    if (question === 'Private installation root: ') return root;
+    return fallback;
+  };
+  manual.effects.ask = async () => true;
+  assert.equal(await runSetup([], manual.effects), 0);
+  const preset = fixture();
+  assert.equal(await runSetup(['server', '--mode', 'native', '--state-dir', root, '--identity-name', 'Test Human'], preset.effects), 0);
+  assert.deepEqual(preset.events, manual.events);
+  const stageNames = lines => lines.filter(line => /%/.test(line));
+  assert.deepEqual(stageNames(preset.lines), stageNames(manual.lines));
+});
