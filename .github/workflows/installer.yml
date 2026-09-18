@@ -1,0 +1,83 @@
+name: Installer
+on:
+  pull_request:
+    branches: [main, prerelease]
+  push:
+    branches: [main, prerelease]
+  workflow_dispatch:
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:release
+      - run: npm test
+      - name: Verify selected registry artifacts and dependency graph
+        run: node scripts/verify-release.mjs --installed
+      - name: Pack and verify installer release contents
+        run: |
+          npm pack --workspace @ours.network/install --pack-destination "$RUNNER_TEMP" --json > "$RUNNER_TEMP/installer-pack.json"
+          node --input-type=module - <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { execFileSync } from 'node:child_process';
+          const [packed] = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'installer-pack.json')));
+          const archive = path.join(process.env.RUNNER_TEMP, packed.filename);
+          const read = file => execFileSync('tar', ['-xOf', archive, `package/${file}`], {encoding: 'utf8'});
+          const pkg = JSON.parse(fs.readFileSync('packages/installer/package.json'));
+          const channel = pkg.version.includes('-nightly.') ? 'nightly' : 'stable';
+          const release = JSON.parse(fs.readFileSync(`releases/${channel}.json`));
+          assert.equal(packed.name, '@ours.network/install');
+          assert.equal(packed.version, release.installerVersion);
+          assert.deepEqual(JSON.parse(read('assets/release.json')), release);
+          assert.deepEqual(JSON.parse(read('assets/sources.json')), {
+            release,
+            packages: Object.fromEntries(Object.entries(release.packages).map(([name, p]) => [name, {type: 'npm', version: p.version}]))
+          });
+          assert.equal(read('assets/release-lock.json'), fs.readFileSync('packages/installer/assets/release-lock.json', 'utf8'));
+          assert.equal(JSON.parse(read('package.json')).bin['ours-install'], 'install.mjs');
+          for (const file of ['install.mjs', 'uninstall.mjs', 'lib/effects.mjs', 'assets/Dockerfile']) assert(read(file).length > 0);
+          console.log(`Verified installer archive ${packed.name}@${packed.version}`);
+          JS
+  publish:
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prerelease')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Verify product version and publication channel
+        run: |
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          const version=JSON.parse(fs.readFileSync('packages/installer/package.json')).version;
+          const nightly=/^\d+\.\d+\.\d+-nightly\.\d+$/.test(version);
+          const stable=/^\d+\.\d+\.\d+$/.test(version);
+          if (process.env.GITHUB_REF==='refs/heads/prerelease' ? !nightly : !stable) throw new Error('Installer version/branch mismatch');
+          JS
+      - run: node scripts/verify-release.mjs
+      - name: Pack immutable product manifest
+        run: npm pack --workspace @ours.network/install --pack-destination "$RUNNER_TEMP"
+      - name: Publish installer after its selected components
+        run: |
+          if [ "$GITHUB_REF" = refs/heads/prerelease ]; then
+            npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag nightly --access public
+          else
+            npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag latest --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

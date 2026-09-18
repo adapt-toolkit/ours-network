@@ -1,0 +1,222 @@
+# OURS 2.0 source delivery. Build input: Dockerfile, sources.json and scripts/ in this delivery directory.
+# Pinned feature commits must be available in their upstream repositories before building.
+# Docker Compose 2.35+ with BuildKit; current upstream MUFL compiler: linux/amd64.
+# Set OURS_DAEMON_ID to one retained lowercase UUID before the first start.
+# Private SDK source access: export OURS_BUILD_GITHUB_TOKEN with read access to
+# adapt-toolkit/ours-sdk. Passed only as a BuildKit secret, never an image ARG.
+# Supported setup/start entrypoint: ours-install server install --mode docker ...
+# The installer calls prepare, then owning HMAC access-init/access-issue, then
+# starts daemon and consumers in dependency order. Compose is diagnostic only.
+# Protected optional Telegram JSON can use the prepare service telegram-input.
+# No bot settings are required to start the connector without a configured bot.
+# Fleet and the Codex/Claude integrations stay on the host; main MCP executes in Docker.
+# Host clients use the same pinned feature revisions documented in README.md.
+
+x-build: &source-build
+  context: .
+  target: runtime
+  secrets: [github_token]
+  dockerfile: Dockerfile
+
+x-runtime: &runtime
+  build: *source-build
+  platform: linux/amd64
+  image: "${OURS_IMAGE:-ours-compose-2-runtime:local}"
+  user: "${OURS_UID:-1000}:${OURS_GID:-1000}"
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777"]
+  networks: [ours]
+  stop_grace_period: 30s
+
+x-owner-environment: &owner-environment
+  HOME: /tmp
+  OURS_CONFIG: /var/lib/ours/config.json
+  OURS_STATE_DIR: /var/lib/ours
+  OURS_PORT: "3050"
+  OURS_LISTEN_HOST: 0.0.0.0
+  OURS_API_VISIBILITY: owner
+  OURS_DAEMON_ID: "${OURS_DAEMON_ID:?Set a stable daemon UUID}"
+  OURS_ACCESS_MIGRATE: "${OURS_ACCESS_MIGRATE:-0}"
+  OURS_MESSENGER_IDENTITY: "${OURS_MESSENGER_IDENTITY:-}"
+
+x-owner-volumes: &owner-volumes
+  - {type: volume, source: server-storage, target: /var/lib/ours, volume: {nocopy: true, subpath: state/daemon}}
+  - {type: volume, source: server-storage, target: /var/lib/ours-mcp, volume: {nocopy: true, subpath: state/mcp}}
+  - {type: volume, source: server-storage, target: /credentials/telegram, volume: {nocopy: true, subpath: state/credentials/telegram}}
+  - {type: volume, source: server-storage, target: /credentials/cowork, volume: {nocopy: true, subpath: state/credentials/cowork}}
+  - {type: volume, source: server-storage, target: /credentials/messenger, volume: {nocopy: true, subpath: state/credentials/messenger}}
+  - type: volume
+    source: owner-locks
+    target: "/tmp/ours-${OURS_UID:-1000}"
+    volume: {nocopy: true}
+
+x-client-order: &client-order
+  daemon: {condition: service_healthy}
+
+services:
+  prepare:
+    profiles: [administration]
+    build: *source-build
+    platform: linux/amd64
+    image: "${OURS_IMAGE:-ours-compose-2-runtime:local}"
+    user: "0:0"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETUID, SETGID]
+    security_opt: [no-new-privileges:true]
+    entrypoint: [node, /opt/ours/docker/client-setup.mjs]
+    command: [prepare]
+    environment:
+      OURS_UID: "${OURS_UID:-1000}"
+      OURS_GID: "${OURS_GID:-1000}"
+      OURS_DAEMON_ID: "${OURS_DAEMON_ID:?Set a stable daemon UUID}"
+      OURS_COWORK_REST_PORT: "${OURS_COWORK_PORT:-3052}"
+      OURS_MESSENGER_IDENTITY: "${OURS_MESSENGER_IDENTITY:-}"
+      OURS_BROKER_URL: "${OURS_BROKER_URL:-}"
+    volumes:
+      - {type: volume, source: server-storage, target: /storage, volume: {nocopy: true}}
+      - {type: volume, source: owner-locks, target: /owner-locks, volume: {nocopy: true}}
+
+  daemon:
+    <<: *runtime
+    environment: *owner-environment
+    volumes:
+      - {type: volume, source: server-storage, target: /var/lib/ours, volume: {nocopy: true, subpath: state/daemon}}
+      - {type: volume, source: server-storage, target: /var/lib/ours-mcp, volume: {nocopy: true, subpath: state/mcp}}
+      - {type: volume, source: owner-locks, target: "/tmp/ours-${OURS_UID:-1000}", volume: {nocopy: true}}
+    ports:
+      - {target: 3050, published: "${OURS_HOST_PORT:-3050}", host_ip: 127.0.0.1}
+    healthcheck:
+      test: [CMD, node, /opt/ours/docker/healthcheck.mjs]
+      interval: 5s
+      timeout: 4s
+      start_period: 30s
+      retries: 12
+
+  access:
+    <<: *runtime
+    environment: *owner-environment
+    volumes: *owner-volumes
+    entrypoint: [node, /opt/ours/docker/client-setup.mjs]
+    command: [access-init]
+    profiles: [administration]
+
+  telegram:
+    <<: *runtime
+    entrypoint: [/bin/sh, -e, /opt/ours/docker/start-telegram.sh]
+    environment:
+      HOME: /tmp
+      OURS_TG_CONFIG: /var/lib/ours-telegram/config.json
+      OURS_TG_STATE_DIR: /var/lib/ours-telegram
+      OURS_TG_CONTROL_PORT: "3051"
+      OURS_TG_DAEMON_URL: http://daemon:3050
+      OURS_TG_DAEMON_ID: "${OURS_DAEMON_ID:?Set a stable daemon UUID}"
+      OURS_TG_DAEMON_CREDENTIAL_PATH: /credentials/telegram/daemon-token
+    volumes:
+      - {type: volume, source: server-storage, target: /var/lib/ours-telegram, volume: {nocopy: true, subpath: state/telegram}}
+      - {type: volume, source: server-storage, target: /credentials/telegram, read_only: true, volume: {nocopy: true, subpath: state/credentials/telegram}}
+    depends_on: *client-order
+    healthcheck:
+      test: [CMD, /bin/sh, /opt/ours/docker/health-telegram.sh]
+      interval: 5s
+      timeout: 4s
+      start_period: 30s
+      retries: 12
+
+  cowork:
+    <<: *runtime
+    entrypoint: [/bin/sh, -e, /opt/ours/docker/start-cowork.sh]
+    environment:
+      HOME: /tmp
+      OURS_COWORK_CONFIG: /var/lib/ours-cowork/config.json
+      OURS_COWORK_STATE_DIR: /var/lib/ours-cowork
+      OURS_COWORK_REST_PORT: "${OURS_COWORK_PORT:-3052}"
+      OURS_DAEMON_URL: http://daemon:3050
+      OURS_DAEMON_ID: "${OURS_DAEMON_ID:?Set a stable daemon UUID}"
+      OURS_DAEMON_CREDENTIAL_PATH: /credentials/cowork/daemon-token
+    volumes:
+      - {type: volume, source: server-storage, target: /var/lib/ours-cowork, volume: {nocopy: true, subpath: state/cowork}}
+      - {type: volume, source: server-storage, target: /credentials/cowork, read_only: true, volume: {nocopy: true, subpath: state/credentials/cowork}}
+    ports:
+      - {target: "${OURS_COWORK_PORT:-3052}", published: "${OURS_COWORK_PORT:-3052}", host_ip: 127.0.0.1}
+    depends_on: *client-order
+    healthcheck:
+      test: [CMD, /bin/sh, /opt/ours/docker/health-cowork.sh]
+      interval: 5s
+      timeout: 15s
+      start_period: 30s
+      retries: 12
+
+  messenger:
+    <<: *runtime
+    entrypoint: [/bin/sh, -e, /opt/ours/docker/start-messenger.sh]
+    environment:
+      HOME: /tmp
+      OURS_DAEMON_URL: http://daemon:3050
+      OURS_DAEMON_ID: "${OURS_DAEMON_ID:?Set a stable daemon UUID}"
+      OURS_DAEMON_CREDENTIAL_PATH: /credentials/messenger/daemon-token
+      OURS_MESSENGER_IDENTITY: "${OURS_MESSENGER_IDENTITY:-}"
+      OURS_MESSENGER_HOST: 0.0.0.0
+      OURS_MESSENGER_PORT: "8420"
+      OURS_MESSENGER_PUBLIC_ORIGIN: "http://127.0.0.1:${OURS_MESSENGER_PORT:-8420}"
+      OURS_MESSENGER_STATE_DIR: /var/lib/ours-messenger
+    volumes:
+      - {type: volume, source: server-storage, target: /var/lib/ours-messenger, volume: {nocopy: true, subpath: state/messenger}}
+      - {type: volume, source: server-storage, target: /credentials/messenger, read_only: true, volume: {nocopy: true, subpath: state/credentials/messenger}}
+    ports:
+      - {target: 8420, published: "${OURS_MESSENGER_PORT:-8420}", host_ip: 127.0.0.1}
+    depends_on: *client-order
+    healthcheck:
+      test: [CMD, node, /opt/ours/docker/health-messenger.mjs]
+      interval: 5s
+      timeout: 4s
+      start_period: 30s
+      retries: 12
+
+  state-operation:
+    profiles: [maintenance]
+    build:
+      <<: *source-build
+      target: maintenance
+    platform: linux/amd64
+    image: "${OURS_MAINTENANCE_IMAGE:-ours-compose-2-maintenance:local}"
+    user: "${OURS_UID:-1000}:${OURS_GID:-1000}"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [--help]
+    environment:
+      OURS_STATE_DOMAIN: "${OURS_STATE_DOMAIN:-daemon}"
+      OURS_STATE_ROOT: /storage
+      OURS_LIVE_ROOT: "${OURS_LIVE_ROOT:-/storage/state}"
+      OURS_BUILD_ROOT: /opt/ours
+      OURS_CLI_PATH: /opt/ours/node_modules/.bin/ours
+      OURS_DAEMON_CONFIG: /var/lib/ours/config.json
+      OURS_COWORK_CLI_PATH: /opt/ours/node_modules/.bin/ours-cowork
+      OURS_COWORK_CONFIG: /var/lib/ours-cowork/config.json
+      OURS_COWORK_STATE_DIR: /var/lib/ours-cowork
+      OURS_DAEMON_ID: "${OURS_DAEMON_ID:?Set a stable daemon UUID}"
+      OURS_COWORK_REST_PORT: "${OURS_COWORK_PORT:-3052}"
+      OURS_BROKER_URL: "${OURS_BROKER_URL:-}"
+    volumes:
+      - {type: volume, source: server-storage, target: /storage, volume: {nocopy: true}}
+      - {type: volume, source: server-storage, target: /var/lib/ours, volume: {nocopy: true, subpath: state/daemon}}
+      - {type: volume, source: server-storage, target: /var/lib/ours-mcp, volume: {nocopy: true, subpath: state/mcp}}
+      - {type: volume, source: server-storage, target: /var/lib/ours-cowork, volume: {nocopy: true, subpath: state/cowork}}
+
+volumes:
+  server-storage:
+  owner-locks:
+
+networks:
+  ours:
+    driver: bridge
+
+secrets:
+  github_token:
+    environment: OURS_BUILD_GITHUB_TOKEN

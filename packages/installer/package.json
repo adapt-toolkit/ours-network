@@ -1,0 +1,41 @@
+{
+  "name": "@ours.network/install",
+  "version": "1.2.0-nightly.3",
+  "private": false,
+  "description": "The all-in-one ours.network installer: one shared daemon, MCP, cowork, Telegram, Fleet initialization, harness plugins, Human identity, progress UI, and guided next steps.",
+  "type": "module",
+  "bin": {
+    "ours-install": "install.mjs"
+  },
+  "files": [
+    "install.mjs",
+    "install.sh",
+    "lib",
+    "assets",
+    "uninstall.mjs",
+    "uninstall.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "FSL-1.1-Apache-2.0",
+  "author": "Adapt Toolkit",
+  "homepage": "https://github.com/adapt-toolkit/ours-network/tree/main/packages/installer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adapt-toolkit/ours-network.git",
+    "directory": "packages/installer"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "prepack": "node ../../scripts/prepare-installer.mjs"
+  },
+  "dependencies": {
+    "koffi": "3.2.1",
+    "tar-stream": "3.1.7",
+    "jsonc-parser": "3.3.1",
+    "semver": "7.8.5"
+  }
+}

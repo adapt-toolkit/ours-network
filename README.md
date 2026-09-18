@@ -98,3 +98,24 @@ The FSL permits any use **except a Competing Use** — broadly, offering a comme
 Security reports: [SECURITY.md](./SECURITY.md) · Contributing & CLA: [CONTRIBUTING.md](./CONTRIBUTING.md) · Trademarks: [TRADEMARKS.md](./TRADEMARKS.md)
 
 Copyright 2026 Adapt Framework Solutions Ltd.
+
+
+## Installer development and release ownership
+
+`packages/installer` owns `@ours.network/install` and its `ours-install` command.
+The installer source, tests, Docker/native assets and versioning now live here;
+MCP no longer bumps or publishes this package. Run `npm ci`, `npm test` and
+`npm run test:release` from this repository.
+
+The product release inputs are [stable](releases/stable.json) and
+[nightly](releases/nightly.json). A release packs one channel-matching exact
+component set into its immutable npm archive; it does not fetch mutable manifests
+from GitHub at installation time. See [release preparation](releases/README.md).
+The nightly manifest selects published component versions and SHA-512 integrity
+values. Stable remains unbound until a stable component set is selected.
+
+PR CI verifies the selected registry archives and nested ours dependency graph,
+then packs and inspects the installer archive. Runtime acquisition checks the
+release-bound ours packages before activating server builds or client integrations.
+This fixes the ours component set; third-party dependencies are still resolved
+by npm for the target platform rather than replayed from one universal lockfile.

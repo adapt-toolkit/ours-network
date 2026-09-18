@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "channel": "nightly",
+  "installerVersion": "1.2.0-nightly.3",
+  "packages": {
+    "@ours.network/sdk": {
+      "version": "3.8.1-nightly.3",
+      "integrity": "sha512-iUVCs+jryoeR2Ip/uHzpkJwbpoJeLDASUaE3lC+eYDj8dbI1MBwTpeOXFemUK052O6lA4ZWrhyRgE9pJU3a+Kw=="
+    },
+    "@ours.network/cli": {
+      "version": "2.8.1-nightly.1",
+      "integrity": "sha512-1Rmbqlr790FhqQW/wQ//YEL7b0Q2KVSCA2TlpjaLRkj9Xh55rOoazBJjFuW/fUpTz3Z1B3MUPK9LWiYd+A0kNA=="
+    },
+    "@ours.network/tg-connector": {
+      "version": "1.0.1-nightly.1",
+      "integrity": "sha512-/Do7EfINknDks3yYndOi9aLc1alxB50qk+WKv8DRuZpDB89DDMQ+DoSGQerdvsMp32nQ3LICL8TPjcdFMZfx8Q=="
+    },
+    "@ours.network/cowork": {
+      "version": "1.3.2-nightly.20260918.4d9242e",
+      "integrity": "sha512-04D2lJ97SrTrkVRRbdTZ0y+KvQdG/bpnmFFjsyUqQTij+5zEkNizTG/xhcCL8m7Mb0XvVFL8WzJ62Xgh5ahlRw=="
+    },
+    "@ours.network/messenger-server": {
+      "version": "1.0.31-nightly.1",
+      "integrity": "sha512-XB6N+Ppd4txmI0+2ZVFMWJxXi4DtMIDlFSHOzszNM5hopFebpw1Df+KKCK4Cgd/LZUkoOOYWGEYpib9m3RbHWw=="
+    },
+    "@ours.network/fleet": {
+      "version": "1.2.0-nightly.1",
+      "integrity": "sha512-vioCobVbosmp9BgYo2XccjpPoVQd1wwV+Mt64Bm41/Vxtro2j85PUdy4AWcsY9jEFnJmj/UQfc5E5AxvlpPnrw=="
+    },
+    "@ours.network/mcp": {
+      "version": "1.2.0-nightly.3",
+      "integrity": "sha512-z0N5jn1jj9iwGRqU1d3AM2RX9mCr4T/WhASEKr+Vh52yNDMzhVjFlx0U0v8aS+GTfOQaPZTfL3TGMc17ETjh3g=="
+    },
+    "@ours.network/codex": {
+      "version": "1.2.0-nightly.3",
+      "integrity": "sha512-dIWDqbo6hJzujegHRO6x1SsBnh5p1c6gRGj/WkPha/hcN7s/27P4jqBnJ7czQyVGiNVFZ1aAxj4c9+CDLzHENw=="
+    },
+    "@ours.network/claude-code": {
+      "version": "1.2.0-nightly.3",
+      "integrity": "sha512-7ta6KnvoHB2i/yoaykhXvzKFQTIOPtDHeTzG1PRwHjdTJ4vcGEh4jWYMd2c1jjj73lC3q9qW3LYSRutIJovtQg=="
+    }
+  }
+}

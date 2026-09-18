@@ -73,11 +73,7 @@ if [ -n "${OURS_INSTALLER_MJS:-}" ] && [ -f "${OURS_INSTALLER_MJS}" ]; then
 else
   SELF="${BASH_SOURCE[0]:-$0}"
   DIR="$(cd "$(dirname "$SELF")" 2>/dev/null && pwd || true)"
-  if [ -n "$DIR" ] && [ -f "$DIR/packages/installer/install.mjs" ]; then
-    MJS="$DIR/packages/installer/install.mjs"
-  elif [ -n "$DIR" ] && [ -f "$DIR/install.mjs" ]; then
-    MJS="$DIR/install.mjs"
-  fi
+  [ -n "$DIR" ] && [ -f "$DIR/install.mjs" ] && MJS="$DIR/install.mjs"
 fi
 if [ -n "$MJS" ]; then
   exec node "$MJS" "$@"
