@@ -75,9 +75,11 @@ test('Docker image build streams progress while credential operations remain cap
     calls.push({ command, args, options });
     return { code: args.includes('inspect') ? 1 : 0, stdout: '' };
   };
+  effects.qualifyDockerRuntime = async () => { calls.push({ args: ['qualify'] }); };
   const selected = { ...record, root, sourcesPath, workDir: join(root, 'runtime') };
   await effects.prepareInstallation(selected, { runtimeOnly: true });
   const build = calls.find(call => call.args.includes('build'));
+  assert(calls.findIndex(call => call.args.includes('qualify')) > calls.indexOf(build));
   assert.equal(build.options.stream, true);
   assert.equal(build.options.env.BUILDKIT_PROGRESS, 'plain');
   await effects.serverAccess(selected, 'access-init');

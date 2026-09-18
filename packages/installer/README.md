@@ -281,3 +281,17 @@ maintenance reads both formats. Format2 is not readable by older maintenance too
 so this change does not promise executable downgrade support. Restore validates the
 original archive records unchanged, then writes markers for the active target runtime.
 Mixed/incomplete context and component record sets are refused before activation.
+
+### Retrying a Docker installation after a source-policy permission failure
+
+Setup verifies the selected Docker image before reusing it, including when the image
+already exists. If an older installer left a root-owned, mode-0600
+`/opt/ours/sources.json`, setup repairs only that image file's permissions and
+continues. The selected package bytes, build provenance, image execution settings,
+credentials and stored data are retained. The old materialized Dockerfile's known
+COPY instruction is also corrected for future builds. No manual image or volume
+deletion is required; repeat the original setup with the updated installer.
+
+The repair runs isolated verification containers without state mounts or network
+access. Other image verification failures stop setup without replacing the image.
+An interrupted repair can be retried, including after the image tag was replaced.
