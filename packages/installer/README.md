@@ -169,6 +169,12 @@ Linux/WSL or a launchd GUI user domain on macOS. Source builds also require Git,
 Python 3, a C/C++ toolchain, make, and the selected repositories' own prerequisites.
 Docker mode requires a working Docker engine and Compose 2.35+; its build image
 contains the source-build prerequisites. No bind or Docker socket mounts are used.
+Docker is recommended for macOS and Windows. Install and start Docker Desktop
+on those hosts; on Linux, install Docker Engine and the Compose plugin. If Docker
+is unavailable, the installer explains how to install/start it or use
+`server install --mode packages --state-dir <new-empty-directory>` instead.
+Native Windows installations require WSL with a working systemd user manager.
+The installer never switches an existing installation's mode automatically.
 Server runtime installation selects SDK/CLI, main MCP, Telegram, Cowork and
 Messenger. Main MCP is injected into the daemon, not started as a second daemon.
 The daemon starts first; consumers are checked through their owning readiness

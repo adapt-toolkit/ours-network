@@ -413,7 +413,12 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
         stdio: [...(stream ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe']), ...(installationLockFd === null ? [] : [installationLockFd])],
         env: childEnv,
       });
-      if (r.error || (r.status !== 0 && !allowCodes.includes(r.status))) {
+      if (r.error) {
+        const error = new Error(`${executable} could not start (${r.error.code ?? 'launch error'})`, { cause: r.error });
+        error.code = r.error.code;
+        throw error;
+      }
+      if (r.status !== 0 && !allowCodes.includes(r.status)) {
         const detail = sensitive ? '' : (r.stderr || r.stdout || '').trim().split('\n').slice(-3).join('; ');
         throw new Error(`${executable} ${args.join(' ')} exited ${r.status}${detail ? `: ${detail}` : ''}`);
       }
@@ -609,10 +614,33 @@ export function networkEffects(effects) {
         if (env.OURS_DAEMON_ID && env.OURS_DAEMON_ID !== record.instanceId) throw new Error('Conflicting instance ID');
       }
       if (record.mode === 'docker') {
-        await effects.run('docker', ['info', '--format', '{{.ServerVersion}}']);
-        const version = await effects.run('docker', ['compose', 'version', '--short']);
+        const nativeRoot = existing ? '/path/to/new-empty-directory' : record.root;
+        const quotedRoot = `'${String(nativeRoot).replaceAll("'", "'\\''")}'`;
+        const recovery = [
+          'Please install Docker Desktop on macOS/Windows, or Docker Engine with the Compose plugin on Linux, and start Docker before retrying.',
+          'Docker is recommended for macOS and Windows.',
+          `Alternatively, use native installation: ours-install server install --mode packages --state-dir ${quotedRoot}`,
+          'Native mode requires systemd user services on Linux/WSL or a launchd GUI session on macOS.',
+          ...(existing ? ['Keep this existing Docker installation in Docker mode; use a separate empty directory for a new native installation.'] : []),
+        ].join('\n');
+        try {
+          await effects.run('docker', ['info', '--format', '{{.ServerVersion}}']);
+        } catch (cause) {
+          const problem = cause.code === 'ENOENT'
+            ? 'Docker command was not found in PATH.'
+            : `Docker Engine is not reachable. Start Docker and check that your user can access it.\nDetails: ${cause.message}`;
+          throw new Error(`${problem}\n${recovery}`, { cause });
+        }
+        let version;
+        try {
+          version = await effects.run('docker', ['compose', 'version', '--short']);
+        } catch (cause) {
+          throw new Error(`Docker Compose 2.35 or newer is required, but the Compose plugin could not run. Update Docker Desktop or install the Docker Compose plugin.\n${recovery}`, { cause });
+        }
         const match = /^v?(\d+)\.(\d+)/.exec(version.stdout.trim());
-        if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 35)) throw new Error('Docker Compose 2.35 or newer is required');
+        if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 35)) {
+          throw new Error(`Docker Compose 2.35 or newer is required. Update Docker Desktop or the Docker Compose plugin.\n${recovery}`);
+        }
         if (operation !== 'status') {
           // Compose clients can disappear while their Engine-owned command continues.
           const active = await effects.run('docker', ['ps', '--filter', `label=com.docker.compose.project=${record.project}`, '--filter', 'label=com.docker.compose.oneoff=True', '--format', '{{.ID}}']);
