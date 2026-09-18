@@ -1,4 +1,5 @@
 name: Installer
+# Required secrets: NPM_TOKEN, VERSION_BUMP_APP_ID, VERSION_BUMP_APP_PRIVATE_KEY.
 on:
   pull_request:
     branches: [main, prerelease]
@@ -7,7 +8,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: installer-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -48,10 +49,70 @@ jobs:
           for (const file of ['install.mjs', 'uninstall.mjs', 'lib/effects.mjs', 'assets/Dockerfile']) assert(read(file).length > 0);
           console.log(`Verified installer archive ${packed.name}@${packed.version}`);
           JS
-  publish:
+  version-bump:
     needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prerelease')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    name: Version bump
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      bumped: ${{ steps.bump.outputs.bumped }}
+      new-sha: ${{ steps.bump.outputs.new-sha }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.VERSION_BUMP_APP_ID }}
+          private-key: ${{ secrets.VERSION_BUMP_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compute and commit stable installer version
+        id: bump
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node scripts/bump-installer-version.mjs stable --commit
+
+  npm-publish:
+    needs: [test, version-bump]
+    if: needs.version-bump.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    name: Publish stable installer
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version-bump.outputs.new-sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: node scripts/verify-release.mjs
+      - name: Pack immutable product manifest
+        run: npm pack --workspace @ours.network/install --pack-destination "$RUNNER_TEMP"
+      - name: Publish guarded stable installer
+        run: |
+          bash .github/workflows/scripts/publish-guard.sh stable packages/installer/package.json latest
+          npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag latest --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  nightly-publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/prerelease'
+    runs-on: ubuntu-latest
+    name: Publish nightly installer
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -60,24 +121,15 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
-      - name: Verify product version and publication channel
-        run: |
-          node --input-type=module - <<'JS'
-          import fs from 'node:fs';
-          const version=JSON.parse(fs.readFileSync('packages/installer/package.json')).version;
-          const nightly=/^\d+\.\d+\.\d+-nightly\.\d+$/.test(version);
-          const stable=/^\d+\.\d+\.\d+$/.test(version);
-          if (process.env.GITHUB_REF==='refs/heads/prerelease' ? !nightly : !stable) throw new Error('Installer version/branch mismatch');
-          JS
+      - name: Compute ephemeral nightly installer version
+        id: bump
+        run: node scripts/bump-installer-version.mjs nightly
       - run: node scripts/verify-release.mjs
       - name: Pack immutable product manifest
         run: npm pack --workspace @ours.network/install --pack-destination "$RUNNER_TEMP"
-      - name: Publish installer after its selected components
+      - name: Publish guarded nightly installer
         run: |
-          if [ "$GITHUB_REF" = refs/heads/prerelease ]; then
-            npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag nightly --access public
-          else
-            npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag latest --access public
-          fi
+          bash .github/workflows/scripts/publish-guard.sh nightly packages/installer/package.json nightly
+          npm publish "$RUNNER_TEMP"/ours.network-install-*.tgz --tag nightly --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
