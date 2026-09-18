@@ -22,7 +22,9 @@ Publication follows the same split as the component repositories:
   above the local core version and published `latest`, with N above the published
   nightly counters. Update the installer package, workspace lock and nightly
   manifest together in the runner. Do not commit this bump; publish with `nightly`.
-- `main`: derive major/minor/patch from Conventional Commits. `ci`, `test`, `docs`,
+- `main`: derive major/minor/patch from all introduced non-merge Conventional
+  Commits in the push range, taking the highest level. Missing or unavailable
+  range endpoints fail closed. `ci`, `test`, `docs`,
   `chore` and skip-CI commits do not publish. Commit the installer package,
   workspace lock and stable manifest together using the version-bump GitHub App,
   then publish that exact commit with `latest`.
