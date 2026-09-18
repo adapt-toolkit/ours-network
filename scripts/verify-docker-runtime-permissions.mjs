@@ -45,7 +45,8 @@ try {
   assert.equal(fs.statSync(source).mode & 0o777, 0o600, 'host policy remains private');
   // A prior installer left both an old Dockerfile and an unreadable existing image.
   const retained = join(root, 'retained'); fs.mkdirSync(retained, { mode: 0o700 });
-  const workDir = join(retained, 'runtime'); fs.cpSync(root, workDir, { recursive: true, filter: path => path !== retained });
+  const workDir = join(retained, 'runtime'); fs.cpSync('packages/installer/assets', workDir, { recursive: true });
+  fs.copyFileSync(source, join(workDir, 'sources.json'));
   const oldDockerfile = fs.readFileSync(join(workDir, 'Dockerfile'), 'utf8').replace('COPY --chmod=644 sources.json', 'COPY sources.json');
   fs.writeFileSync(join(workDir, 'Dockerfile'), oldDockerfile);
   const sourcesPath = join(retained, 'sources.json'); fs.copyFileSync(source, sourcesPath); fs.chmodSync(sourcesPath, 0o600);
