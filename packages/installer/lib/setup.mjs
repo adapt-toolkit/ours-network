@@ -31,6 +31,11 @@ export async function prepareSetupPlan(options, effects) {
   options = validateSetupOptions(options, { interactive: options.interactive });
   if (effects.platform?.platform === 'win32') throw new InstallUsageError('Run ours-install inside WSL with Docker Desktop integration on Windows. Direct Windows Node installations are not supported.');
   const plan = { ...options };
+  if (options.scope !== 'server' && options.integrations.length) {
+    for (const name of ['OURS_API_TOKEN', 'OURS_PORT', 'OURS_STATE_DIR', 'OURS_DAEMON_ID']) {
+      if (effects.env?.[name]?.trim()) throw new InstallUsageError(`${name} conflicts with the selected client profile. Clear this override before full-stack/client setup; nothing was changed.`);
+    }
+  }
   if (options.scope !== 'client') validateIdentityName(options.identityName);
   if (options.fleetSettingsPath) validateFleetSettings(readObject(effects, options.fleetSettingsPath, 'Fleet settings'));
   const policy = options.sources ? readObject(effects, options.sources, 'Source policy') : effects.packagedSourcePolicy();

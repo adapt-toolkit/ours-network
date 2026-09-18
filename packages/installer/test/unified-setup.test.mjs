@@ -151,3 +151,15 @@ test('interactive answers and equivalent CLI presets execute the same server wor
   const stageNames = lines => lines.filter(line => /%/.test(line));
   assert.deepEqual(stageNames(preset.lines), stageNames(manual.lines));
 });
+
+
+test('client environment conflicts fail before server changes or package resolution', async () => {
+  for (const scope of ['all', 'client']) for (const name of ['OURS_API_TOKEN', 'OURS_PORT', 'OURS_STATE_DIR', 'OURS_DAEMON_ID']) {
+    const { effects, events } = fixture();
+    effects.env[name] = 'existing-override';
+    effects.packagedSourcePolicy = () => assert.fail('conflicting profile overrides must precede any setup work');
+    const input = scope === 'all' ? options : { scope, operation: 'install', config: '/private/profile.json', integrations: ['codex'], interactive: false };
+    await assert.rejects(prepareSetupPlan(input, effects), new RegExp(`${name} conflicts`));
+    assert.deepEqual(events, []);
+  }
+});
