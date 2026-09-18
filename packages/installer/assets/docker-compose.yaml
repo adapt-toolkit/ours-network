@@ -177,6 +177,26 @@ services:
       start_period: 30s
       retries: 12
 
+  legacy-import:
+    profiles: [maintenance]
+    build:
+      <<: *source-build
+      target: maintenance
+    platform: linux/amd64
+    image: "${OURS_MAINTENANCE_IMAGE:-ours-compose-2-maintenance:local}"
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    entrypoint: [node, /opt/ours/docker/legacy-import.mjs]
+    environment:
+      OURS_UID: "${OURS_UID:-1000}"
+      OURS_GID: "${OURS_GID:-1000}"
+    volumes:
+      - {type: volume, source: server-storage, target: /storage, volume: {nocopy: true}}
+
   state-operation:
     profiles: [maintenance]
     build:

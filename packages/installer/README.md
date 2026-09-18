@@ -7,9 +7,10 @@ npm install -g @ours.network/install@nightly
 ours-install
 ```
 
-With no arguments, the console form collects the installation choices: server
-and clients (default), runtime mode, installation directory, install/update,
-Human identity name, ports, client integrations and Fleet settings. Linux x64
+With no arguments, the wizard explains each step and offers keyboard choices.
+Use arrow keys and Enter to choose, and Space to select integrations. Recommended
+settings keep advanced ports and package overrides out of the usual flow. Text
+input is used for your name and explicitly customized paths or ports. Linux x64
 recommends native mode; macOS and Windows recommend Docker. On Windows run the
 installer inside WSL with Docker Desktop integration. This recommendation concerns
 packaging and isolation, not a guarantee that emulated x64 is faster on ARM Macs.
@@ -55,6 +56,44 @@ The installer embeds exact component versions and SHA-512 values for its release
 An existing server's retained release selects matching local clients. Secrets are
 read from protected files, and client setup never copies the daemon API master.
 
+## Migrate an existing global installation
+
+The wizard detects the old `~/.ours/config.json` and offers to keep its identities,
+messages, keys and settings in the new installation. It follows the configured
+state directory, including a custom location. An equivalent unattended preset is:
+
+```sh
+ours-install all --mode docker --state-dir "$HOME/ours-docker" \
+  --migrate-from "$HOME/.ours/config.json" --compatible --integrations codex
+```
+
+Run the old daemon before the first migration so the installer can record and
+verify its identities. The new runtime is downloaded/built first. Then the old
+boot service and daemon stop, and the complete daemon state is copied while its
+writer lock is held. Docker migration imports that copy into its named storage
+volume. Existing Human/role names and CIDs must match before applications start;
+migration never creates a replacement Human.
+
+The original state/configuration remain unchanged. A private `legacy-backup`
+directory stores the original config/service definition, and
+`legacy-client/profile.json` is a prepared connection profile for the new server.
+Selected integrations are configured by the usual client setup. The global `ours` command is switched to a launcher for the managed installation
+only after verifying ownership of its existing npm entry; foreign or read-only
+commands are refused before migration. Ordinary `ours identity list` is checked
+after cutover. Lifecycle commands manage the new installation, and selection
+overrides cannot accidentally return to the old daemon. The old configuration is
+not reinterpreted as a client profile. Do not start the old state alongside the
+migrated daemon. Reinstalling the global CLI with npm can replace the launcher;
+repeat the same migration command to verify and repair that routing.
+
+Repeat the same command after an interruption. Once the destination has started,
+retries repair it in place instead of replacing it with an older source snapshot.
+The source is kept stopped after an activation failure to avoid diverging identity
+sessions. Migration requires local Linux/macOS (or WSL) with `node:sqlite` support,
+a verifiable old CLI/service, and a separate target directory. External PostgreSQL
+history or unsupported external MCP/token-delivery paths are refused before
+shutdown. Unrelated application data outside the daemon tree is not copied.
+
 ## Selected network installations (2.0)
 
 The installed package carries its compatible `assets/sources.json` policy.
@@ -71,7 +110,7 @@ ours-install server start --state-dir /private/ours-install
 ours-install server restart --state-dir /private/ours-install
 ```
 
-Choose one mode for a private installation root. The private `installation.json`
+Choose one mode and a folder for its programs and data. The private `installation.json`
 records mode, instance selection, configuration/source paths and service selection;
 it never records master bytes or an issued-token registry. The selected policy
 is resolved to an exact, role-filtered `sources.json` before acquisition.

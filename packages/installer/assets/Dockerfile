@@ -21,6 +21,7 @@ COPY scripts/runtime/runtime-common.mjs /opt/ours/docker/runtime-common.mjs
 COPY scripts/runtime/check-client.mjs /opt/ours/docker/check-client.mjs
 COPY scripts/runtime/check-start.mjs /opt/ours/docker/check-start.mjs
 COPY scripts/runtime/client-setup.mjs /opt/ours/docker/client-setup.mjs
+COPY scripts/runtime/legacy-import.mjs /opt/ours/docker/legacy-import.mjs
 COPY scripts/runtime/entrypoint.sh /opt/ours/docker/entrypoint.sh
 COPY scripts/runtime/healthcheck.mjs /opt/ours/docker/healthcheck.mjs
 COPY scripts/runtime/start-telegram.sh scripts/runtime/health-telegram.sh scripts/runtime/start-cowork.sh scripts/runtime/health-cowork.sh scripts/runtime/start-messenger.sh scripts/runtime/health-messenger.mjs /opt/ours/docker/

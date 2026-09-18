@@ -50,6 +50,7 @@ export function createServerOnboarding(effects, { compose, localEnv, bin }) {
     return { name: root.name, cid: root.cid, created: false };
   }
   return {
+    async serverListIdentities(record) { return (await identities(record)).rows; },
     async serverEnsureIdentity(record, name) {
       validateRecord(record);
       validateIdentityName(name);

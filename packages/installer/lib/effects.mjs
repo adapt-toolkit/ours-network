@@ -21,7 +21,7 @@ import { maintenanceServices, installationPaths, validateInstallation, consumerS
 import { validateHostProfile } from './target.mjs';
 import { createServerOnboarding } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
-import { askYesNo, askLine as askLineOnTty } from './prompt.mjs';
+import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
@@ -444,7 +444,9 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     hasClaudePlugin,
     out: out ?? ((line) => process.stdout.write(`${line}\n`)),
     // Never called when assumeYes: the orchestrator takes the default itself.
-    ask: async (prompt, def = false) => (ttyFd == null ? def : askYesNo(write, ttyFd, `  ${prompt}  `, def)),
+    select: async (question, choices, def) => selectOnTty(write, ttyFd, question, choices, def),
+    multiselect: async (question, choices, defaults = []) => multiselectOnTty(write, ttyFd, question, choices, defaults),
+    ask: async (question, def = false) => selectOnTty(write, ttyFd, question, [{ value: true, label: 'Yes' }, { value: false, label: 'No' }], def),
     askLine: async (prompt, def = '') => (ttyFd == null ? def : askLineOnTty(write, ttyFd, `  ${prompt}  `, def)),
   };
   return Object.assign(effects, networkEffects(effects));
@@ -680,7 +682,17 @@ export function networkEffects(effects) {
         }
       }
     },
-    async initializeSelection(record, manifest) {
+    async prepareLegacyDockerImport(record) {
+      if (record.mode === 'docker') await compose(record, ['build', 'legacy-import'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+    },
+    async importLegacyDockerState(record) {
+      if (record.mode !== 'docker') return;
+      const source = join(record.root, 'storage', 'state');
+      if (source.includes(':')) throw new Error('Docker migration requires an installation path without colon characters');
+      await compose(record, ['run', '--rm', '--no-deps', '-T', '--volume', `${source}:/legacy-import:ro`,
+        '--env', `OURS_LEGACY_TARGET_ROOT=${record.root}`, 'legacy-import']);
+    },
+    async initializeSelection(record, manifest, { retainConfig = false } = {}) {
       if (typeof manifest === 'string') manifest = JSON.parse(readFileSync(manifest, 'utf8'));
       selectSourcePackages(manifest, 'server');
       const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
@@ -688,8 +700,9 @@ export function networkEffects(effects) {
       if (record.schema === 2) {
         for (const path of [join(record.root, 'storage'), installationPaths(record).state, installationPaths(record).daemon]) ensurePrivateDirectory(path);
       }
-      writePrivateNew(record.sourcesPath, bytes);
-      writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
+      if (!retainConfig || !existsSync(record.sourcesPath)) writePrivateNew(record.sourcesPath, bytes);
+      else if (!readFileSync(record.sourcesPath).equals(bytes)) throw new Error('Migration source selection changed');
+      if (!retainConfig) writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
     },
     async prepareInstallation(record, { runtimeOnly = false } = {}) {
       let copied = false;

@@ -1,3 +1,4 @@
+import { executeLegacyMigration } from './legacy-migration.mjs';
 // ours-install v3 — the orchestrator.
 //
 // This is the part that cannot be pure: it walks the flow, renders the screens
@@ -1250,7 +1251,9 @@ export async function runInstall(argv, effects) {
 
 export async function runServerCommand(args, effects) {
   if (args.operation === 'status') return executeServerCommand(args, effects);
-  return effects.withInstallationLock(args.stateDir, () => executeServerCommand(args, effects));
+  return effects.withInstallationLock(args.stateDir, () => args.migrateFrom
+    ? executeLegacyMigration(args, effects, executeServerCommand)
+    : executeServerCommand(args, effects));
 }
 
 async function executeServerCommand(args, effects) {
@@ -1366,6 +1369,7 @@ async function executeServerCommand(args, effects) {
         layoutConversion: record.schema === 1 ? 'preparation-pending' : 'activation-pending',
       } : {}),
     }));
+    if (args.operation === 'status') return EXIT_OK;
   }
   effects.out(ok(`Server ${args.operation} completed for ${record.root}`));
   return EXIT_OK;
