@@ -18,6 +18,27 @@ export function commitLevel(message) {
   return type === 'feat' ? 'minor' : 'patch';
 }
 
+export function introducedCommitLevel({ before, after, head, git }) {
+  const fullSha = /^[a-f0-9]{40}$/i;
+  if (![before, after].every(sha => typeof sha === 'string' && fullSha.test(sha) && !/^0+$/.test(sha))) {
+    throw new Error('Stable bump requires explicit nonzero BEFORE_SHA and GITHUB_SHA commit endpoints');
+  }
+  for (const sha of [before, after]) {
+    let resolved;
+    try { resolved = git(['rev-parse', '--verify', `${sha}^{commit}`]); }
+    catch (cause) { throw new Error(`Unavailable introduced-range commit: ${sha}`, { cause }); }
+    if (resolved.toLowerCase() !== sha.toLowerCase()) throw new Error(`Range endpoint is not a commit: ${sha}`);
+  }
+  if (after.toLowerCase() !== head.toLowerCase()) throw new Error('GITHUB_SHA must match checked-out HEAD');
+  try { git(['merge-base', '--is-ancestor', before, after]); }
+  catch (cause) { throw new Error('BEFORE_SHA must be an ancestor of GITHUB_SHA', { cause }); }
+  // Merge subjects are bookkeeping; classify the introduced nonmerge commits.
+  const messages = git(['log', '--no-merges', '--format=%B%x00', `${before}..${after}`])
+    .split('\0').map(message => message.trim()).filter(Boolean);
+  const levels = messages.map(commitLevel);
+  return ['major', 'minor', 'patch'].find(level => levels.includes(level)) ?? null;
+}
+
 function numbers(version, pattern) {
   const match = pattern.exec(version);
   if (!match) throw new Error(`Invalid version: ${version}`);
@@ -81,7 +102,7 @@ export async function bumpInstaller({ mode, commit = false, root = process.cwd()
     }
     return output;
   };
-  const level = mode === 'stable' ? commitLevel(git(['log', '-1', '--pretty=%B'])) : 'patch';
+  const level = mode === 'stable' ? introducedCommitLevel({ before: env.BEFORE_SHA, after: env.GITHUB_SHA, head: sha, git }) : 'patch';
   if (!level) return emit({ bumped: false, 'new-sha': sha, version: pkg.version });
   const metadata = await readRegistry();
   const version = nextVersion({ mode, localVersion: pkg.version, ...metadata, level });
