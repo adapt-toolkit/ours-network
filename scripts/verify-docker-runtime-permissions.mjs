@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { SERVER_PACKAGES } from '../packages/installer/lib/plan.mjs';
 
 if (process.env.CI !== 'true') throw new Error('Run this qualification in CI only');
 const root = fs.mkdtempSync(join(tmpdir(), 'ours-image-permissions-'));
@@ -13,7 +14,7 @@ const docker = args => execFileSync('docker', args, { stdio: 'inherit' });
 try {
   fs.cpSync('packages/installer/assets', root, { recursive: true });
   const release = JSON.parse(fs.readFileSync('releases/nightly.json'));
-  const policy = { release, packages: Object.fromEntries(Object.entries(release.packages).map(([name, value]) => [name, { type: 'npm', version: value.version }])) };
+  const policy = { release, packages: Object.fromEntries(Object.entries(release.packages).filter(([name]) => SERVER_PACKAGES.includes(name)).map(([name, value]) => [name, { type: 'npm', version: value.version }])) };
   const source = join(root, 'sources.json');
   fs.writeFileSync(source, JSON.stringify(policy));
   fs.chmodSync(source, 0o600);
