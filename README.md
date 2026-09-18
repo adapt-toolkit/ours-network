@@ -119,3 +119,9 @@ then packs and inspects the installer archive. Runtime acquisition checks the
 release-bound ours packages before activating server builds or client integrations.
 This fixes the ours component set; third-party dependencies are still resolved
 by npm for the target platform rather than replayed from one universal lockfile.
+
+Installer versions advance automatically in CI: prerelease uses ephemeral
+nightly versions, while main uses a Conventional Commits bump committed by the
+GitHub App. Both update the installer and release manifest version together,
+without changing the selected component versions. Required publication secrets:
+`NPM_TOKEN`, `VERSION_BUMP_APP_ID`, `VERSION_BUMP_APP_PRIVATE_KEY`.
