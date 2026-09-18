@@ -16,7 +16,11 @@ const retainedTag = project + ':runtime';
 const failedContainer = project + '-daemon-1';
 const docker = args => execFileSync('docker', args, { stdio: 'inherit' });
 try {
-  fs.cpSync('packages/installer/assets', root, { recursive: true });
+  const distribution = join(root, 'distribution'); fs.mkdirSync(distribution, { mode: 0o700 });
+  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--workspace', '@ours.network/install', '--pack-destination', distribution, '--json'], { encoding: 'utf8' }));
+  execFileSync('tar', ['-xzf', join(distribution, packed.filename), '-C', distribution, '--no-same-owner']);
+  const packedAssets = join(distribution, 'package/assets');
+  fs.cpSync(packedAssets, root, { recursive: true });
   const release = JSON.parse(fs.readFileSync('releases/nightly.json'));
   const policy = { release, packages: Object.fromEntries(Object.entries(release.packages).filter(([name]) => SERVER_PACKAGES.includes(name)).map(([name, value]) => [name, { type: 'npm', version: value.version }])) };
   const source = join(root, 'sources.json');
@@ -45,10 +49,12 @@ try {
   assert.equal(fs.statSync(source).mode & 0o777, 0o600, 'host policy remains private');
   // A prior installer left both an old Dockerfile and an unreadable existing image.
   const retained = join(root, 'retained'); fs.mkdirSync(retained, { mode: 0o700 });
-  const workDir = join(retained, 'runtime'); fs.cpSync('packages/installer/assets', workDir, { recursive: true });
+  const workDir = join(retained, 'runtime'); fs.cpSync(packedAssets, workDir, { recursive: true });
+  fs.chmodSync(workDir, 0o700);
   fs.copyFileSync(source, join(workDir, 'sources.json'));
   const oldDockerfile = fs.readFileSync(join(workDir, 'Dockerfile'), 'utf8').replace('COPY --chmod=644 sources.json', 'COPY sources.json');
   fs.writeFileSync(join(workDir, 'Dockerfile'), oldDockerfile);
+  fs.chmodSync(join(workDir, 'Dockerfile'), 0o664); // Common umask002/package materialization mode.
   const sourcesPath = join(retained, 'sources.json'); fs.copyFileSync(source, sourcesPath); fs.chmodSync(sourcesPath, 0o600);
   const brokenFile = join(root, 'Broken.Dockerfile');
   fs.writeFileSync(brokenFile, `FROM ${tag}\nCOPY --chmod=600 sources.json /opt/ours/sources.json\n`);
@@ -62,6 +68,7 @@ try {
   const record = { schema: 2, mode: 'docker', root: retained, workDir, sourcesPath, project, uid: 12345, gid: 12345 };
   const effects = realEffects({ env: process.env, out: console.log });
   await effects.prepareInstallation(record, { runtimeOnly: true });
+  assert.equal(fs.statSync(join(workDir, 'Dockerfile')).mode & 0o777, 0o600);
   const repaired = metadata(retainedTag);
   assert.notEqual(repaired.Id, broken.Id, 'retry must replace the defective retained image');
   assert.deepEqual(repaired.Config, broken.Config, 'repair preserves image execution settings');

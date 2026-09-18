@@ -1,5 +1,5 @@
 /** Qualify cached images before reuse; repair only the known root-owned 0600 policy. */
-import { lstatSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { lstatSync, readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync, openSync, closeSync, fstatSync, fchmodSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -11,12 +11,32 @@ const fail = message => { throw new Error(`Docker runtime verification refused: 
 const imageId = value => /^sha256:[0-9a-f]{64}$/.test(value ?? '');
 
 export function refreshDockerPolicyCopy(record) {
-  const path = join(record.workDir, 'Dockerfile'), stat = lstatSync(path);
-  if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid() || (stat.mode & 0o7022)) fail('Unsafe retained Dockerfile');
-  const text = readFileSync(path, 'utf8');
-  // Upgrade precisely the formerly shipped instruction; preserve all other assets.
-  const oldLine = /^COPY sources\.json \/opt\/ours\/sources\.json$/m;
-  if (oldLine.test(text)) atomicWriteConfig(path, text.replace(oldLine, 'COPY --chmod=644 sources.json /opt/ours/sources.json'));
+  if (record.workDir !== join(record.root, 'runtime')) fail('Unsafe retained Dockerfile: runtime directory differs from installation record');
+  for (const directory of [record.root, record.workDir]) {
+    const stat = lstatSync(directory);
+    if (!stat.isDirectory() || realpathSync(directory) !== directory) fail('Unsafe retained Dockerfile: installation directory is linked or not canonical');
+    if (stat.uid !== process.getuid()) fail('Unsafe retained Dockerfile: installation directory belongs to another user');
+    if (stat.mode & 0o7077) fail('Unsafe retained Dockerfile: installation directory must be owner-private (0700)');
+  }
+  const path = join(record.workDir, 'Dockerfile');
+  let fd;
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) { fail(`Unsafe retained Dockerfile: cannot open a regular unlinked file (${error.code})`); }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) fail('Unsafe retained Dockerfile: expected a regular file');
+    if (stat.nlink !== 1) fail('Unsafe retained Dockerfile: hard links are not supported');
+    if (stat.uid !== process.getuid()) fail(`Unsafe retained Dockerfile: file owner ${stat.uid} differs from current user ${process.getuid()}`);
+    if (stat.mode & 0o7000) fail('Unsafe retained Dockerfile: special permission bits are not supported');
+    // Asset copies can retain 0664 under umask 002. Private canonical ancestors
+    // exclude other users; normalize this owned inode without following links.
+    fchmodSync(fd, 0o600);
+    const text = readFileSync(fd, 'utf8');
+    const current = lstatSync(path);
+    if (current.dev !== stat.dev || current.ino !== stat.ino || current.nlink !== 1) fail('Unsafe retained Dockerfile: file changed during normalization');
+    const oldLine = /^COPY sources\.json \/opt\/ours\/sources\.json$/m;
+    if (oldLine.test(text)) atomicWriteConfig(path, text.replace(oldLine, 'COPY --chmod=644 sources.json /opt/ours/sources.json'));
+  } finally { closeSync(fd); }
 }
 
 const probeScript = `
