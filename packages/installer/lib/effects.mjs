@@ -23,6 +23,7 @@ import { createServerOnboarding } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
+import { qualifyDockerRuntime, refreshDockerPolicyCopy } from './docker-runtime-repair.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
 import { releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
@@ -399,7 +400,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     // invocation only and never to the installer's own process: a state
     // directory selected by one run must not leak into anything the operator
     // starts afterwards.
-    run: async (cmd, args, { env: extraEnv = null, stream = false, cwd, sensitive = false, allowCodes = [] } = {}) => {
+    run: async (cmd, args, { env: extraEnv = null, stream = false, cwd, sensitive = false, allowCodes = [], timeout } = {}) => {
       // Always built from this layer's OWN env rather than left to spawnSync's
       // implicit inheritance, so what a child receives is a property of the
       // effects object a caller constructed and not of whatever ambient shell
@@ -410,6 +411,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
       const executable = cmd === 'npm' ? npmBin : cmd;
       const r = spawnSync(executable, args, {
         cwd,
+        timeout,
         encoding: 'utf8',
         stdio: [...(stream ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe']), ...(installationLockFd === null ? [] : [installationLockFd])],
         env: childEnv,
@@ -704,6 +706,7 @@ export function networkEffects(effects) {
       else if (!readFileSync(record.sourcesPath).equals(bytes)) throw new Error('Migration source selection changed');
       if (!retainConfig) writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
     },
+    async qualifyDockerRuntime(record) { return qualifyDockerRuntime(record, effects); },
     async prepareInstallation(record, { runtimeOnly = false } = {}) {
       let copied = false;
       if (!existsSync(record.workDir)) {
@@ -717,11 +720,13 @@ export function networkEffects(effects) {
       if (!existsSync(materialized)) writePrivateNew(materialized, retained);
       else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
       if (record.mode === 'docker') {
+        refreshDockerPolicyCopy(record);
         // The installer owns these dependencies in both installation modes.
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
         const image = await effects.run('docker', ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
         if (image.code !== 0) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+        await effects.qualifyDockerRuntime(record);
         if (runtimeOnly) return;
         await compose(record, ['run', '--rm', '--no-deps', '-T', 'prepare', 'prepare']);
       } else {

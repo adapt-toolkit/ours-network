@@ -88,7 +88,12 @@ test('update and rebuild prepare isolated runtimes without replacing the active 
   try {
     for (const mode of ['packages', 'docker']) for (const operation of ['update', 'rebuild']) {
       const effects = realEffects({ env: {}, home: root });
-      let candidate;
+      let candidate, qualified = false;
+      effects.qualifyDockerRuntime = async selected => {
+        assert.equal(selected.workDir, candidate);
+        assert.notEqual(selected.project, record.project);
+        qualified = true;
+      };
       effects.run = async (command, args, options) => {
         if (command === process.execPath) {
           candidate = options.cwd;
@@ -109,6 +114,7 @@ test('update and rebuild prepare isolated runtimes without replacing the active 
         return { code: 0, stdout: '' };
       };
       const prepared = await effects.prepareServerBuild({ ...record, mode }, { operation, ...(operation === 'update' ? { sources: next } : {}) });
+      assert.equal(qualified, mode === 'docker');
       assert.equal(prepared.workDir, candidate);
       assert.notEqual(prepared.workDir, record.workDir);
       assert.equal(fs.readFileSync(prepared.sourcesPath, 'utf8'), operation === 'update' ? replacement : original);
