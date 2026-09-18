@@ -1,3 +1,4 @@
+import { inspectLegacyMigration } from './legacy-migration.mjs';
 import { join } from 'node:path';
 import { parseSetupArgs, collectSetupOptions, validateSetupOptions } from './setup-options.mjs';
 import { parseNetworkArgs, validateHostProfile, InstallUsageError } from './target.mjs';
@@ -36,10 +37,19 @@ export async function prepareSetupPlan(options, effects) {
       if (effects.env?.[name]?.trim()) throw new InstallUsageError(`${name} conflicts with the selected client profile. Clear this override before full-stack/client setup; nothing was changed.`);
     }
   }
-  if (options.scope !== 'client') validateIdentityName(options.identityName);
+  if (options.scope !== 'client' && !options.migrateFrom) validateIdentityName(options.identityName);
   if (options.fleetSettingsPath) validateFleetSettings(readObject(effects, options.fleetSettingsPath, 'Fleet settings'));
   const policy = options.sources ? readObject(effects, options.sources, 'Source policy') : effects.packagedSourcePolicy();
   plan.sourcePolicy = policy;
+  if (options.migrateFrom) {
+    for (const name of ['OURS_API_TOKEN', 'OURS_API_VISIBILITY', 'OURS_STATE_DIR', 'OURS_PORT', 'OURS_DAEMON_ID', 'OURS_DATABASE_PROVIDER', 'OURS_DATABASE_URL']) {
+      if (effects.env?.[name]?.trim()) throw new InstallUsageError(`${name} conflicts with legacy migration. Clear it before setup; nothing was changed.`);
+    }
+    plan.legacyPlan = await (effects.inspectLegacyMigration ?? inspectLegacyMigration)(options, effects);
+    plan.sourcePolicy = plan.legacyPlan.journal.sourcePolicy ?? policy;
+    plan.identityName = plan.legacyPlan.source?.rootName ?? plan.legacyPlan.journal.identities.find(row => row.kind === 'root')?.name;
+    validateIdentityName(plan.identityName);
+  }
   if (options.scope !== 'client') {
     const value = effects.readJson(join(options.stateDir, 'installation.json'));
     if (value) {
@@ -49,7 +59,7 @@ export async function prepareSetupPlan(options, effects) {
         if (options.explicitPorts?.includes(key) && options[key] !== plan.existing[key]) throw new InstallUsageError(`${key} conflicts with the retained installation`);
         plan[key] = plan.existing[key];
       }
-      if (options.operation === 'install') {
+      if (options.operation === 'install' && !options.migrateFrom) {
         const retained = readObject(effects, plan.existing.sourcesPath, 'Retained source policy');
         plan.sourcePolicy = options.scope === 'server' || !options.integrations?.length ? retained : completeReleasePolicy(retained, options.sources ? policy : null);
       }
