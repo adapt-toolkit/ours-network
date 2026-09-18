@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createBuildContext, CONTEXT } from '../maintenance/build-context.mjs';
+import { verifyRuntimeRelease } from '../maintenance/release-graph.mjs';
 export function finalizeBuild(root) {
   if (fs.realpathSync(root) !== root) throw new Error('Build root must be canonical');
   try { fs.lstatSync(join(root, CONTEXT)); throw new Error('Existing context cannot be regenerated'); }
@@ -20,6 +21,7 @@ export function finalizeBuild(root) {
     if (typeof spec !== 'string' || !/^file:docker\/vendor\/ours\.network-[a-z-]+\.tgz$/.test(spec)) throw new Error('Unexpected installer vendor reference');
     protect(join(root, spec.slice(5)));
   }
+  verifyRuntimeRelease(root);
   const tree = execFileSync('npm', ['ls', '--omit=dev', '--all', '--json'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   JSON.parse(tree);
   const path = join(root, 'dependency-tree.json');

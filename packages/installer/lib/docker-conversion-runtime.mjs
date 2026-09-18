@@ -22,6 +22,7 @@ export async function prepareDockerConversionRuntime(record, effects, assets) {
     fs.writeFileSync(join(context, 'Dockerfile'), `# syntax=docker/dockerfile:1
 FROM ${record.project}:runtime AS runtime
 COPY --chmod=644 runtime/ /opt/ours/docker/
+COPY --chmod=644 maintenance/release-graph.mjs /opt/ours/maintenance/release-graph.mjs
 FROM runtime AS maintenance
 USER 0:0
 COPY --chmod=644 maintenance/ /opt/ours/docker/

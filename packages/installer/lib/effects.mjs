@@ -24,6 +24,7 @@ import { askYesNo, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
+import { releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
 
 /** GET http://127.0.0.1:<port>/state-dir — the unauthenticated identity probe. */
 async function probePort(port, { timeoutMs = 1500 } = {}) {
@@ -569,7 +570,15 @@ export function networkEffects(effects) {
       return createHash('sha256').update(readFileSync(path)).digest('hex');
     },
     packagedSourcePolicy() {
-      return JSON.parse(readFileSync(PACKAGED_SOURCE_POLICY, 'utf8'));
+      const policy = JSON.parse(readFileSync(PACKAGED_SOURCE_POLICY, 'utf8'));
+      const release = releaseBinding(policy);
+      if (release) {
+        const embedded = JSON.parse(readFileSync(join(INSTALLER_ASSETS, 'release.json'), 'utf8'));
+        if (JSON.stringify(release) !== JSON.stringify(embedded)) throw new Error('Packaged source policy differs from immutable release');
+      } else if (Object.values(policy.packages ?? {}).some(p => p.type === 'npm')) {
+        throw new Error('Packaged npm source policy is missing its release binding');
+      }
+      return policy;
     },
     async resolveSourcePolicy(policy, role, clients = []) {
       return resolveSourcePolicy(policy, role, clients, async (name, range) => {
@@ -867,6 +876,7 @@ export function networkEffects(effects) {
     },
     async recordRuntimeBuild(record) {
       if (record.mode === 'docker') return; // Image preparation records its build.
+      verifyRuntimeRelease(record.workDir);
       const tree = join(record.workDir, 'dependency-tree.json');
       if (!existsSync(tree)) {
         const result = await effects.run('npm', ['ls', '--omit=dev', '--all', '--json'], { cwd: record.workDir });
@@ -1143,8 +1153,10 @@ export function networkEffects(effects) {
           writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ours-native-clients', private: true, dependencies: Object.fromEntries(Object.entries(packages).map(([name, selection]) => [name, selection.version])) }), { mode: 0o600 });
         }
         await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: root });
+        verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
         writePrivateNew(join(root, '.packages-ready'), 'ready\n');
       }
+      verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
       // Local acquisition alone does not publish native commands. Use the user's
       // configured npm prefix and retained dependency closure, including on retry.
       for (const name of integrations.filter(name => name === 'fleet' || name === 'codex')) {
@@ -1154,22 +1166,34 @@ export function networkEffects(effects) {
       return { localPackages, packages: {}, fleetBin: integrations.includes('fleet') ? join(root, 'node_modules/.bin/ours-fleet') : null };
     },
     async prepareClientMarketplace(name, packagePath) {
-      const root = join(dirname(dirname(dirname(packagePath))), 'marketplaces', name);
+      const acquisitionRoot = dirname(dirname(dirname(packagePath)));
+      const sourcePath = join(acquisitionRoot, 'sources.json');
+      const policy = existsSync(sourcePath) ? JSON.parse(readFileSync(sourcePath, 'utf8')) : {}; // Retained pre-release client acquisitions.
+      const release = releaseBinding(policy);
+      const integrationsPath = join(acquisitionRoot, 'integrations.json');
+      const integrations = existsSync(integrationsPath) ? JSON.parse(readFileSync(integrationsPath, 'utf8')) : null;
+      const requiredPackages = integrations ? [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])].map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
+      verifyReleaseGraph(acquisitionRoot, policy, { requiredPackages });
+      const root = join(acquisitionRoot, 'marketplaces', name);
       const plugin = join(root, 'plugins', 'ours');
       if (!existsSync(plugin)) {
         mkdirSync(dirname(plugin), { recursive: true, mode: 0o700 });
         cpSync(packagePath, plugin, { recursive: true });
         const manifestPath = join(plugin, 'package.json');
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-        for (const dependency of ['sdk', 'cli']) {
+        for (const dependency of release ? [] : ['sdk', 'cli']) {
           const name = `@ours.network/${dependency}`;
           if (manifest.dependencies?.[name]) manifest.dependencies[name] = `file:${join(dirname(packagePath), dependency)}`;
         }
         writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
       }
+      if (release && JSON.stringify(JSON.parse(readFileSync(join(plugin, 'package.json'), 'utf8'))) !== JSON.stringify(JSON.parse(readFileSync(join(packagePath, 'package.json'), 'utf8')))) {
+        throw new Error('Marketplace package differs from verified release acquisition');
+      }
       // Native caches copy plugin contents; local SDK/CLI dependencies must not
       // remain links to acquisition paths. Repeating setup also repairs an interrupted install.
       await effects.run('npm', ['install', '--install-links', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: plugin });
+      verifyReleaseGraph(plugin, policy);
       const value = name === 'codex'
         ? { name: 'ours-codex-marketplace', plugins: [{ name: 'ours', source: { source: 'local', path: './plugins/ours' }, policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' }, category: 'Productivity' }] }
         : { name: 'ours.network', owner: { name: 'Adapt Toolkit' }, plugins: [{ name: 'ours', source: './plugins/ours' }] };

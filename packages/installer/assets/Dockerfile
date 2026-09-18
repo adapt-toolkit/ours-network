@@ -5,7 +5,7 @@ FROM toolchain AS build
 WORKDIR /opt/ours
 COPY sources.json /opt/ours/sources.json
 COPY scripts/build/*.mjs /build-scripts/
-COPY scripts/maintenance/build-context.mjs scripts/maintenance/provenance-compare.mjs /maintenance/
+COPY scripts/maintenance/build-context.mjs scripts/maintenance/provenance-compare.mjs scripts/maintenance/release-graph.mjs /maintenance/
 RUN --mount=type=secret,id=github_token --mount=type=cache,id=ours-dist-2-npm,target=/root/.npm,sharing=locked node /build-scripts/build.mjs
 # Testing delivery: npm resolves transitive versions afresh; repeat builds may differ.
 # build.mjs creates package.json once from the sources.json selections.
@@ -16,7 +16,7 @@ RUN node /build-scripts/record-build.mjs
 # must be able to read it. Protected state/host copies retain private ownership.
 RUN chmod 755 /opt/ours /opt/ours/docker /opt/ours/docker/vendor && chmod 644 package.json package-lock.json dependency-tree.json build-context.json docker/vendor/*.tgz
 LABEL network.ours.build-context="1"
-COPY scripts/maintenance/build-context.mjs scripts/maintenance/provenance-compare.mjs /opt/ours/maintenance/
+COPY scripts/maintenance/build-context.mjs scripts/maintenance/provenance-compare.mjs scripts/maintenance/release-graph.mjs /opt/ours/maintenance/
 COPY scripts/runtime/runtime-common.mjs /opt/ours/docker/runtime-common.mjs
 COPY scripts/runtime/check-client.mjs /opt/ours/docker/check-client.mjs
 COPY scripts/runtime/check-start.mjs /opt/ours/docker/check-start.mjs

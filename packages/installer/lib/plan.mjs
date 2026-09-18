@@ -6,6 +6,7 @@
 
 import { join, resolve, basename, dirname } from 'node:path';
 import { valid, validRange, satisfies } from 'semver';
+import { releaseBinding } from '../assets/scripts/maintenance/release-graph.mjs';
 
 export const CLI_UNIT_MARKER = '# Managed by @ours.network/cli';
 export const SYSTEMD_USER_DIR = ['.config', 'systemd', 'user'];
@@ -310,6 +311,7 @@ export function selectSourcePackages(manifest, role, clients = []) {
 
 /** Resolve a packaged compatibility policy into a role-filtered exact selection. */
 export async function resolveSourcePolicy(manifest, role, clients = [], resolveNpm) {
+  const release = releaseBinding(manifest);
   const names = role === 'server' ? SERVER_PACKAGES : clients.map(name => `@ours.network/${name}`);
   const packages = {};
   const sourceNames = new Set();
@@ -332,7 +334,7 @@ export async function resolveSourcePolicy(manifest, role, clients = [], resolveN
     } else throw new Error(`Missing source policy for ${name}`);
   }
   const sources = Object.fromEntries([...sourceNames].map(name => [name, manifest.sources[name]]));
-  const exact = { ...(sourceNames.size ? { sources } : {}), packages };
+  const exact = { ...(sourceNames.size ? { sources } : {}), packages, ...(release ? { release } : {}) };
   selectSourcePackages(exact, role, clients);
   return exact;
 }

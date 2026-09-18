@@ -1,4 +1,5 @@
 import { readBuildRecords, initializeBuildMarker } from '../maintenance/build-context.mjs';
+import { verifyRuntimeRelease } from '../maintenance/release-graph.mjs';
 import { accessSync, constants, lstatSync, readFileSync } from 'node:fs';
 
 export function privatePath(path, directory = false, writable = false) {
@@ -43,5 +44,6 @@ export function checkCredential(path) {
 // Called with the startup state-directory lock held. These are build records,
 // not a storage schema or a declaration that arbitrary upgrades are compatible.
 export function recordBuild(state) {
+  verifyRuntimeRelease('/opt/ours');
   initializeBuildMarker(`${state}/.ours-provenance`, readBuildRecords('/opt/ours'));
 }
