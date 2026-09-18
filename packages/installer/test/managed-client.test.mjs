@@ -87,3 +87,18 @@ test('guided metadata is followed by authenticated daemon and MCP validation bef
     assert.equal(f.effects.readManagedClientProfile(), null);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); rmSync(f.home, { recursive: true, force: true }); }
 });
+
+test('explicit setup refreshes client selections while ordinary retries retain them', () => {
+  const f = fixture();
+  try {
+    const first = f.effects.importClientProfile({ profile: f.profile, sourcesPath: f.sourcesPath, integrations: ['fleet'], fleetSettingsPath: f.fleetSettingsPath });
+    const sources = { packages: { '@ours.network/codex': { type: 'npm', version: '2.0.0' }, '@ours.network/sdk': { type: 'npm', version: '4.0.0' } } };
+    const refreshed = f.effects.importClientProfile({ profile: f.profile, sources, integrations: ['codex'], refresh: true });
+    assert.equal(refreshed.configPath, first.configPath);
+    assert.deepEqual(refreshed.settings.integrations, ['codex']);
+    assert.equal(refreshed.settings.fleetSettingsPath, undefined);
+    assert.deepEqual(JSON.parse(readFileSync(refreshed.settings.sourcesPath)), sources);
+    assert.equal(refreshed.profile.expectedInstanceId, f.profile.expectedInstanceId);
+    assert.equal(readFileSync(refreshed.profile.credentialPath, 'utf8'), 'issued-client-token\n');
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});

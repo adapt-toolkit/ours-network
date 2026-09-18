@@ -1,55 +1,58 @@
-// ours-install v3 — the help text.
-//
-// It lives here rather than in the bin because `--help` is a behaviour with a
-// contract (the flags it names must be the flags target.mjs accepts), and a bin
-// that is three lines long cannot be the place a contract is asserted.
+// Public setup and maintenance commands.
+export const USAGE = `ours-install — interactive setup or complete CLI presets.
 
-export const USAGE = `ours-install — the unified ours.network stack installer.
+  ours-install
+    Opens the console form. Choose all (server + clients), server, or client;
+    runtime, installation directory, identity, integrations and Fleet settings.
+    Linux x64 recommends native; macOS/Windows recommend Docker. Windows uses WSL.
 
-  Selected network installation (uses the packaged compatible source policy):
-    ours-install server install --mode packages|docker [--sources PATH] --state-dir PATH
-    ours-install server status|start|stop|restart --state-dir PATH
-    ours-install server rebuild --state-dir PATH
-    ours-install server update --state-dir PATH [--sources PATH] --compatible
-    ours-install server access-issue --state-dir PATH --output PATH
-    ours-install server access-replace --state-dir PATH --confirm
-    ours-install server backup|restore server LABEL --state-dir PATH
-    ours-install server backup|restore daemon|telegram|cowork|messenger LABEL --state-dir PATH
-    ours-install server reset daemon|telegram|cowork|messenger --confirm --state-dir PATH
-    ours-install client install --config PATH
-  Client profile settings select installer.integrations and may override installer.sourcesPath,
-  and optional installer.fleetSettingsPath (relative paths use the profile directory).
-  Repeat selected server install repairs setup without replacing existing authority.
-  Daemon maintenance includes MCP state. Full-server reset is not supported.
-  Update requires reviewed storage compatibility; --compatible records that attestation.
-  Existing managed layouts are converted before service startup.
+  Full stack, with every required answer preset (no prompts):
+    ours-install --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json
 
+  Server preset (native is an alias for packages):
+    ours-install server --mode native --state-dir /private/ours --identity-name "Your Name"
+    ours-install server install --mode docker --state-dir /private/ours --identity-name "Your Name"
 
-  Install:  npm i -g @ours.network/install && ours-install   (recommended)
-            npx @ours.network/install                          (one-off)
+  Client preset for an existing server:
+    ours-install client --config /private/profile.json --integrations codex,fleet --fleet-settings /private/fleet.json
 
-  ours-install [--state-dir PATH] [--port N] [--dry-run] [--help] [--version]
+  Update a retained installation, preserving its identities:
+    ours-install all update --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json --compatible
 
-Progress-driven setup for the whole stack: one shared daemon, MCP, Telegram,
-cowork, detected harness plugins (Claude Code / Codex / Hermes), a Human
-identity, and ours-fleet. The daemon, Telegram connector, and cowork shim start
-as durable services; only Fleet is staged but stopped. The installer asks only
-for information it cannot infer and
-ends with exact next commands plus a copy-paste agent hand-off prompt.
+  --scope all|server|client   preset which parts to configure (default all)
+  --action install|update    equivalent to the positional operation
+  --mode docker|native      packages is also accepted for native mode
+  --state-dir PATH          installation root; required for all/server
+  --identity-name NAME      desired Human name for a fresh server; existing root is retained
+  --integrations LIST       codex,claude-code,fleet; use none to skip clients explicitly
+  --fleet-settings PATH     JSON settings for Fleet; mandatory for CLI presets selecting Fleet
+  --config PATH             complete connection profile for client-only setup
+  --sources PATH            explicit full development source policy override
+  --port N                  daemon port (default 3050 on a fresh installation)
+  --cowork-port N           cowork port (default 3052)
+  --messenger-port N        messenger port (default 8420)
+  --compatible              required attestation for server updates of retained state
+  --migrate                 explicit legacy access migration during install
+  --dry-run                 show the validated plan without changing anything
+  --help, -h                show help
+  --version, -V             print installer version
 
-  --state-dir  the daemon's STATE DIRECTORY, which is what identifies a daemon
-               (default ~/.ours). A second state directory is a second daemon.
-  --port       used only when CREATING a daemon. For a daemon that already owns
-               the state directory the port comes from its own record, and a
-               --port that disagrees with it is refused rather than corrected.
-  --dry-run    walk the whole flow and print what it WOULD do — change nothing
-  --help       show this help and exit
-  --version    print the installer version and exit
+CLI presets must be complete and never open the interactive form or a Fleet wizard.
+Missing answers are reported before installation. Both input modes run the same
+installer with preparation, identity restoration, update and readiness progress.
+Fleet is configured but left stopped for operator review.
 
-Env: OURS_ASSUME_YES=1 (accept defaults, no prompts) · OURS_INSTALL_DRY_RUN=1 ·
-     OURS_CONFIG=/private/host-profile.json · OURS_CHANNEL=nightly ·
-     OURS_BROKER_URL · OURS_NPM. A complete host profile selects client-only
-     setup for an existing Compose-owned daemon. Docs: https://ours.network`;
+Scoped maintenance:
+  ours-install server status|start|stop|restart|rebuild --state-dir PATH
+  ours-install server access-issue --state-dir PATH --output PATH
+  ours-install server access-replace --state-dir PATH --confirm
+  ours-install server backup|restore server|daemon|telegram|cowork|messenger LABEL --state-dir PATH
+  ours-install server reset daemon|telegram|cowork|messenger --state-dir PATH --confirm
+
+Install the selected channel with npm install -g @ours.network/install@nightly
+(or @latest for a qualified stable release). Component versions come from the
+installer's embedded release manifest. Node.js 22+ is required.
+`;
 
 export const UNINSTALL_USAGE = `ours-uninstall — remove one ours daemon and what attaches to it.
 

@@ -13,12 +13,13 @@
 
 import { spawnSync, execFileSync } from 'node:child_process';
 import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, userInfo, platform as osPlatform, release as osRelease } from 'node:os';
+import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
 import { validateHostProfile } from './target.mjs';
+import { createServerOnboarding } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { askYesNo, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
@@ -333,7 +334,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     version,
     interactive: ttyFd != null,
     // Preflight reads the machine rather than asking the orchestrator to.
-    platform: { platform: osPlatform(), release: osRelease() },
+    platform: { platform: osPlatform(), release: osRelease(), arch: osArch() },
     nodeVersion: process.versions.node,
     exists: (path) => existsSync(path),
     knownStateDirs: () => knownStateDirsIn(home),
@@ -413,7 +414,12 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
         stdio: [...(stream ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe']), ...(installationLockFd === null ? [] : [installationLockFd])],
         env: childEnv,
       });
-      if (r.error || (r.status !== 0 && !allowCodes.includes(r.status))) {
+      if (r.error) {
+        const error = new Error(`${executable} could not start (${r.error.code ?? 'launch error'})`, { cause: r.error });
+        error.code = r.error.code;
+        throw error;
+      }
+      if (r.status !== 0 && !allowCodes.includes(r.status)) {
         const detail = sensitive ? '' : (r.stderr || r.stdout || '').trim().split('\n').slice(-3).join('; ');
         throw new Error(`${executable} ${args.join(' ')} exited ${r.status}${detail ? `: ${detail}` : ''}`);
       }
@@ -533,12 +539,30 @@ export function networkEffects(effects) {
     OURS_MESSENGER_PORT: String(record.messengerPort ?? 8420),
     OURS_MESSENGER_IDENTITY: record.messengerIdentity ?? '',
   });
-  const compose = (record, args, options = {}) => effects.run('docker', [
+  const composeArgs = (record, args) => [
     'compose', '--project-directory', record.workDir, '--file', join(record.workDir,
       record.schema === 1 && existsSync(join(record.workDir, 'docker-compose.legacy.yaml'))
         ? 'docker-compose.legacy.yaml' : 'docker-compose.yaml'),
     '--project-name', record.project, ...args,
-  ], { ...options, env: { ...baseEnv(record), ...options.env } });
+  ];
+  const compose = (record, args, options = {}) => effects.run('docker', composeArgs(record, args),
+    { ...options, env: { ...baseEnv(record), ...options.env } });
+  const dockerStartupError = async (record, service, cause) => {
+    const args = ['logs', '--no-color', '--tail', '50', '--timestamps', service];
+    const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+    const command = `OURS_DAEMON_ID=${quote(record.instanceId)} docker ${composeArgs(record, args).map(quote).join(' ')}`;
+    let detail;
+    try {
+      const logs = await compose(record, args);
+      // Limit terminal diagnostics; container output must not inject terminal controls.
+      detail = (logs.stdout ?? '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').trim().slice(-6000);
+      detail = detail ? `Recent ${service} logs:\n${detail}` : 'The container produced no readable logs.';
+    } catch {
+      detail = 'Container logs could not be read.';
+    }
+    return new Error(`Docker service "${service}" failed to start or become healthy.\n${detail}\nStartup error: ${cause.message}\nInspect logs: ${command}`, { cause });
+  };
   const bin = (record, name) => join(record.workDir, 'node_modules', '.bin', name);
   const localEnv = (record, service = 'daemon') => {
     const paths = installationPaths(record);
@@ -566,6 +590,7 @@ export function networkEffects(effects) {
     }
   };
   return {
+    ...createServerOnboarding(effects, { compose, localEnv, bin }),
     sourcePolicyHash(path) {
       return createHash('sha256').update(readFileSync(path)).digest('hex');
     },
@@ -601,7 +626,7 @@ export function networkEffects(effects) {
       const project = `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
       return { schema: 2, root, mode, instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES], port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
     },
-    async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest } = {}) {
+    async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName } = {}) {
       if (existing) {
         privateDirectory(record.root);
         assertPrivateRegularFile(join(record.root, 'installation.json'), 'selection');
@@ -609,10 +634,34 @@ export function networkEffects(effects) {
         if (env.OURS_DAEMON_ID && env.OURS_DAEMON_ID !== record.instanceId) throw new Error('Conflicting instance ID');
       }
       if (record.mode === 'docker') {
-        await effects.run('docker', ['info', '--format', '{{.ServerVersion}}']);
-        const version = await effects.run('docker', ['compose', 'version', '--short']);
+        const nativeRoot = existing ? '/path/to/new-empty-directory' : record.root;
+        const quotedRoot = `'${String(nativeRoot).replaceAll("'", "'\\''")}'`;
+        const quotedName = `'${String(identityName ?? record.messengerIdentity ?? 'Your Name').replaceAll("'", "'\\''")}'`;
+        const recovery = [
+          'Please install Docker Desktop on macOS/Windows, or Docker Engine with the Compose plugin on Linux, and start Docker before retrying.',
+          'Docker is recommended for macOS and Windows.',
+          `Alternatively, use native installation: ours-install server install --mode packages --state-dir ${quotedRoot} --identity-name ${quotedName}`,
+          'Native mode requires systemd user services on Linux/WSL or a launchd GUI session on macOS.',
+          ...(existing ? ['Keep this existing Docker installation in Docker mode; use a separate empty directory for a new native installation.'] : []),
+        ].join('\n');
+        try {
+          await effects.run('docker', ['info', '--format', '{{.ServerVersion}}']);
+        } catch (cause) {
+          const problem = cause.code === 'ENOENT'
+            ? 'Docker command was not found in PATH.'
+            : `Docker Engine is not reachable. Start Docker and check that your user can access it.\nDetails: ${cause.message}`;
+          throw new Error(`${problem}\n${recovery}`, { cause });
+        }
+        let version;
+        try {
+          version = await effects.run('docker', ['compose', 'version', '--short']);
+        } catch (cause) {
+          throw new Error(`Docker Compose 2.35 or newer is required, but the Compose plugin could not run. Update Docker Desktop or install the Docker Compose plugin.\n${recovery}`, { cause });
+        }
         const match = /^v?(\d+)\.(\d+)/.exec(version.stdout.trim());
-        if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 35)) throw new Error('Docker Compose 2.35 or newer is required');
+        if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 35)) {
+          throw new Error(`Docker Compose 2.35 or newer is required. Update Docker Desktop or the Docker Compose plugin.\n${recovery}`);
+        }
         if (operation !== 'status') {
           // Compose clients can disappear while their Engine-owned command continues.
           const active = await effects.run('docker', ['ps', '--filter', `label=com.docker.compose.project=${record.project}`, '--filter', 'label=com.docker.compose.oneoff=True', '--format', '{{.ID}}']);
@@ -659,7 +708,7 @@ export function networkEffects(effects) {
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
         const image = await effects.run('docker', ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
-        if (image.code !== 0) await compose(record, ['build', 'daemon']);
+        if (image.code !== 0) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         if (runtimeOnly) return;
         await compose(record, ['run', '--rm', '--no-deps', '-T', 'prepare', 'prepare']);
       } else {
@@ -667,8 +716,8 @@ export function networkEffects(effects) {
           const sourceRoot = join(record.root, `build-${randomUUID()}`);
           ensurePrivateDirectory(sourceRoot);
           try {
-            await effects.run(process.execPath, [join(record.workDir, 'scripts/build/build.mjs')], { cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir, OURS_SOURCE_ROOT: sourceRoot } });
-            await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: record.workDir });
+            await effects.run(process.execPath, [join(record.workDir, 'scripts/build/build.mjs')], { stream: true, cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir, OURS_SOURCE_ROOT: sourceRoot } });
+            await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { stream: true, cwd: record.workDir });
             await effects.run(process.execPath, [join(record.workDir, 'scripts/build/record-build.mjs')], { cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir } });
             writePrivateNew(join(record.workDir, '.packages-ready'), 'ready\n');
           } finally { rmSync(sourceRoot, { recursive: true, force: true }); }
@@ -1061,13 +1110,19 @@ export function networkEffects(effects) {
           if ((await effects.serverLifecycle(record, 'status', selected)).length) throw new Error('Writers did not stop');
           return;
         }
-        if (selected.includes('daemon')) await compose(record, ['up', '-d', '--no-build', '--no-deps', '--wait', 'daemon']);
+        const start = async service => {
+          effects.out(`Starting ${service}; waiting for readiness...`);
+          try { await compose(record, ['up', '-d', '--no-build', '--no-deps', '--wait', service]); }
+          catch (cause) { throw await dockerStartupError(record, service, cause); }
+          effects.out(`${service} is ready.`);
+        };
+        if (selected.includes('daemon')) await start('daemon');
         const failures = [];
         for (const service of selected.filter(s => s !== 'daemon')) {
-          try { await compose(record, ['up', '-d', '--no-build', '--no-deps', '--wait', service]); }
-          catch { failures.push(service); }
+          try { await start(service); }
+          catch (error) { failures.push({ service, error }); }
         }
-        if (failures.length) throw new Error(`Application readiness failed: ${failures.join(', ')}. Check owning prerequisites; no identities were created.`);
+        if (failures.length) throw new Error(`Application readiness failed: ${failures.map(f => f.service).join(', ')}. Check the selected application prerequisites.\n${failures.map(f => f.error.message).join('\n\n')}`);
         return;
       }
       return nativeLifecycle(record, operation, selected, { effects, localEnv, ownerCommand, bin });
@@ -1090,7 +1145,7 @@ export function networkEffects(effects) {
       // Full metadata and authenticated capability validation follows before publication.
       return validateHostProfile({ endpoint: url.origin, expectedInstanceId: selection.instanceId, credentialPath: resolve(credentialPath) });
     },
-    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath }) {
+    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh = false }) {
       const root = join(home, '.ours-client');
       const configPath = join(root, 'profile.json');
       const credentialPath = join(root, 'credential');
@@ -1101,13 +1156,13 @@ export function networkEffects(effects) {
       const credential = readFileSync(profile.credentialPath, 'utf8');
       if (!credential.trim()) throw new Error('Client credential is empty');
       // Read every supplied input before any publication. Existing setup settings win on retry.
-      const sources = current ? null : resolvedSources
+      const sources = current && !refresh ? null : resolvedSources
         ? Buffer.from(`${JSON.stringify(resolvedSources, null, 2)}\n`)
         : readFileSync(sourcesPath);
-      const fleetSettings = !current && fleetSettingsPath ? readFileSync(fleetSettingsPath) : null;
+      const fleetSettings = (!current || refresh) && fleetSettingsPath ? readFileSync(fleetSettingsPath) : null;
       if (fleetSettings) JSON.parse(fleetSettings.toString());
       ensurePrivateDirectory(root);
-      if (current) {
+      if (current && !refresh) {
         assertPrivateRegularFile(credentialPath, 'managed credential');
         if (readFileSync(credentialPath, 'utf8') !== credential) atomicWriteConfig(credentialPath, credential);
         return { configPath, profile: validateHostProfile(current), settings: current.installer };
@@ -1122,12 +1177,13 @@ export function networkEffects(effects) {
       atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
       return { configPath, profile: validateHostProfile(saved), settings };
     },
-    async acquireClientPackages(configPath, sourcesPath, integrations) {
+    async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false } = {}) {
       const manifest = JSON.parse(readFileSync(sourcesPath, 'utf8'));
       // Public SDK client APIs are actual integration dependencies; Fleet also owns CLI usage.
       const selected = [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
       const packages = selectSourcePackages(manifest, 'client', selected);
-      const root = join(home, '.ours-client-install', createHash('sha256').update(configPath).digest('hex').slice(0, 16));
+      const selectionKey = refresh ? JSON.stringify([configPath, manifest, integrations]) : configPath;
+      const root = join(home, '.ours-client-install', createHash('sha256').update(selectionKey).digest('hex').slice(0, 16));
       const hasGit = Object.values(packages).some(selection => selection.source);
       await effects.run('npm', ['--version']);
       if (hasGit) {
@@ -1147,12 +1203,12 @@ export function networkEffects(effects) {
           const sourceRoot = join(root, `build-${randomUUID()}`);
           ensurePrivateDirectory(sourceRoot);
           try {
-            await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/build/build.mjs')], { cwd: root, env: { OURS_BUILD_ROOT: root, OURS_SOURCE_ROOT: sourceRoot, OURS_BUILD_PACKAGES: selected.join(',') } });
+            await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/build/build.mjs')], { stream: true, cwd: root, env: { OURS_BUILD_ROOT: root, OURS_SOURCE_ROOT: sourceRoot, OURS_BUILD_PACKAGES: selected.join(',') } });
           } finally { rmSync(sourceRoot, { recursive: true, force: true }); }
         } else {
           writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ours-native-clients', private: true, dependencies: Object.fromEntries(Object.entries(packages).map(([name, selection]) => [name, selection.version])) }), { mode: 0o600 });
         }
-        await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { cwd: root });
+        await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { stream: true, cwd: root });
         verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
         writePrivateNew(join(root, '.packages-ready'), 'ready\n');
       }
@@ -1365,5 +1421,5 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       failures.push(service);
     }
   }
-  if (failures.length) throw new Error(`Application readiness failed: ${failures.join(', ')}. Check owning prerequisites; no identities were created.`);
+  if (failures.length) throw new Error(`Application readiness failed: ${failures.join(', ')}. Check the selected application prerequisites.`);
 }
