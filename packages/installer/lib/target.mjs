@@ -85,15 +85,15 @@ export function validateHostProfile(value) {
   const mixed = LEGACY_PROFILE_KEYS.filter((key) => Object.hasOwn(value, key));
   if (mixed.length) throw profileError(`legacy selection keys cannot be mixed with a host profile (${mixed.join(', ')}).`);
   const { endpoint, expectedInstanceId, credentialPath } = value;
-  if (typeof endpoint !== 'string' || endpoint.trim() !== endpoint || endpoint === '') throw profileError('endpoint must be a non-empty HTTP origin.');
+  if (typeof endpoint !== 'string' || endpoint.trim() !== endpoint || endpoint === '') throw profileError('endpoint must be a non-empty HTTP or HTTPS origin.');
   if (typeof expectedInstanceId !== 'string' || !PROFILE_UUID.test(expectedInstanceId)) throw profileError('expectedInstanceId must be a lowercase UUID.');
   if (typeof credentialPath !== 'string' || credentialPath === '' || !credentialPath.startsWith('/') || resolve(credentialPath) !== credentialPath) {
     throw profileError('credentialPath must be a normalized absolute path.');
   }
   let url;
-  try { url = new URL(endpoint); } catch { throw profileError('endpoint must be an HTTP origin.'); }
-  if (url.protocol !== 'http:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw profileError('endpoint must be an HTTP origin without credentials, path, query, or fragment.');
+  try { url = new URL(endpoint); } catch { throw profileError('endpoint must be an HTTP or HTTPS origin.'); }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw profileError('endpoint must be an HTTP or HTTPS origin without credentials, path, query, or fragment.');
   }
   return { endpoint: url.origin, expectedInstanceId, credentialPath };
 }

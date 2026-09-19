@@ -1428,7 +1428,7 @@ export async function runClientCommand(command, effects) {
   let profile;
   if (configPath) profile = validateHostProfile(effects.readProfile(configPath));
   else if (!command.preset && effects.interactive) {
-    const endpoint = await effects.askLine('Server HTTP endpoint: ', 'http://127.0.0.1:3050');
+    const endpoint = await effects.askLine('Server HTTP or HTTPS endpoint: ', 'http://127.0.0.1:3050');
     const credentialPath = await effects.askLine('Private issued-token file: ', '');
     if (!credentialPath) throw new InstallUsageError('Client setup requires an issued-token file');
     profile = await effects.discoverClientProfile(endpoint, credentialPath);

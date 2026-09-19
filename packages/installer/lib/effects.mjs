@@ -1155,8 +1155,8 @@ export function networkEffects(effects) {
     },
     async discoverClientProfile(endpoint, credentialPath) {
       const url = new URL(endpoint);
-      if (url.protocol !== 'http:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
-        throw new Error('Client endpoint must be an HTTP origin');
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
+        throw new Error('Client endpoint must be an HTTP or HTTPS origin');
       const response = await fetch(`${url.origin}/selection`, { redirect: 'error', signal: AbortSignal.timeout(5000) });
       if (!response.ok) throw new Error(`Daemon selection answered HTTP ${response.status}`);
       const selection = await response.json();

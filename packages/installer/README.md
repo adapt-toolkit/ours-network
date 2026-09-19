@@ -295,3 +295,22 @@ deletion is required; repeat the original setup with the updated installer.
 The repair runs isolated verification containers without state mounts or network
 access. Other image verification failures stop setup without replacing the image.
 An interrupted repair can be retried, including after the image tag was replaced.
+
+### Remote clients over HTTPS
+
+A client may select an `https://` origin backed by a TLS reverse proxy. Keep the
+daemon listener private and configure the proxy separately with a certificate
+trusted by the client and matching the hostname. Node uses its normal trust
+store; a private CA may be supplied through `NODE_EXTRA_CA_CERTS` before starting
+the client. Certificate verification must remain enabled.
+
+The existing issued client credential works over either transport; changing the
+URL scheme does not require a new credential. Keep the server's master on the
+server. Forward `x-ours-api-token` and the `x-ours-*` session headers unchanged,
+and support streamed request/response bodies and long polling. Client requests
+refuse redirects, including HTTPS-to-HTTP redirects: configure the final HTTPS
+origin directly. UUID/capability checks still precede credential-bearing calls.
+
+This adds client HTTPS support, not an HTTPS daemon listener, certificate
+provisioning or automatic reverse-proxy configuration. Existing local HTTP and
+SSH-tunnel profiles continue to work.
