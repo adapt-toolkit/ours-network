@@ -125,3 +125,25 @@ nightly versions, while main uses a Conventional Commits bump committed by the
 GitHub App. Both update the installer and release manifest version together,
 without changing the selected component versions. Required publication secrets:
 `NPM_TOKEN`, `VERSION_BUMP_APP_ID`, `VERSION_BUMP_APP_PRIVATE_KEY`.
+
+### Host CLI for Docker and remote servers
+
+Client setup installs the native `ours` command on the client machine, including
+when `--integrations none` is selected. It uses the saved private
+`~/.ours-client/profile.json` and issued credential to reach the selected daemon.
+Optional MCP, Codex and Fleet integrations share that selection. No container
+shell is needed for API commands. Server lifecycle and master-access administration
+remain server-side operations.
+
+The host command can use a newer CLI than the server and integrations. The release
+manifest records its exact CLI/SDK pair separately. Setup retains those packages
+under `~/.ours-client-install/` and exposes `ours` in the configured npm prefix.
+This directory contains active installed executables, not disposable cache: keep
+it while the client is installed. Optional integration installs use their own
+selected dependencies; they do not change the host command's SDK.
+
+When replacing an installer-managed `ours` launcher, setup saves its verified bytes
+in `~/.ours-client/previous-cli-<sha256>.cjs`. Server installation maintenance remains
+available through `ours-install server`. Unknown executables are never overwritten.
+These changes require a released CLI with client-profile support in the selected
+source policy; source CI alone does not update an installed or published package.

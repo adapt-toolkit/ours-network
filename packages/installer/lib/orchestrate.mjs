@@ -101,7 +101,7 @@ function clientRetry(effects, imported, integrations) {
     effects.out(info('Saved profile and settings retained. Run ours-install, choose Connect to an existing server, and reuse the saved profile to finish the interactive Fleet configuration.'));
     return;
   }
-  const args = ['client', 'install', '--config', imported.configPath, '--integrations', integrations.join(','), '--sources', imported.settings.sourcesPath];
+  const args = ['client', 'install', '--config', imported.configPath, '--integrations', integrations.join(',') || 'none', '--sources', imported.settings.sourcesPath];
   if (imported.settings.fleetSettingsPath) args.push('--fleet-settings', imported.settings.fleetSettingsPath);
   const command = `ours-install client install ${args.slice(2).map((value, i) => i % 2 === 0 ? value : shellQuote(value)).join(' ')}`;
   effects.out(info(`Saved profile and settings retained; re-run ${command}`));
@@ -1449,13 +1449,13 @@ export async function runClientCommand(command, effects) {
     integrations = [];
     for (const name of ['codex', 'claude-code', 'fleet']) if (await effects.ask(`Install ${name}?`, name !== 'fleet')) integrations.push(name);
   }
-  if (!Array.isArray(integrations) || !integrations.length || integrations.some(name => !['codex', 'claude-code', 'fleet'].includes(name)) || new Set(integrations).size !== integrations.length) throw new InstallUsageError('installer.integrations must select codex, claude-code and/or fleet');
+  if (!Array.isArray(integrations) || integrations.some(name => !['codex', 'claude-code', 'fleet'].includes(name)) || new Set(integrations).size !== integrations.length) throw new InstallUsageError('installer.integrations must be an array of codex, claude-code and/or fleet; use an empty array for CLI only');
   let fleetSettingsPath = command.preset ? command.fleetSettingsPath : settings?.fleetSettingsPath;
   if (command.nonInteractive && integrations.includes('fleet') && !fleetSettingsPath) throw new InstallUsageError('Fleet in CLI mode requires --fleet-settings; no interactive wizard will be opened');
   if (fleetSettingsPath !== undefined && (typeof fleetSettingsPath !== 'string' || !fleetSettingsPath))
     throw new InstallUsageError('installer.fleetSettingsPath must be a non-empty path when supplied');
   if (fleetSettingsPath) fleetSettingsPath = resolve(settingsBase, fleetSettingsPath);
-  const selectedClients = [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
+  const selectedClients = [...new Set(['sdk', 'cli', ...integrations])];
   let sourcesPath = settings?.sourcesPath;
   let resolvedSources;
   if (command.sourcePolicy) {

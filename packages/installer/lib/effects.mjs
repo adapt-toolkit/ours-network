@@ -11,6 +11,7 @@
 // state-directory guard and the enable/reload. The installer never touches a
 // unit file or the service manager directly.
 
+import { publishClientCli } from './client-cli.mjs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
@@ -26,7 +27,7 @@ import { classifyHarnessProbe } from './logic.mjs';
 import { qualifyDockerRuntime, refreshDockerPolicyCopy } from './docker-runtime-repair.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
-import { releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
+import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
 
 /** GET http://127.0.0.1:<port>/state-dir — the unauthenticated identity probe. */
 async function probePort(port, { timeoutMs = 1500 } = {}) {
@@ -1195,18 +1196,20 @@ export function networkEffects(effects) {
       atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
       return { configPath, profile: validateHostProfile(saved), settings };
     },
-    async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false } = {}) {
+    async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false, hostCliOnly = false } = {}) {
       const manifest = JSON.parse(readFileSync(sourcesPath, 'utf8'));
-      // Public SDK client APIs are actual integration dependencies; Fleet also owns CLI usage.
-      const selected = [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
+      // Every client installation includes the native CLI and its SDK dependency.
+      const selected = [...new Set(['sdk', 'cli', ...integrations])];
       const packages = selectSourcePackages(manifest, 'client', selected);
-      const selectionKey = refresh ? JSON.stringify([configPath, manifest, integrations]) : configPath;
+      const selectionKey = JSON.stringify([hostCliOnly ? 'host-cli-private-v1' : 'host-cli-v1', configPath, ...(hostCliOnly ? [manifest] : []), ...(refresh ? [manifest, integrations] : [])]);
       const root = join(home, '.ours-client-install', createHash('sha256').update(selectionKey).digest('hex').slice(0, 16));
       const hasGit = Object.values(packages).some(selection => selection.source);
       await effects.run('npm', ['--version']);
       if (hasGit) {
         for (const command of ['python3', 'git', 'make', 'cc']) await effects.run(command, ['--version']);
       }
+      // This directory retains active executables, not disposable download cache.
+      ensurePrivateDirectory(join(home, '.ours-client-install'));
       ensurePrivateDirectory(root);
       const retained = join(root, 'sources.json');
       const bytes = readFileSync(sourcesPath);
@@ -1231,13 +1234,26 @@ export function networkEffects(effects) {
         writePrivateNew(join(root, '.packages-ready'), 'ready\n');
       }
       verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
+      const cliPolicy = hostCliOnly ? null : hostCliPolicy(manifest);
       // Local acquisition alone does not publish native commands. Use the user's
       // configured npm prefix and retained dependency closure, including on retry.
       for (const name of integrations.filter(name => name === 'fleet' || name === 'codex')) {
         await effects.run('npm', ['install', '--global', '--install-links=false', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(root, 'node_modules', '@ours.network', name)]);
       }
+      let cliBin = join(root, 'node_modules/.bin/ours');
+      if (cliPolicy) {
+        const cliSources = join(root, 'host-cli-sources.json');
+        const cliBytes = JSON.stringify(cliPolicy, null, 2) + '\n';
+        if (!existsSync(cliSources)) writePrivateNew(cliSources, cliBytes);
+        else if (readFileSync(cliSources, 'utf8') !== cliBytes) throw new Error('Retained host CLI source selection differs');
+        const acquired = await effects.acquireClientPackages(configPath, cliSources, [], { refresh, hostCliOnly: true });
+        cliBin = acquired.cliBin;
+      } else {
+        // Publish last so optional integration installation cannot downgrade ours.
+        await publishClientCli(effects, join(root, 'node_modules', '@ours.network/cli'), { policy: manifest, isolated: hostCliOnly });
+      }
       const localPackages = Object.fromEntries(integrations.filter(n => n !== 'fleet').map(name => [name, join(root, 'node_modules', '@ours.network', name)]));
-      return { localPackages, packages: {}, fleetBin: integrations.includes('fleet') ? join(root, 'node_modules/.bin/ours-fleet') : null };
+      return { localPackages, packages: {}, cliBin, fleetBin: integrations.includes('fleet') ? join(root, 'node_modules/.bin/ours-fleet') : null };
     },
     async prepareClientMarketplace(name, packagePath) {
       const acquisitionRoot = dirname(dirname(dirname(packagePath)));
@@ -1246,7 +1262,7 @@ export function networkEffects(effects) {
       const release = releaseBinding(policy);
       const integrationsPath = join(acquisitionRoot, 'integrations.json');
       const integrations = existsSync(integrationsPath) ? JSON.parse(readFileSync(integrationsPath, 'utf8')) : null;
-      const requiredPackages = integrations ? [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])].map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
+      const requiredPackages = integrations ? [...new Set(['sdk', 'cli', ...integrations])].map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
       verifyReleaseGraph(acquisitionRoot, policy, { requiredPackages });
       const root = join(acquisitionRoot, 'marketplaces', name);
       const plugin = join(root, 'plugins', 'ours');
