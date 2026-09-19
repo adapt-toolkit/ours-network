@@ -70,7 +70,17 @@ try {
    npm(['install','--global','--prefix',join(dir,'home'),'--ignore-scripts','--no-audit','--no-fund', '@ours.network/fleet@'+release.packages['@ours.network/fleet'].version]);
    await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
    await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
-   console.log('Verified private host CLI publication and retry after global Fleet installation.');
+   const { realEffects } = await import('../packages/installer/lib/effects.mjs');
+   const acquisition = realEffects({ home: join(dir,'home'), env: { ...env, NPM_CONFIG_PREFIX: join(dir,'home') }, out: console.log });
+   const sourcesPath=join(dir,'client-sources.json');
+   writeFileSync(sourcesPath,JSON.stringify({release,packages:Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,{type:'npm',version:p.version}]))}));
+   const profilePath=join(dir,'home/.ours-client/profile.json');
+   const first=await acquisition.acquireClientPackages(profilePath,sourcesPath,[]);
+   const second=await acquisition.acquireClientPackages(profilePath,sourcesPath,[]);
+   if (first.cliBin !== second.cliBin) throw new Error('Client-only retry changed retained CLI acquisition');
+   const { realpathSync } = await import('node:fs');
+   if (realpathSync(first.cliBin) !== realpathSync(join(dir,'home/bin/ours'))) throw new Error('Client acquisition published a different CLI');
+   console.log('Verified actual client-only acquisition, private host CLI publication and retry after global Fleet installation.');
   }
  }
 

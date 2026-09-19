@@ -65,6 +65,7 @@ for (const drift of [false, true]) test(`private host CLI ${drift ? 'rejects SDK
   const home = mkdtempSync(join(tmpdir(), 'ours-private-cli-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const root = join(home, '.ours-client-install/selection');
+  mkdirSync(root, { recursive: true, mode: 0o700 });
   const cli = '@ours.network/cli', sdk = '@ours.network/sdk';
   const integrity = 'sha512-' + Buffer.alloc(64).toString('base64');
   const artifacts = { [cli]: { version: '2.8.1-nightly.4', integrity }, [sdk]: { version: '3.8.1-nightly.6', integrity } };

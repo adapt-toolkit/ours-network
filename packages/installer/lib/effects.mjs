@@ -1208,6 +1208,8 @@ export function networkEffects(effects) {
       if (hasGit) {
         for (const command of ['python3', 'git', 'make', 'cc']) await effects.run(command, ['--version']);
       }
+      // This directory retains active executables, not disposable download cache.
+      ensurePrivateDirectory(join(home, '.ours-client-install'));
       ensurePrivateDirectory(root);
       const retained = join(root, 'sources.json');
       const bytes = readFileSync(sourcesPath);

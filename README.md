@@ -135,6 +135,13 @@ Optional MCP, Codex and Fleet integrations share that selection. No container
 shell is needed for API commands. Server lifecycle and master-access administration
 remain server-side operations.
 
+The host command can use a newer CLI than the server and integrations. The release
+manifest records its exact CLI/SDK pair separately. Setup retains those packages
+under `~/.ours-client-install/` and exposes `ours` in the configured npm prefix.
+This directory contains active installed executables, not disposable cache: keep
+it while the client is installed. Optional integration installs use their own
+selected dependencies; they do not change the host command's SDK.
+
 When replacing an installer-managed `ours` launcher, setup saves its verified bytes
 in `~/.ours-client/previous-cli-<sha256>.cjs`. Server installation maintenance remains
 available through `ours-install server`. Unknown executables are never overwritten.

@@ -11,6 +11,12 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 function stat(path) {
   try { return lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
+function privateAcquisition(home, root) {
+  for (const path of [join(home, '.ours-client-install'), root]) {
+    const value = lstatSync(path);
+    if (!value.isDirectory() || value.uid !== process.getuid() || (value.mode & 0o077) || realpathSync(path) !== path) throw new Error('Unsafe private CLI directory');
+  }
+}
 /** Publish the native client, retaining a verified migration launcher for rollback. */
 export async function publishClientCli(effects, packagePath, { policy = {}, isolated = false } = {}) {
   const prefix = (await effects.run('npm', ['prefix', '--global'])).stdout.trim();
@@ -26,6 +32,7 @@ export async function publishClientCli(effects, packagePath, { policy = {}, isol
       if (resolved.startsWith(privateBase)) {
         const packageRoot = dirname(dirname(resolved));
         const acquisitionRoot = dirname(dirname(dirname(packageRoot)));
+        privateAcquisition(effects.home, acquisitionRoot);
         const retained = JSON.parse(readFileSync(join(acquisitionRoot, 'sources.json')));
         if (releaseBinding(retained)?.scope !== 'host-cli') throw new Error('Unrecognized private CLI entry');
         verifyReleaseGraph(acquisitionRoot, retained);
@@ -60,6 +67,7 @@ export async function publishClientCli(effects, packagePath, { policy = {}, isol
   if (isolated) {
     const root = dirname(dirname(dirname(packagePath)));
     if (!realpathSync(root).startsWith(join(effects.home, '.ours-client-install') + '/') || releaseBinding(policy)?.scope !== 'host-cli') throw new Error('Invalid private CLI acquisition');
+    privateAcquisition(effects.home, root);
     verifyReleaseGraph(root, policy);
     const selected = JSON.parse(readFileSync(join(packagePath, 'package.json')));
     const target = realpathSync(resolve(packagePath, selected.bin.ours));
