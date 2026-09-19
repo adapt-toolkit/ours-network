@@ -29,8 +29,14 @@ for (const fail of [false, true]) {
       const entry = join(home, 'bin/ours');
       const original = buildManagedCli(join(home, 'server/installation.json'), join(home, 'installer/install.mjs'));
       writeFileSync(entry, original, { mode: 0o755 });
+      const packagePath = join(home, 'acquired'); mkdirSync(packagePath);
+      writeFileSync(join(packagePath, 'package.json'), JSON.stringify({ name: '@ours.network/cli', version: '1.0.0', bin: { ours: 'cli.js' } }));
+      writeFileSync(join(packagePath, 'cli.js'), '#!/usr/bin/env node\n');
+      const npmRoot = join(home, 'lib/node_modules'); mkdirSync(join(npmRoot, '@ours.network'), { recursive: true });
+      symlinkSync(packagePath, join(npmRoot, '@ours.network/cli'));
       const effects = { home, out() {}, run: async (_cmd, args) => {
         if (args[0] === 'prefix') return { stdout: home };
+        if (args[0] === 'root') return { stdout: npmRoot };
         assert.equal(args[0], 'install'); assert.equal(existsSync(entry), false);
         if (fail) throw new Error('npm publication refused');
         symlinkSync(join(home, 'acquired/cli.js'), entry);

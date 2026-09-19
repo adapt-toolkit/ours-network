@@ -597,7 +597,7 @@ test('missing client dependency selection refuses before activating the managed 
 
 test('acquired native commands are published before setup and retried without reacquisition', async () => {
   const { realEffects } = await import('../lib/effects.mjs');
-  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync } = await import('node:fs');
   const { join, dirname } = await import('node:path');
   const { tmpdir } = await import('node:os');
   const home = mkdtempSync(join(tmpdir(), 'ours-command-publication-'));
@@ -612,7 +612,16 @@ test('acquired native commands are published before setup and retried without re
     effects.run = async (cmd, args, options) => {
       calls.push({ cmd, args, options });
       if (args[0] === 'prefix') return { stdout: home };
+      if (args[0] === 'root') return { stdout: join(home, 'lib/node_modules') };
       if (args.includes('--global') && refuse) throw new Error('configured npm prefix is not writable');
+      if (args[0] === 'install' && args.includes('--global') && args.at(-1).endsWith('/cli')) {
+        const selected = args.at(-1); mkdirSync(selected, { recursive: true });
+        writeFileSync(join(selected, 'package.json'), JSON.stringify({ name: '@ours.network/cli', version: '1.2.3', bin: { ours: 'cli.js' } }));
+        writeFileSync(join(selected, 'cli.js'), '#!/usr/bin/env node\n');
+        mkdirSync(join(home, 'lib/node_modules/@ours.network'), { recursive: true }); mkdirSync(join(home, 'bin'));
+        symlinkSync(selected, join(home, 'lib/node_modules/@ours.network/cli'));
+        symlinkSync(join(selected, 'cli.js'), join(home, 'bin/ours'));
+      }
       return { ok: true, code: 0, stdout: '' };
     };
     const acquire = () => effects.acquireClientPackages(join(home, 'profile.json'), sourcesPath, ['fleet', 'codex', 'claude-code']);

@@ -48,5 +48,15 @@ export async function publishClientCli(effects, packagePath) {
     }
     throw error;
   }
+  const published = stat(entry);
+  if (!published?.isSymbolicLink() || published.uid !== process.getuid()) throw new Error('CLI publication did not create the expected owned npm entry');
+  const npmRoot = (await effects.run('npm', ['root', '--global'])).stdout.trim();
+  if (!isAbsolute(npmRoot) || resolve(npmRoot) !== npmRoot) throw new Error('Invalid npm global package root');
+  const root = realpathSync(join(npmRoot, '@ours.network/cli'));
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const selected = JSON.parse(readFileSync(join(packagePath, 'package.json'), 'utf8'));
+  const target = typeof manifest.bin?.ours === 'string' ? resolve(root, manifest.bin.ours) : '';
+  if (manifest.name !== '@ours.network/cli' || manifest.version !== selected.version || !target.startsWith(root + '/') || realpathSync(entry) !== realpathSync(target) || !stat(target)?.isFile()) throw new Error('Published CLI does not match the selected package');
+  if (!readFileSync(target).equals(readFileSync(resolve(packagePath, selected.bin.ours)))) throw new Error('Published CLI entry differs from the selected artifact');
   return entry;
 }
