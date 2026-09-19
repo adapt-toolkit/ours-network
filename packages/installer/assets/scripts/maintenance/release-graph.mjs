@@ -20,9 +20,18 @@ export function releaseBinding(policy) {
   if (release?.schema !== 1 || !['stable', 'nightly'].includes(release.channel)) fail('invalid release binding');
   const pattern = release.channel === 'nightly' ? nightly : stable;
   if (typeof release.installerVersion !== 'string' || !pattern.test(release.installerVersion)) fail('invalid installer version/channel');
-  if (!release.packages || JSON.stringify(Object.keys(release.packages).sort()) !== JSON.stringify([...names].sort())) fail('release must select exactly nine ours packages');
+  if (release.scope !== undefined && release.scope !== 'host-cli') fail('invalid release scope');
+  const required = release.scope === 'host-cli' ? ['@ours.network/cli', '@ours.network/sdk'] : names;
+  if (!release.packages || JSON.stringify(Object.keys(release.packages).sort()) !== JSON.stringify([...required].sort())) fail('release must select exactly the required ours packages');
+  if (release.scope === 'host-cli' && Object.hasOwn(release, 'hostCli')) fail('nested host CLI selection');
   for (const [name, entry] of Object.entries(release.packages)) {
     if (typeof entry?.version !== 'string' || !pattern.test(entry.version) || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(entry.integrity ?? '')) fail(`invalid release artifact: ${name}`);
+  }
+  if (Object.hasOwn(release, 'hostCli')) {
+    if (!release.hostCli || Object.keys(release.hostCli).sort().join(',') !== '@ours.network/cli,@ours.network/sdk') fail('host CLI must select exactly CLI and SDK');
+    for (const [name, entry] of Object.entries(release.hostCli)) {
+      if (typeof entry?.version !== 'string' || !pattern.test(entry.version) || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(entry.integrity ?? '')) fail(`invalid host CLI artifact: ${name}`);
+    }
   }
   if (!policy.packages || !Object.keys(policy.packages).length) fail('missing release source selection');
   for (const [name, entry] of Object.entries(policy.packages)) {
@@ -91,4 +100,12 @@ export function verifyRuntimeRelease(root) {
   // provenance and conversion checks remain authoritative until explicit update.
   if (!existsSync(path)) return { verified: false, reason: 'legacy runtime without sources' };
   return verifyReleaseGraph(root, json(path));
+}
+
+/** The client command has its own exact dependency selection, never a graph bypass. */
+export function hostCliPolicy(policy) {
+  const release = releaseBinding(policy);
+  if (!release?.hostCli) return null;
+  const { hostCli, ...base } = release;
+  return { release: { ...base, scope: 'host-cli', packages: hostCli }, packages: Object.fromEntries(Object.entries(hostCli).map(([name, p]) => [name, { type: 'npm', version: p.version }])) };
 }

@@ -11,7 +11,7 @@ import { validateIdentityName } from './server-onboarding.mjs';
 import { validateFleetSettings } from './fleet-settings.mjs';
 
 const maintenance = new Set(['status', 'start', 'stop', 'restart', 'rebuild', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
-const clientPackages = integrations => [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
+const clientPackages = integrations => [...new Set(['sdk', 'cli', ...integrations])];
 
 export function completeReleasePolicy(retained, supplied) {
   if (retained?.release) {
@@ -32,7 +32,7 @@ export async function prepareSetupPlan(options, effects) {
   options = validateSetupOptions(options, { interactive: options.interactive });
   if (effects.platform?.platform === 'win32') throw new InstallUsageError('Run ours-install inside WSL with Docker Desktop integration on Windows. Direct Windows Node installations are not supported.');
   const plan = { ...options };
-  if (options.scope !== 'server' && options.integrations.length) {
+  if (options.scope !== 'server') {
     for (const name of ['OURS_API_TOKEN', 'OURS_PORT', 'OURS_STATE_DIR', 'OURS_DAEMON_ID']) {
       if (effects.env?.[name]?.trim()) throw new InstallUsageError(`${name} conflicts with the selected client profile. Clear this override before full-stack/client setup; nothing was changed.`);
     }
@@ -61,13 +61,13 @@ export async function prepareSetupPlan(options, effects) {
       }
       if (options.operation === 'install' && !options.migrateFrom) {
         const retained = readObject(effects, plan.existing.sourcesPath, 'Retained source policy');
-        plan.sourcePolicy = options.scope === 'server' || !options.integrations?.length ? retained : completeReleasePolicy(retained, options.sources ? policy : null);
+        plan.sourcePolicy = options.scope === 'server' ? retained : completeReleasePolicy(retained, options.sources ? policy : null);
       }
     } else if (options.operation === 'update') {
       throw new InstallUsageError('Update requires an existing installation.json; choose install for a new installation');
     }
     // Reject a local client already attached to another server before changing the server.
-    const saved = options.scope === 'all' && options.integrations.length ? effects.readManagedClientProfile() : null;
+    const saved = options.scope === 'all' ? effects.readManagedClientProfile() : null;
     if (saved && (!plan.existing || saved.expectedInstanceId !== plan.existing.instanceId || saved.endpoint !== `http://127.0.0.1:${plan.port}`)) {
       throw new InstallUsageError('This user already has clients attached to a different server; their saved connection was not changed');
     }
@@ -82,12 +82,12 @@ export async function prepareSetupPlan(options, effects) {
   }
   // Dry-run never spawns a resolver or acquires an installation lock.
   if (!options.dryRun) {
-    if (options.scope === 'all' && options.operation === 'update' && options.integrations.length) {
+    if (options.scope === 'all' && options.operation === 'update') {
       const running = await effects.serverLifecycle(plan.existing, 'status', ['daemon']);
       if (!running.includes('daemon')) throw new InstallUsageError('Full-stack update requires the selected daemon to be running for client verification. Start it first, or use server update to preserve its stopped state.');
     }
     if (options.scope !== 'client') await effects.resolveSourcePolicy(plan.sourcePolicy, 'server');
-    if (options.scope !== 'server' && options.integrations.length) await effects.resolveSourcePolicy(plan.sourcePolicy, 'client', clientPackages(options.integrations));
+    if (options.scope !== 'server') await effects.resolveSourcePolicy(plan.sourcePolicy, 'client', clientPackages(options.integrations));
   }
   return plan;
 }
@@ -100,7 +100,7 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
   if (plan.dryRun) {
     effects.out(info('Preview only. No packages, identities, credentials or services will be changed.'));
     if (plan.scope !== 'client') effects.out(info('Server: prerequisites → runtime preparation/update → retained identity/state restoration → readiness.'));
-    if (plan.scope !== 'server' && plan.integrations.length) effects.out(info('Clients: private connection → exact packages → selected integrations → Fleet settings when selected.'));
+    if (plan.scope !== 'server') effects.out(info('Clients: private connection → exact packages → selected integrations → Fleet settings when selected.'));
     return 0;
   }
   let clientConfig = plan.config;
@@ -118,14 +118,14 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
         effects.out(ok('Retained identities verified.'));
       } else effects.out(info('Daemon remains stopped; stored identities are retained and will restore on the next start.'));
     }
-    if (plan.scope === 'all' && plan.integrations.length) {
+    if (plan.scope === 'all') {
       clientPolicy = completeReleasePolicy(readObject(effects, record.sourcesPath, 'Server source policy'), plan.sourcePolicy);
       effects.out(heading('Connect local clients'));
       const handoff = await effects.prepareLocalClient(record, plan.integrations, plan.fleetSettingsPath);
       clientConfig = handoff.configPath;
     }
   }
-  if (plan.scope !== 'server' && plan.integrations.length) {
+  if (plan.scope !== 'server') {
     const result = await client({ role: 'client', operation: 'install', config: clientConfig,
       integrations: plan.integrations, fleetSettingsPath: plan.fleetSettingsPath, sourcePolicy: clientPolicy,
       preset: true, nonInteractive: !plan.interactive }, effects);

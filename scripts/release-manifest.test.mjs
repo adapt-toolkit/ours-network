@@ -20,3 +20,14 @@ test('nightly accepts the published Cowork date/commit format but refuses other 
   assert.throws(()=>validateRelease(m,m.installerVersion));
  }
 });
+
+test('optional host CLI artifacts require a complete exact pair and valid digest', () => {
+ const m=manifest('nightly');
+ m.hostCli=Object.fromEntries(['sdk','cli'].map(n=>['@ours.network/'+n,{version:'9.9.9-nightly.2',integrity:`sha512-${Buffer.alloc(64).toString('base64')}`} ]));
+ assert.equal(validateRelease(m,m.installerVersion),m);
+ for(const bad of [null,{}, {...m.hostCli, extra:{}}, {'@ours.network/sdk':m.hostCli['@ours.network/sdk'] }]) {
+  assert.throws(()=>validateRelease({...m,hostCli:bad},m.installerVersion));
+ }
+ m.hostCli['@ours.network/sdk'].integrity='bad';
+ assert.throws(()=>validateRelease(m,m.installerVersion));
+});
