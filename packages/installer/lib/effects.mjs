@@ -11,6 +11,7 @@
 // state-directory guard and the enable/reload. The installer never touches a
 // unit file or the service manager directly.
 
+import { publishClientCli } from './client-cli.mjs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
@@ -1197,10 +1198,10 @@ export function networkEffects(effects) {
     },
     async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false } = {}) {
       const manifest = JSON.parse(readFileSync(sourcesPath, 'utf8'));
-      // Public SDK client APIs are actual integration dependencies; Fleet also owns CLI usage.
-      const selected = [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])];
+      // Every client installation includes the native CLI and its SDK dependency.
+      const selected = [...new Set(['sdk', 'cli', ...integrations])];
       const packages = selectSourcePackages(manifest, 'client', selected);
-      const selectionKey = refresh ? JSON.stringify([configPath, manifest, integrations]) : configPath;
+      const selectionKey = JSON.stringify(['host-cli-v1', configPath, ...(refresh ? [manifest, integrations] : [])]);
       const root = join(home, '.ours-client-install', createHash('sha256').update(selectionKey).digest('hex').slice(0, 16));
       const hasGit = Object.values(packages).some(selection => selection.source);
       await effects.run('npm', ['--version']);
@@ -1231,13 +1232,14 @@ export function networkEffects(effects) {
         writePrivateNew(join(root, '.packages-ready'), 'ready\n');
       }
       verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
+      await publishClientCli(effects, join(root, 'node_modules', '@ours.network/cli'));
       // Local acquisition alone does not publish native commands. Use the user's
       // configured npm prefix and retained dependency closure, including on retry.
       for (const name of integrations.filter(name => name === 'fleet' || name === 'codex')) {
         await effects.run('npm', ['install', '--global', '--install-links=false', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(root, 'node_modules', '@ours.network', name)]);
       }
       const localPackages = Object.fromEntries(integrations.filter(n => n !== 'fleet').map(name => [name, join(root, 'node_modules', '@ours.network', name)]));
-      return { localPackages, packages: {}, fleetBin: integrations.includes('fleet') ? join(root, 'node_modules/.bin/ours-fleet') : null };
+      return { localPackages, packages: {}, cliBin: join(root, 'node_modules/.bin/ours'), fleetBin: integrations.includes('fleet') ? join(root, 'node_modules/.bin/ours-fleet') : null };
     },
     async prepareClientMarketplace(name, packagePath) {
       const acquisitionRoot = dirname(dirname(dirname(packagePath)));
@@ -1246,7 +1248,7 @@ export function networkEffects(effects) {
       const release = releaseBinding(policy);
       const integrationsPath = join(acquisitionRoot, 'integrations.json');
       const integrations = existsSync(integrationsPath) ? JSON.parse(readFileSync(integrationsPath, 'utf8')) : null;
-      const requiredPackages = integrations ? [...new Set(['sdk', ...(integrations.includes('fleet') ? ['cli'] : []), ...integrations])].map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
+      const requiredPackages = integrations ? [...new Set(['sdk', 'cli', ...integrations])].map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
       verifyReleaseGraph(acquisitionRoot, policy, { requiredPackages });
       const root = join(acquisitionRoot, 'marketplaces', name);
       const plugin = join(root, 'plugins', 'ours');

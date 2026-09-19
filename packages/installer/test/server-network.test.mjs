@@ -611,6 +611,7 @@ test('acquired native commands are published before setup and retried without re
     let refuse = true;
     effects.run = async (cmd, args, options) => {
       calls.push({ cmd, args, options });
+      if (args[0] === 'prefix') return { stdout: home };
       if (args.includes('--global') && refuse) throw new Error('configured npm prefix is not writable');
       return { ok: true, code: 0, stdout: '' };
     };
@@ -621,7 +622,7 @@ test('acquired native commands are published before setup and retried without re
     const packageRoot = dirname(suite.localPackages.codex);
     const publication = calls.filter(call => call.args.includes('--global'));
     const install = path => ({ cmd: 'npm', args: ['install', '--global', '--install-links=false', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', path], options: undefined });
-    assert.deepEqual(publication, [install(join(packageRoot, 'fleet')), install(join(packageRoot, 'fleet')), install(join(packageRoot, 'codex'))]);
+    assert.deepEqual(publication, [install(join(packageRoot, 'cli')), install(join(packageRoot, 'cli')), install(join(packageRoot, 'fleet')), install(join(packageRoot, 'codex'))]);
     assert.equal(calls.filter(call => call.args[0] === 'install' && !call.args.includes('--global')).length, 1);
     assert.equal(suite.fleetBin, join(dirname(packageRoot), '.bin', 'ours-fleet'));
   } finally { rmSync(home, { recursive: true, force: true }); }
