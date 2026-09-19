@@ -670,7 +670,7 @@ test('native command publication failure reports incomplete setup and retains it
   assert.equal(await runInstall(['client', 'install'], effects), 2);
   const output = effects.recorder.out.join('\n');
   assert.match(output, /Client setup incomplete.*configured npm prefix is not writable/);
-  assert.match(output, /Saved profile and settings retained; re-run ours-install client install/);
+  assert.match(output, /Saved profile and settings retained.*Run ours-install.*interactive Fleet configuration/);
   assert.doesNotMatch(output, /Client setup complete|ours-fleet installed and initialized/);
   assert.deepEqual(effects.recorder.ran, []);
   effects.acquireClientPackages = async () => ({ localPackages: {}, packages: {}, fleetBin: '/exact/ours-fleet' });
