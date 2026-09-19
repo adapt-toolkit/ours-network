@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, writeFileSync, realpathSync, unlinkSync, existsSync, chmodSync } from 'node:fs';
+import { lstatSync, readFileSync, writeFileSync, realpathSync, unlinkSync, chmodSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { buildManagedCli } from './managed-cli.mjs';
@@ -31,8 +31,11 @@ export async function publishClientCli(effects, packagePath) {
       const binding = JSON.parse(line.slice(marker.length));
       if (binding.schema !== 1 || previous.toString() !== buildManagedCli(binding.recordPath, binding.installerPath)) throw new Error('Managed CLI launcher was modified; no replacement performed');
       const backup = join(effects.home, '.ours-client', `previous-cli-${hash(previous)}.cjs`);
-      if (!existsSync(backup)) writeFileSync(backup, previous, { mode: 0o600, flag: 'wx' });
-      else if (!readFileSync(backup).equals(previous)) throw new Error('Managed CLI backup differs');
+      const backupDir = lstatSync(join(effects.home, '.ours-client'));
+      if (!backupDir.isDirectory() || backupDir.uid !== process.getuid() || (backupDir.mode & 0o7777) !== 0o700) throw new Error('Managed CLI backup requires a private owned directory');
+      const saved = stat(backup);
+      if (!saved) writeFileSync(backup, previous, { mode: 0o600, flag: 'wx' });
+      else if (!saved.isFile() || saved.nlink !== 1 || saved.uid !== process.getuid() || (saved.mode & 0o7777) !== 0o600 || saved.size !== previous.length || !readFileSync(backup).equals(previous)) throw new Error('Managed CLI backup is unsafe or differs');
       const current = lstatSync(entry);
       if (current.dev !== before.dev || current.ino !== before.ino || !readFileSync(entry).equals(previous)) throw new Error('CLI changed during publication');
       unlinkSync(entry);
