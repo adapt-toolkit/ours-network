@@ -39,5 +39,15 @@
       "version": "1.2.0-nightly.3",
       "integrity": "sha512-7ta6KnvoHB2i/yoaykhXvzKFQTIOPtDHeTzG1PRwHjdTJ4vcGEh4jWYMd2c1jjj73lC3q9qW3LYSRutIJovtQg=="
     }
+  },
+  "hostCli": {
+    "@ours.network/sdk": {
+      "version": "3.8.1-nightly.6",
+      "integrity": "sha512-kNCR1/0X5sTKCDe1oaEvxXHBkRa0B4N3mosbYZAzY8mu0sTY+TKx2u0ltQ4PRZ50ZuwzhxNe7BVbphu9b/87xw=="
+    },
+    "@ours.network/cli": {
+      "version": "2.8.1-nightly.4",
+      "integrity": "sha512-Lw9DVmY4vpAAm+ps8tD/eqJr4jwGSxGfpOtkvHvgjLzY442zM1od8/ZNyCV8d4YVxGOxuT72Fss9qgXnVR6bvQ=="
+    }
   }
 }

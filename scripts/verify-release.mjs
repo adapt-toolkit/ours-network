@@ -11,7 +11,7 @@ const release=validateRelease(JSON.parse(readFileSync(new URL(`releases/${channe
 const dir=mkdtempSync(join(tmpdir(),'ours-release-verify-'));
 const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('OURS_')&&!key.toLowerCase().startsWith('npm_config_')));
 mkdirSync(join(dir,'home'));Object.assign(env,{HOME:join(dir,'home'),NPM_CONFIG_USERCONFIG:join(dir,'home/.npmrc'),NPM_CONFIG_CACHE:join(dir,'cache')});
-const npm=(args)=>execFileSync('npm',[...args,'--registry=https://registry.npmjs.org'],{cwd:dir,env,encoding:'utf8',timeout:180_000,maxBuffer:8*1024*1024});
+const npm=(args,cwd=dir)=>execFileSync('npm',[...args,'--registry=https://registry.npmjs.org'],{cwd,env,encoding:'utf8',timeout:180_000,maxBuffer:8*1024*1024});
 try {
  const archives={};
  for(const [name,p] of Object.entries(release.packages)) {
@@ -43,6 +43,35 @@ try {
   npm(['install','--ignore-scripts','--no-audit','--no-fund']);
   verifyReleaseGraph(dir,policy);
   console.log('Verified actual registry and local-vendor installed ours graphs without lifecycle scripts.');
+ }
+
+ if (release.hostCli) {
+  const { hostCliPolicy, verifyReleaseGraph } = await import('../packages/installer/assets/scripts/maintenance/release-graph.mjs');
+  const selected = hostCliPolicy({ release, packages: Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,{type:'npm',version:p.version}])) });
+  const hostRoot = join(dir, 'home/.ours-client-install/host-cli');
+  mkdirSync(hostRoot, { recursive: true, mode: 0o700 });
+  writeFileSync(join(hostRoot, 'sources.json'), JSON.stringify(selected));
+  for (const [name,p] of Object.entries(release.hostCli)) {
+   const [packed] = JSON.parse(npm(['pack', `${name}@${p.version}`, '--ignore-scripts', '--json'], hostRoot));
+   if (packed.name !== name || packed.version !== p.version || 'sha512-' + createHash('sha512').update(readFileSync(join(hostRoot, packed.filename))).digest('base64') !== p.integrity) throw new Error('Host CLI artifact identity/integrity mismatch');
+  }
+  writeFileSync(join(hostRoot,'package.json'),JSON.stringify({name:'ours-host-cli-verification',private:true,dependencies:Object.fromEntries(Object.entries(release.hostCli).map(([name,p])=>[name,p.version]))}));
+  npm(['install','--ignore-scripts','--no-audit','--no-fund'],hostRoot);
+  verifyReleaseGraph(hostRoot,selected);
+  if (process.argv.includes('--installed')) {
+   const { publishClientCli } = await import('../packages/installer/lib/client-cli.mjs');
+   const effects = { home: join(dir,'home'), out: console.log, run: async (command,args) => {
+    if (command !== 'npm') throw new Error('Unexpected command');
+    return { stdout: npm(['--prefix',join(dir,'home'),...args]) };
+   }};
+   const packagePath=join(hostRoot,'node_modules/@ours.network/cli');
+   await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
+   // Installing/reinstalling optional integrations must not select their CLI for the host command.
+   npm(['install','--global','--prefix',join(dir,'home'),'--ignore-scripts','--no-audit','--no-fund', '@ours.network/fleet@'+release.packages['@ours.network/fleet'].version]);
+   await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
+   await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
+   console.log('Verified private host CLI publication and retry after global Fleet installation.');
+  }
  }
 
  console.log('Verified nine official archive identities/SHA512 and complete nested ours version/integrity selection. Runtime qualification remains separate.');

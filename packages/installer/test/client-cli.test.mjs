@@ -16,7 +16,7 @@ test('client-only setup with no optional integrations still acquires the host CL
   assert.equal(acquired, true);
 });
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publishClientCli } from '../lib/client-cli.mjs';
@@ -59,4 +59,35 @@ test('unknown host CLI is never overwritten', async () => {
     await assert.rejects(publishClientCli(effects, '/acquired'), /unknown ours/);
     assert.equal(installs, 0); assert.match(readFileSync(entry, 'utf8'), /user-command/);
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+for (const drift of [false, true]) test(`private host CLI ${drift ? 'rejects SDK drift without replacing command' : 'retains its SDK across publication retries'}`, async t => {
+  const home = mkdtempSync(join(tmpdir(), 'ours-private-cli-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const root = join(home, '.ours-client-install/selection');
+  const cli = '@ours.network/cli', sdk = '@ours.network/sdk';
+  const integrity = 'sha512-' + Buffer.alloc(64).toString('base64');
+  const artifacts = { [cli]: { version: '2.8.1-nightly.4', integrity }, [sdk]: { version: '3.8.1-nightly.6', integrity } };
+  const policy = { release: { schema: 1, scope: 'host-cli', channel: 'nightly', installerVersion: '1.2.0-nightly.3', packages: artifacts }, packages: Object.fromEntries(Object.entries(artifacts).map(([n,p]) => [n,{type:'npm',version:p.version}])) };
+  const write = (path,value) => { mkdirSync(join(path,'..'),{recursive:true}); writeFileSync(path,JSON.stringify(value)); };
+  write(join(root,'sources.json'),policy);
+  const manifest = { private: true, dependencies: Object.fromEntries(Object.entries(artifacts).map(([n,p])=>[n,p.version])) };
+  write(join(root,'package.json'),manifest);
+  const entries = Object.fromEntries(Object.entries(artifacts).map(([n,p])=>['node_modules/'+n,{...p,resolved:`https://registry.npmjs.org/${n}/-/artifact.tgz`} ]));
+  write(join(root,'package-lock.json'),{lockfileVersion:3,packages:{'':manifest,...entries}});
+  write(join(root,'node_modules/.package-lock.json'),{lockfileVersion:3,packages:entries});
+  for (const [name,p] of Object.entries(artifacts)) {
+    const packagePath=join(root,'node_modules',name);
+    write(join(packagePath,'package.json'),{name,version:p.version,main:'dist/index.js',...(name===cli?{bin:{ours:'dist/cli.js'}}:{})});
+    mkdirSync(join(packagePath,'dist')); writeFileSync(join(packagePath,'dist',name===cli?'cli.js':'index.js'),'#!/usr/bin/env node\n');
+  }
+  const packagePath=join(root,'node_modules',cli);
+  const effects={home,out(){},run:async (_cmd,args)=>{assert.deepEqual(args,['prefix','--global']);return {stdout:home};}};
+  await publishClientCli(effects,packagePath,{policy,isolated:true});
+  const before=realpathSync(join(home,'bin/ours'));
+  if(drift) {
+    write(join(root,'node_modules',sdk,'package.json'),{name:sdk,version:'3.8.1-nightly.4',main:'dist/index.js'});
+    await assert.rejects(publishClientCli(effects,packagePath,{policy,isolated:true}),/release/i);
+  } else await publishClientCli(effects,packagePath,{policy,isolated:true});
+  assert.equal(realpathSync(join(home,'bin/ours')),before);
 });

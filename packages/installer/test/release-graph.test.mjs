@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { verifyReleaseGraph, releaseBinding } from '../assets/scripts/maintenance/release-graph.mjs';
+import { verifyReleaseGraph, releaseBinding, hostCliPolicy } from '../assets/scripts/maintenance/release-graph.mjs';
 import { resolveSourcePolicy } from '../lib/plan.mjs';
 import { networkEffects } from '../lib/effects.mjs';
 
@@ -140,4 +140,19 @@ for (const missing of [[sdk], [sdk, cli]]) test('cannot silently drop selected d
 test('direct ranges cannot masquerade as exact release pins', t => {
   const f = fixture(t), manifest = JSON.parse(readFileSync(join(f.root, 'package.json'))); manifest.dependencies[sdk] = '^' + f.selected.release.packages[sdk].version;
   f.write('package.json', manifest); assert.throws(() => verifyReleaseGraph(f.root, f.selected), /direct package spec/);
+});
+
+test('host CLI selection is a separate strict graph and does not relax service graph', t => {
+  const f = fixture(t);
+  f.selected.release.hostCli = { [sdk]: { version: '3.8.1-nightly.6', integrity: sri }, [cli]: { version: '2.8.1-nightly.4', integrity: sri } };
+  const host = hostCliPolicy(f.selected);
+  assert.equal(host.release.scope, 'host-cli');
+  assert.deepEqual(Object.keys(host.release.packages).sort(), [cli, sdk]);
+  assert.equal(verifyReleaseGraph(f.root, f.selected).verified, true);
+  assert.throws(() => verifyReleaseGraph(f.root, host), /release/i);
+  assert.equal(f.selected.release.packages[sdk].version, '1.0.1-nightly.1');
+  for (const malformed of [null, {}, { [sdk]: { version: 'latest', integrity: sri } }, { ...f.selected.release.hostCli, extra: {} }]) {
+    const p = structuredClone(f.selected); p.release.hostCli = malformed;
+    assert.throws(() => hostCliPolicy(p), /release/i);
+  }
 });
