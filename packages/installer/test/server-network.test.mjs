@@ -630,9 +630,9 @@ test('acquired native commands are published before setup and retried without re
     const suite = await acquire();
     const packageRoot = dirname(suite.localPackages.codex);
     const publication = calls.filter(call => call.args[0] === 'install' && call.args.includes('--global'));
-    assert.equal(calls.filter(call => call.args[0] === 'prefix').length, 2);
+    assert.equal(calls.filter(call => call.args[0] === 'prefix').length, 1);
     const install = path => ({ cmd: 'npm', args: ['install', '--global', '--install-links=false', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', path], options: undefined });
-    assert.deepEqual(publication, [install(join(packageRoot, 'cli')), install(join(packageRoot, 'cli')), install(join(packageRoot, 'fleet')), install(join(packageRoot, 'codex'))]);
+    assert.deepEqual(publication, [install(join(packageRoot, 'fleet')), install(join(packageRoot, 'fleet')), install(join(packageRoot, 'codex')), install(join(packageRoot, 'cli'))]);
     assert.equal(calls.filter(call => call.args[0] === 'install' && !call.args.includes('--global')).length, 1);
     assert.equal(suite.fleetBin, join(dirname(packageRoot), '.bin', 'ours-fleet'));
   } finally { rmSync(home, { recursive: true, force: true }); }
