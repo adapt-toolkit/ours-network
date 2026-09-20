@@ -53,7 +53,7 @@ test('unreadable setup input never activates a managed default', () => {
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
 
-test('guided metadata is followed by authenticated daemon and MCP validation before publication', async () => {
+test('guided metadata is followed by authenticated daemon API validation before publication', async () => {
   const f = fixture();
   const { createServer } = await import('node:http');
   const requests = [];
@@ -63,14 +63,7 @@ test('guided metadata is followed by authenticated daemon and MCP validation bef
     if (req.url === '/selection') return res.end(JSON.stringify({ schema: 1, instanceId: f.profile.expectedInstanceId, capabilities: ['external-sessions-v1'] }));
     if (req.headers['x-ours-api-token'] !== 'issued-client-token') { res.statusCode = 401; return res.end('{}'); }
     if (req.url === '/version') return res.end('{"version":"test"}');
-    let body = ''; for await (const chunk of req) body += chunk;
-    const request = JSON.parse(body);
-    const results = {
-      initialize: { serverInfo: { name: 'ours' }, protocolVersion: '2025-03-26' },
-      'resources/list': { resources: [{ uri: 'ours://application-identities' }] },
-      'tools/list': { tools: [{ name: 'list_identities' }] },
-    };
-    res.end(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: results[request.method] ?? {} }));
+    res.statusCode = 404; res.end('{}');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -78,10 +71,10 @@ test('guided metadata is followed by authenticated daemon and MCP validation bef
     const profile = await f.effects.discoverClientProfile(endpoint, f.profile.credentialPath);
     assert.equal(profile.expectedInstanceId, f.profile.expectedInstanceId);
     await f.effects.verifyHostProfile(profile);
-    await f.effects.verifyPackagedMcp(profile);
+
     assert.equal(f.effects.readManagedClientProfile(), null, 'validation does not publish a default');
     assert.ok(requests.some(([url, token]) => url === '/version' && token === 'issued-client-token'));
-    assert.ok(requests.some(([url, token]) => url === '/mcp' && token === 'issued-client-token'));
+    assert.ok(!requests.some(([url]) => url === '/mcp'));
     writeFileSync(profile.credentialPath, 'wrong', { mode: 0o600 });
     await assert.rejects(f.effects.verifyHostProfile(profile), /HTTP 401/);
     assert.equal(f.effects.readManagedClientProfile(), null);

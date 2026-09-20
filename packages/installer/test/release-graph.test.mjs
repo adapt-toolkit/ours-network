@@ -81,7 +81,7 @@ test('client acquisition refuses drift before readiness or global command instal
   const f = fixture(t), calls = [];
   // Exercise real acquisition orchestration; only the npm process boundary is fake.
   const sources = join(f.root, 'sources.json');
-  f.selected.packages['@ours.network/codex'] = { type: 'npm', version: f.selected.release.packages['@ours.network/codex'].version }; f.write('sources.json', f.selected);
+  for (const name of ['codex', 'mcp']) f.selected.packages[`@ours.network/${name}`] = { type: 'npm', version: f.selected.release.packages[`@ours.network/${name}`].version }; f.write('sources.json', f.selected);
   const effects = { env: {}, home: f.root, async run(command, args, options) {
     calls.push([command, ...args]);
     if (args[0] === 'install' && !args.includes('--global')) {

@@ -26,7 +26,7 @@ import { executeLegacyMigration } from './legacy-migration.mjs';
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { parseNetworkArgs, validateHostProfile, parseInstallArgs, resolveTarget, resolveProfileSelection, profileEnv, InstallUsageError } from './target.mjs';
-import { selectSourcePackages, validateInstallation, SERVER_SERVICES, planDaemonConfig, planServiceInstall, serviceInstallCommand } from './plan.mjs';
+import { clientPackageNames, selectSourcePackages, validateInstallation, SERVER_SERVICES, planDaemonConfig, planServiceInstall, serviceInstallCommand } from './plan.mjs';
 import {
   COMPONENTS,
   planComponentSelection, planMcpAttachment, planTgAttachment, planCoworkAttachment,
@@ -1441,7 +1441,6 @@ export async function runClientCommand(command, effects) {
   }
   effects.out(info(`Selected server ${profile.endpoint} (instance ${profile.expectedInstanceId}).`));
   await effects.verifyHostProfile(configPath || profile);
-  await effects.verifyPackagedMcp(configPath || profile);
   const settings = saved?.installer ?? (configPath ? effects.readJson(configPath)?.installer : undefined);
   const settingsBase = saved ? dirname(managedPath) : configPath ? dirname(configPath) : process.cwd();
   let integrations = command.integrations ?? settings?.integrations;
@@ -1455,7 +1454,7 @@ export async function runClientCommand(command, effects) {
   if (fleetSettingsPath !== undefined && (typeof fleetSettingsPath !== 'string' || !fleetSettingsPath))
     throw new InstallUsageError('installer.fleetSettingsPath must be a non-empty path when supplied');
   if (fleetSettingsPath) fleetSettingsPath = resolve(settingsBase, fleetSettingsPath);
-  const selectedClients = [...new Set(['sdk', 'cli', ...integrations])];
+  const selectedClients = clientPackageNames(integrations);
   let sourcesPath = settings?.sourcesPath;
   let resolvedSources;
   if (command.sourcePolicy) {

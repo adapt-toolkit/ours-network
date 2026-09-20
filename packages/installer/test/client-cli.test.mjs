@@ -11,7 +11,6 @@ test('client-only setup with no optional integrations still acquires the host CL
   effects.acquireClientPackages = async (_config, _sources, integrations) => {
     assert.deepEqual(integrations, []); acquired = true; return { localPackages: {}, packages: {}, cliBin: '/exact/ours' };
   };
-  effects.verifyPackagedMcp = async () => {};
   assert.equal(await runClientCommand({ operation: 'install', integrations: [] }, effects), 0);
   assert.equal(acquired, true);
 });

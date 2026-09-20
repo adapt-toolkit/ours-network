@@ -45,7 +45,7 @@ installers. `--integrations none` explicitly skips client integrations. Use
 Fleet's own wizard is available only in interactive setup; CLI Fleet setup requires
 its JSON settings file. Fleet stays stopped until you review and activate it.
 
-The server installs the daemon/SDK/CLI, main MCP, Telegram, Cowork and Messenger.
+The server installs the daemon/SDK/CLI, Telegram, Cowork and Messenger.
 It starts the daemon, preserves the existing Human identity (or creates it once),
 then starts its applications. Full-stack setup issues a separate local client
 credential and configures the selected Codex, Claude Code and Fleet integrations.
@@ -137,8 +137,8 @@ native package acquisition, and reports completion only after service readiness.
 If a Docker service fails, the error includes its last 50 log lines (bounded in
 size) and a command to inspect the logs. A failed daemon prevents consumers from
 starting; a failed consumer does not prevent checks of unrelated consumers.
-Server runtime installation selects SDK/CLI, main MCP, Telegram, Cowork and
-Messenger. Main MCP is injected into the daemon, not started as a second daemon.
+Server runtime installation selects SDK/CLI, Telegram, Cowork and
+Messenger. MCP runs locally with the Codex and Claude Code plugins and calls the daemon API through the SDK.
 The daemon starts first; consumers are checked through their owning readiness
 interfaces. Messenger uses its existing identity prerequisite and never creates an
 identity. Its failure is reported after attempting unrelated consumers. Package
@@ -195,9 +195,9 @@ relative to the profile file. Select any nonempty subset of integrations; Fleet 
 When Fleet settings are supplied, the installer passes them to Fleet's strict
 noninteractive `init --settings`; otherwise it opens Fleet's existing wizard.
 Fleet validates and publishes its own configuration. Client setup verifies the selected
-daemon and packaged OURS MCP before registering native integrations. It acquires
+authenticated daemon API before registering native integrations. It acquires
 only selected integration packages and their actual client dependencies. It does
-not install main MCP, administer daemon state or invoke Docker. Exact npm client
+not administer daemon state or invoke Docker. Codex and Claude Code include the local stdio MCP server as a dependency. Exact npm client
 installation needs no Python; Git source builds use the supplied source recipes
 and their build prerequisites. Normal native clients need neither Docker nor
 server maintenance tools.
@@ -224,7 +224,7 @@ Interactive no-argument installation asks for package/Docker server mode, a
 prepared client profile, or `client`. Client setup offers the saved server when
 present. On first setup it asks for the server HTTP endpoint, issued-token file,
 source manifest and integration choices, obtains the instance UUID from
-`/selection`, displays it, then checks authenticated daemon and MCP access before
+`/selection`, displays it, then checks authenticated daemon API access before
 saving anything. No UUID must be entered manually. The 2.0 HTTP flow assumes the
 approved trusted same-host deployment; selection metadata is not cryptographic
 server authentication. Fleet collects missing setup answers through its own wizard.

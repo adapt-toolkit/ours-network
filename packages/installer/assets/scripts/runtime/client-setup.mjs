@@ -67,7 +67,7 @@ function validateCommon(idName = 'OURS_DAEMON_ID') {
 
 function composeConfig(domain) {
   if (domain === 'daemon') {
-    const value = { stateDir: '/var/lib/ours', port: 3050, apiVisibility: 'owner', networkMcp: { profile: { endpoint: 'http://127.0.0.1:3050', expectedInstanceId: process.env.OURS_DAEMON_ID, credentialPath: '/var/lib/ours/daemon-token' }, applicationConfigPath: '/var/lib/ours-mcp/config.json' } };
+    const value = { stateDir: '/var/lib/ours', port: 3050, apiVisibility: 'owner' };
     if (process.env.OURS_BROKER_URL) value.brokerUrl = process.env.OURS_BROKER_URL;
     return value;
   }

@@ -278,7 +278,7 @@ export function planDaemonSteps(target, { cliVersionChanged = false, cliStartedI
   return steps;
 }
 
-export const SERVER_PACKAGES = ['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(n => `@ours.network/${n}`);
+export const SERVER_PACKAGES = ['sdk', 'cli', 'tg-connector', 'cowork', 'messenger-server'].map(n => `@ours.network/${n}`);
 export const SERVER_DEPENDENCIES = {
   daemon: [], telegram: ['daemon'], cowork: ['daemon'], messenger: ['daemon'],
 };
@@ -469,4 +469,8 @@ export function consumerServiceState(text, service, platform) {
     if (value.startsWith(`${key}=`)) { selected = value.slice(key.length + 1); matches++; }
   }
   return matches === 1 ? selected : undefined;
+}
+
+export function clientPackageNames(integrations) {
+  return [...new Set(['sdk', 'cli', ...(integrations.some(name => ['codex', 'claude-code'].includes(name)) ? ['mcp'] : []), ...integrations])];
 }

@@ -2,7 +2,7 @@ import { inspectLegacyMigration } from './legacy-migration.mjs';
 import { join } from 'node:path';
 import { parseSetupArgs, collectSetupOptions, validateSetupOptions } from './setup-options.mjs';
 import { parseNetworkArgs, validateHostProfile, InstallUsageError } from './target.mjs';
-import { validateInstallation } from './plan.mjs';
+import { clientPackageNames, validateInstallation } from './plan.mjs';
 import { runServerCommand, runClientCommand } from './orchestrate.mjs';
 import { banner, heading, info, ok, warn, progress } from './ui.mjs';
 import { isCancel } from './prompt.mjs';
@@ -11,7 +11,6 @@ import { validateIdentityName } from './server-onboarding.mjs';
 import { validateFleetSettings } from './fleet-settings.mjs';
 
 const maintenance = new Set(['status', 'start', 'stop', 'restart', 'rebuild', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
-const clientPackages = integrations => [...new Set(['sdk', 'cli', ...integrations])];
 
 export function completeReleasePolicy(retained, supplied) {
   if (retained?.release) {
@@ -87,7 +86,7 @@ export async function prepareSetupPlan(options, effects) {
       if (!running.includes('daemon')) throw new InstallUsageError('Full-stack update requires the selected daemon to be running for client verification. Start it first, or use server update to preserve its stopped state.');
     }
     if (options.scope !== 'client') await effects.resolveSourcePolicy(plan.sourcePolicy, 'server');
-    if (options.scope !== 'server') await effects.resolveSourcePolicy(plan.sourcePolicy, 'client', clientPackages(options.integrations));
+    if (options.scope !== 'server') await effects.resolveSourcePolicy(plan.sourcePolicy, 'client', clientPackageNames(options.integrations));
   }
   return plan;
 }

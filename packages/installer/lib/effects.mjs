@@ -18,7 +18,7 @@ import { homedir, userInfo, platform as osPlatform, release as osRelease, arch a
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
-import { maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
+import { clientPackageNames, maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
 import { validateHostProfile } from './target.mjs';
 import { createServerOnboarding } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
@@ -750,7 +750,6 @@ export function networkEffects(effects) {
         const profilePath = join(installationPaths(record).mcp, 'profile.json');
         if (!existsSync(profilePath)) writePrivateNew(profilePath, JSON.stringify({ endpoint: `http://127.0.0.1:${record.port}`, expectedInstanceId: record.instanceId, credentialPath: join(installationPaths(record).daemon, 'daemon-token') }));
         const config = JSON.parse(readFileSync(record.configPath, 'utf8'));
-        config.networkMcp ??= { profile: { endpoint: `http://127.0.0.1:${record.port}`, expectedInstanceId: record.instanceId, credentialPath: join(installationPaths(record).daemon, 'daemon-token') }, applicationConfigPath: join(installationPaths(record).mcp, 'config.json') };
         effects.writeJson(record.configPath, JSON.stringify(config, null, 2) + '\n');
         const cowork = join(installationPaths(record).cowork, 'config.json');
         if (!existsSync(cowork)) writePrivateNew(cowork, JSON.stringify({ version: 1, stateDir: installationPaths(record).cowork, rest: { enabled: true, host: '127.0.0.1', port: record.coworkPort } }));
@@ -1199,7 +1198,7 @@ export function networkEffects(effects) {
     async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false, hostCliOnly = false } = {}) {
       const manifest = JSON.parse(readFileSync(sourcesPath, 'utf8'));
       // Every client installation includes the native CLI and its SDK dependency.
-      const selected = [...new Set(['sdk', 'cli', ...integrations])];
+      const selected = clientPackageNames(integrations);
       const packages = selectSourcePackages(manifest, 'client', selected);
       const selectionKey = JSON.stringify([hostCliOnly ? 'host-cli-private-v1' : 'host-cli-v1', configPath, ...(hostCliOnly ? [manifest] : []), ...(refresh ? [manifest, integrations] : [])]);
       const root = join(home, '.ours-client-install', createHash('sha256').update(selectionKey).digest('hex').slice(0, 16));
@@ -1262,7 +1261,7 @@ export function networkEffects(effects) {
       const release = releaseBinding(policy);
       const integrationsPath = join(acquisitionRoot, 'integrations.json');
       const integrations = existsSync(integrationsPath) ? JSON.parse(readFileSync(integrationsPath, 'utf8')) : null;
-      const requiredPackages = integrations ? [...new Set(['sdk', 'cli', ...integrations])].map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
+      const requiredPackages = integrations ? clientPackageNames(integrations).map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
       verifyReleaseGraph(acquisitionRoot, policy, { requiredPackages });
       const root = join(acquisitionRoot, 'marketplaces', name);
       const plugin = join(root, 'plugins', 'ours');
@@ -1271,7 +1270,7 @@ export function networkEffects(effects) {
         cpSync(packagePath, plugin, { recursive: true });
         const manifestPath = join(plugin, 'package.json');
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-        for (const dependency of release ? [] : ['sdk', 'cli']) {
+        for (const dependency of release ? [] : ['sdk', 'cli', 'mcp']) {
           const name = `@ours.network/${dependency}`;
           if (manifest.dependencies?.[name]) manifest.dependencies[name] = `file:${join(dirname(packagePath), dependency)}`;
         }
@@ -1291,42 +1290,7 @@ export function networkEffects(effects) {
       effects.writeJson(manifestPath, JSON.stringify(value, null, 2) + '\n');
       return root;
     },
-    async verifyPackagedMcp(configPath) {
-      const profile = typeof configPath === 'string' ? readHostProfileFile(configPath) : validateHostProfile(configPath);
-      assertPrivateRegularFile(profile.credentialPath, 'credential');
-      const token = readFileSync(profile.credentialPath, 'utf8').trim();
-      const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'x-ours-api-token': token, 'x-ours-session-mode': 'external', 'x-ours-lease-token': randomUUID() };
-      const request = async (method, params, id) => {
-        const response = await fetch(`${profile.endpoint}/mcp`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000), headers, body: JSON.stringify({ jsonrpc: '2.0', ...(id === undefined ? {} : { id }), method, params }) });
-        const session = response.headers.get('mcp-session-id');
-        if (session) headers['mcp-session-id'] = session;
-        if (!response.ok) throw new Error(`Packaged MCP verification failed: HTTP ${response.status}`);
-        if (id === undefined) { await response.body?.cancel(); return; }
-        const text = await response.text();
-        const messages = response.headers.get('content-type')?.includes('text/event-stream')
-          ? text.split('\n').filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5)))
-          : [JSON.parse(text)];
-        const message = messages.find(value => value.id === id);
-        if (!message || message.error || !message.result) throw new Error('Packaged MCP returned no successful protocol result');
-        return message.result;
-      };
-      try {
-        const initialized = await request('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'ours-install', version: '1' } }, 1);
-        if (initialized.serverInfo?.name !== 'ours' || !initialized.protocolVersion) throw new Error('Selected MCP is not the packaged OURS server');
-        headers['mcp-protocol-version'] = initialized.protocolVersion;
-        await request('notifications/initialized', {}, undefined);
-        const resources = await request('resources/list', {}, 2);
-        if (!resources.resources?.some(resource => resource.uri === 'ours://application-identities')) throw new Error('Packaged network MCP identity resource is absent');
-        const toolList = await request('tools/list', {}, 3);
-        if (!toolList.tools?.some(tool => tool.name === 'list_identities')) throw new Error('Packaged OURS identity tools are absent');
-      } finally {
-        if (headers['mcp-session-id']) {
-          const response = await fetch(`${profile.endpoint}/mcp`, { method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(5000), headers });
-          await response.body?.cancel();
-          if (!response.ok) throw new Error('MCP verification session could not be closed');
-        }
-      }
-    },
+
   };
 }
 
@@ -1373,7 +1337,6 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     if (service === 'daemon') {
       const profilePath = join(installationPaths(record).mcp, 'profile.json');
       await effects.verifyHostProfile(profilePath);
-      await effects.verifyPackagedMcp(profilePath);
       return;
     }
     if (service === 'cowork') { await ownerCommand(record, service, 'status'); return; }
@@ -1451,7 +1414,7 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       }
       if (!ready) throw new Error('Application is not ready');
     } catch {
-      if (service === 'daemon') throw new Error('Daemon and packaged MCP are not ready; consumers were not started');
+      if (service === 'daemon') throw new Error('Daemon API is not ready; consumers were not started');
       failures.push(service);
     }
   }
