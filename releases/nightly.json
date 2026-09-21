@@ -42,12 +42,12 @@
   },
   "hostCli": {
     "@ours.network/sdk": {
-      "version": "3.8.1-nightly.6",
-      "integrity": "sha512-kNCR1/0X5sTKCDe1oaEvxXHBkRa0B4N3mosbYZAzY8mu0sTY+TKx2u0ltQ4PRZ50ZuwzhxNe7BVbphu9b/87xw=="
+      "version": "3.8.1-nightly.9",
+      "integrity": "sha512-9xh/7hWZ8zRV+8Vimu7OTf2qUAp4o4MJFxlCVtyi1YO0WyFFgk+dZcT8nWlXY/JWIPFdb8wnYW/OSoqGUAw4Hw=="
     },
     "@ours.network/cli": {
-      "version": "2.8.1-nightly.4",
-      "integrity": "sha512-Lw9DVmY4vpAAm+ps8tD/eqJr4jwGSxGfpOtkvHvgjLzY442zM1od8/ZNyCV8d4YVxGOxuT72Fss9qgXnVR6bvQ=="
+      "version": "2.8.1-nightly.7",
+      "integrity": "sha512-Kq3iySBsOgazTxawxY8aFvaMTQ6fnkPZ2KmO/k6NhPaVpZbmBcL/9OWefKYEUlDMvuSOEVzjQLZa0Wac4oopuA=="
     }
   }
 }

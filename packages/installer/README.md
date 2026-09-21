@@ -68,11 +68,12 @@ it. They exclude the daemon and its native database/ADAPT dependencies. Fleet
 runs beside the harnesses on the client machine and calls the daemon HTTP API.
 Client commands report an unavailable server and never start one automatically.
 
-The source split needs a source policy selecting the new daemon package from the
-SDK repository, alongside matching SDK and CLI artifacts. Retained published
-manifests remain valid for maintenance; they do not acquire an invented daemon
-version or integrity. A new packaged release must select real published thin
-SDK/CLI and daemon artifacts before it can install this topology by default.
+The development policy selects published SDK `3.8.1-nightly.9`, CLI
+`2.8.1-nightly.7`, and daemon `3.8.1-nightly.1`, together with exact reviewed
+consumer source commits. The isolated host CLI pair uses these released client
+artifacts. The all-package release manifest still selects the prior published
+consumer set: replacing it requires published consumer versions and verified
+SHA512 integrities. Mixed or unselected nested SDK versions remain rejected.
 
 ## Migrate an existing global installation
 

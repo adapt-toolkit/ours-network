@@ -156,3 +156,15 @@ test('host CLI selection is a separate strict graph and does not relax service g
     assert.throws(() => hostCliPolicy(p), /release/i);
   }
 });
+
+test('shipped development policy resolves complete server and local client selections', async () => {
+  const shipped = JSON.parse(readFileSync(new URL('../assets/sources.json', import.meta.url), 'utf8'));
+  const server = await resolveSourcePolicy(shipped, 'server');
+  assert.ok(server.packages['@ours.network/daemon']);
+  assert.equal(server.packages['@ours.network/fleet'], undefined);
+  assert.equal(server.packages['@ours.network/mcp'], undefined);
+  const client = await resolveSourcePolicy(shipped, 'client', ['sdk', 'cli', 'fleet', 'mcp']);
+  assert.ok(client.packages['@ours.network/fleet']);
+  assert.ok(client.packages['@ours.network/mcp']);
+  assert.equal(client.packages['@ours.network/daemon'], undefined);
+});
