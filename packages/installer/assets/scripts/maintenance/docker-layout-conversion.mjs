@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { copyPrivateTree, scanSource, createArchive, validateArchive } from './state-archive.mjs';
 import { publishNoReplace } from './state-native.mjs';
 
+import { daemonOwner } from './daemon-owner.mjs';
+
 const COMPONENTS = ['daemon', 'telegram', 'cowork', 'messenger'];
 import { recordNames, readBuildRecords, validateBuildRecordSet } from './build-context.mjs';
 const DAEMON_STATE = '/var/lib/ours';
@@ -207,7 +209,7 @@ export async function runDockerLayoutCommand(argv, env = process.env) {
   const build = env.OURS_BUILD_ROOT || '/opt/ours';
   const options = {
     uid: process.getuid(), gid: process.getgid(), instanceId: env.OURS_DAEMON_ID,
-    cli: env.OURS_CLI_PATH || (fs.existsSync('/opt/ours/node_modules/.bin/ours-daemon') ? '/opt/ours/node_modules/.bin/ours-daemon' : '/opt/ours/node_modules/.bin/ours'),
+    cli: daemonOwner({ OURS_DAEMON_BIN_DIR: '/opt/ours/node_modules/.bin', ...env }),
     configPath: env.OURS_DAEMON_CONFIG || '/var/lib/ours/config.json',
     provenance: readBuildRecords(build),
   };

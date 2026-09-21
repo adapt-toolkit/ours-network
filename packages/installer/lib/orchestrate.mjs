@@ -145,6 +145,7 @@ function incompatibleUpgrade(target, cliDependencies) {
 async function prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatch) {
   const dir = target.stateDir;
   const configPath = join(dir, 'config.json');
+  const owner = effects.readJson(join(dir, 'ours-cli-daemon.json'))?.owner === '@ours.network/daemon' ? ['ours-daemon'] : ['ours', 'daemon'];
   if (mismatch.unknown) {
     effects.out(warn(`ours: cannot verify whether ${cliPkg} can restore daemon v${mismatch.runningVersion}. Nothing was changed.`));
     effects.out(info('Check npm registry access and re-run; compatibility checks fail closed.'));
@@ -188,13 +189,13 @@ async function prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatc
   }
 
   await perform(effects, false, 'stop the incompatible daemon', () => effects.run(
-    'ours', ['daemon', 'stop', '--state-dir', dir, '--config', configPath], { stream: true },
+    owner[0], [...owner.slice(1), 'stop', '--state-dir', dir, '--config', configPath], { stream: true },
   ));
   try {
     await perform(effects, false, `back up complete daemon state to ${backupPath}`, () => effects.copyDir(dir, backupPath));
   } catch (error) {
     try {
-      await effects.run('ours', ['daemon', 'start', '--state-dir', dir, '--config', configPath], { stream: true });
+      await effects.run(owner[0], [...owner.slice(1), 'start', '--state-dir', dir, '--config', configPath], { stream: true });
       effects.out(ok('backup failed, but the old daemon was started again'));
     } catch {
       effects.out(warn(`backup failed and the old daemon did not restart; its state is still untouched at ${dir}`));
@@ -203,11 +204,11 @@ async function prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatc
   }
   try {
     await perform(effects, false, 'remove the incompatible daemon boot service', () => effects.run(
-      'ours', ['daemon', 'uninstall-service', '--yes', '--state-dir', dir, '--config', configPath], { stream: true },
+      owner[0], [...owner.slice(1), 'uninstall-service', '--yes', '--state-dir', dir, '--config', configPath], { stream: true },
     ));
   } catch (error) {
     try {
-      await effects.run('ours', ['daemon', 'start', '--state-dir', dir, '--config', configPath], { stream: true });
+      await effects.run(owner[0], [...owner.slice(1), 'start', '--state-dir', dir, '--config', configPath], { stream: true });
       effects.out(ok(`service removal failed, but the old daemon was started again; backup retained at ${backupPath}`));
     } catch {
       effects.out(warn(`service removal failed and the old daemon did not restart; state remains at ${dir} and the backup is at ${backupPath}`));
@@ -384,6 +385,17 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
   await perform(effects, args.dryRun, `MCP server installed (npm i -g ${mcpPkg})`, () => effects.run('npm', ['i', '-g', mcpPkg]));
   steps.push({ id: 'mcp-package', changed: true, packageRefresh: true });
   await perform(effects, args.dryRun, 'daemon runtime installed', () => effects.run('npm', ['i', '-g', daemonPkg]));
+  // A retained global unit still points into the old CLI package. Rewrite and
+  // activate that owned unit before npm replaces its executable with thin CLI.
+  let migratedService;
+  if (!creating) {
+    const retained = planServiceInstall({ stateDir: dir, home: effects.home, readText: effects.readText, platform: effects.platform?.platform });
+    if (retained.unitPath && effects.readText(retained.unitPath) !== null) {
+      try { migratedService = await runServicePhase(args, effects, dir, target.port); }
+      catch (error) { await recoverDaemon(args, effects, dir, join(dir, 'config.json'), target.port); throw error; }
+      if (migratedService.refused) return { target, refused: migratedService.refused, steps };
+    }
+  }
   await perform(effects, args.dryRun, `ours CLI installed (npm i -g ${cliPkg})`, () => effects.run('npm', ['i', '-g', cliPkg]));
   steps.push({ id: 'cli', changed: true, packageRefresh: true });
 
@@ -425,7 +437,7 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
       steps.push({ id: 'restart', changed: true });
     }
 
-    const service = await runServicePhase(args, effects, dir, target.port);
+    const service = migratedService ?? await runServicePhase(args, effects, dir, target.port);
     if (service.unsupported) serviceUnsupported = service.unsupported;
     if (service.refused) {
       // A REFUSAL IS A FAILURE TO REACH THE STATE, not a special case. An unknown

@@ -1006,3 +1006,29 @@ test('a non-interactive run asks NOTHING and selects the complete stack', async 
   assert.deepEqual(e.recorder.asked, [], 'nothing asked');
   assert.ok(summary.installed.includes('tg') && summary.installed.includes('cowork'));
 });
+
+test('retained global service is converted before replacing the CLI and restarting', async () => {
+  const e = fx({
+    json: { [join(OURS, 'config.json')]: { port: 3060, stateDir: OURS, brokerUrl: 'wss://b', apiVisibility: 'shared' } },
+    net: { 3060: { ok: true, stateDir: OURS } },
+    text: { [unitPath('ours.service')]: CLI_UNIT_MARKER + '\nExecStart=/old/cli/dist/cli.js daemon serve\n' },
+  });
+  await runDaemonPhase({ stateDir: OURS, port: null, portExplicit: false, dryRun: false, brokerUrl: 'wss://b' }, e);
+  const commands = e.recorder.ran;
+  const convert = commands.findIndex(c => c[0] === 'ours-daemon' && c.includes('install-service'));
+  const replace = commands.findIndex(c => c[0] === 'npm' && c.includes('@ours.network/cli'));
+  const restart = commands.findIndex(c => c[0] === 'ours-daemon' && c.includes('restart'));
+  assert.ok(convert >= 0 && convert < replace && replace < restart, JSON.stringify(commands));
+});
+test('daemon-owned major upgrade uses its retained administrator before package replacement', async () => {
+  const e = fx({
+    json: { [join(OURS, 'config.json')]: { port: 3050, stateDir: OURS, brokerUrl: 'wss://b' },
+      [join(OURS, 'ours-cli-daemon.json')]: { version: 1, owner: '@ours.network/daemon', pid: 42, port: 3050, stateDir: OURS } },
+    net: { 3050: { ok: true, stateDir: OURS, version: '2.9.4' } },
+    packageDeps: { '@ours.network/daemon': { '@ours.network/sdk': '^3.0.0' } }, answers: [true],
+  });
+  await runDaemonPhase({ stateDir: OURS, port: null, portExplicit: false, dryRun: false, assumeYes: false, brokerUrl: 'wss://b', channel: 'latest' }, e);
+  const commands = e.recorder.ran;
+  for (const action of ['stop','uninstall-service']) assert.equal(commands.find(c => c.includes(action))[0], 'ours-daemon');
+  assert.equal(commands.some(c => c[0] === 'ours' && c[1] === 'daemon'), false);
+});
