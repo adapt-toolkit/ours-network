@@ -106,7 +106,7 @@ test('branch guards, pending component sets, and registry errors leave files unt
   f.release.packages = {};
   writeFileSync(join(f.root, 'releases/stable.json'), JSON.stringify(f.release));
   const pending = f.snapshot();
-  await assert.rejects(bumpInstaller(f.options), /nine required/);
+  await assert.rejects(bumpInstaller(f.options), /required packages and optional daemon artifact/);
   assert.deepEqual(f.snapshot(), pending);
 });
 

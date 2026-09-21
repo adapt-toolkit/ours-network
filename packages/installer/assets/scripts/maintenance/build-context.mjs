@@ -8,7 +8,7 @@ import { semanticRecordEqual } from './provenance-compare.mjs';
 export const BASE_RECORDS = ['package-lock.json', 'dependency-tree.json'];
 export const CONTEXT = 'build-context.json';
 const admitted = new WeakMap();
-const packages = new Set(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code', 'install'].map(n => '@ours.network/' + n));
+const packages = new Set(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code', 'install'].map(n => '@ours.network/' + n));
 const digest = (bytes, algorithm = 'sha256', encoding = 'hex') => createHash(algorithm).update(bytes).digest(encoding);
 const fail = text => { throw new Error(`Build context: ${text}`); };
 const keys = (v, expected) => v && !Array.isArray(v) && typeof v === 'object' && Object.keys(v).sort().join('\0') === [...expected].sort().join('\0');

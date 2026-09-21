@@ -26,7 +26,7 @@ test('JS state operation backs up before restore and reset and restores selected
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-for (const domain of ['server', 'daemon']) test(`JS ${domain} restore retains current authority through the actual SDK`, { skip: !process.env.OURS_TEST_ACCESS_CLI }, async () => {
+for (const binary of ['ours-daemon', 'ours']) for (const domain of ['server', 'daemon']) test(`JS ${domain} ${binary} restore retains current authority through the actual SDK`, { skip: !process.env.OURS_TEST_ACCESS_CLI }, async () => {
   const { runStateOperation } = await import('../assets/scripts/maintenance/state-operation.mjs');
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'ours-state-sdk-js-')));
   try {
@@ -55,8 +55,12 @@ for (const domain of ['server', 'daemon']) test(`JS ${domain} restore retains cu
     const tokens = ['daemon/daemon-token'];
     for (const name of ['telegram', 'cowork', 'messenger']) { fs.mkdirSync(join(live, 'credentials', name), { mode: 0o700 }); tokens.push(`credentials/${name}/daemon-token`); }
     for (const path of tokens) access('access-issue', '--output', join(live, path));
-    const env = { ...process.env, OURS_STATE_ROOT: root, OURS_LIVE_ROOT: live, OURS_BUILD_ROOT: build, OURS_STATE_DOMAIN: domain,
-      OURS_CLI_PATH: cli, OURS_DAEMON_CONFIG: config, OURS_COWORK_CLI_PATH: '/usr/bin/true', OURS_COWORK_CONFIG: join(live, 'cowork/config.json') };
+    const compose = fs.readFileSync(new URL('../assets/docker-compose.yaml', import.meta.url), 'utf8');
+    const selectedBin = compose.match(/(OURS_DAEMON_BIN_DIR): (\/opt\/ours\/node_modules\/\.bin)/);
+    assert.ok(selectedBin, 'compose must select a runtime bin directory, not the thin CLI');
+    assert.doesNotMatch(compose, /OURS_CLI_PATH:/);
+    const bin = join(build, 'node_modules/.bin'); fs.mkdirSync(bin, { recursive: true }); fs.symlinkSync(cli, join(bin, binary));
+    const env = { ...process.env, [selectedBin[1]]: bin, OURS_CLI_PATH: undefined, OURS_STATE_ROOT: root, OURS_LIVE_ROOT: live, OURS_BUILD_ROOT: build, OURS_STATE_DOMAIN: domain, OURS_DAEMON_CONFIG: config, OURS_COWORK_CLI_PATH: '/usr/bin/true', OURS_COWORK_CONFIG: join(live, 'cowork/config.json') };
     // This fixture has no Cowork sockets; only its offline-preparation command is stubbed.
     await runStateOperation(['backup', domain, 'before-rotation'], env);
     fs.writeFileSync(join(live, 'mcp/keep'), 'changed MCP preferences');

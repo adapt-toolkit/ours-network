@@ -174,13 +174,13 @@ export function planDaemonRemoval({ stateDir, cliStartedIt }) {
   const service = {
     id: 'service',
     unit: unit.ok ? unit.unit : null,
-    command: ['ours', 'daemon', 'uninstall-service', '--yes', '--state-dir', dir, '--config', join(dir, 'config.json')],
+    command: ['ours-daemon', 'uninstall-service', '--yes', '--state-dir', dir, '--config', join(dir, 'config.json')],
     note: 'removes the unit managed by the ours CLI',
   };
   return [
     service,
     cliStartedIt
-      ? { id: 'stop', command: ['ours', 'daemon', 'stop', '--state-dir', dir, '--config', join(dir, 'config.json')] }
+      ? { id: 'stop', command: ['ours-daemon', 'stop', '--state-dir', dir, '--config', join(dir, 'config.json')] }
       : { id: 'stop-external', command: null, continues: true, note: 'this daemon was not started by the CLI; naming its launcher and continuing' },
   ];
 }

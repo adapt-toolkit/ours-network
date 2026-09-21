@@ -20,9 +20,9 @@ test('explicit server selection rejects ambiguous and cross-operation options', 
 
 test('source selection retains complete authority but only selects server packages', () => {
   assert.equal(typeof plan.selectSourcePackages, 'function');
-  const packages = Object.fromEntries(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code', 'install'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '2.6.2' }]));
-  assert.deepEqual(Object.keys(plan.selectSourcePackages({ packages }, 'server')), ['@ours.network/sdk', '@ours.network/cli', '@ours.network/mcp', '@ours.network/tg-connector', '@ours.network/cowork', '@ours.network/messenger-server']);
-  assert.equal(Object.keys(packages).length, 10);
+  const packages = Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code', 'install'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '2.6.2' }]));
+  assert.deepEqual(Object.keys(plan.selectSourcePackages({ packages }, 'server')), ['@ours.network/sdk', '@ours.network/cli', '@ours.network/daemon', '@ours.network/tg-connector', '@ours.network/cowork', '@ours.network/messenger-server']);
+  assert.equal(Object.keys(packages).length, 11);
   assert.throws(() => plan.selectSourcePackages({ packages: { ...packages, '@ours.network/sdk': { type: 'npm', version: 'latest' } } }, 'server'));
 });
 
@@ -31,6 +31,7 @@ test('source policy resolves selected npm ranges to exact versions and preserves
   const policy = { sources: { mcp: { type: 'git', url: 'https://example.invalid/ours-mcp.git', commit } }, packages: {
     '@ours.network/sdk': { type: 'npm', version: '^2.0.1' },
     '@ours.network/cli': { type: 'npm', version: '~2.1.0' },
+    '@ours.network/daemon': { type: 'npm', version: '3.8.0' },
     '@ours.network/mcp': { source: 'mcp' },
     '@ours.network/tg-connector': { type: 'npm', version: '2.0.4' },
     '@ours.network/cowork': { type: 'npm', version: '2.0.5' },
@@ -43,10 +44,10 @@ test('source policy resolves selected npm ranges to exact versions and preserves
     return name === '@ours.network/sdk' ? '2.3.4' : '2.1.7';
   });
   assert.deepEqual(requested, [['@ours.network/sdk', '^2.0.1'], ['@ours.network/cli', '~2.1.0']]);
-  assert.deepEqual(resolved.sources, policy.sources);
+  assert.equal(resolved.sources, undefined);
   assert.deepEqual(resolved.packages['@ours.network/sdk'], { type: 'npm', version: '2.3.4' });
   assert.deepEqual(resolved.packages['@ours.network/cli'], { type: 'npm', version: '2.1.7' });
-  assert.deepEqual(resolved.packages['@ours.network/mcp'], { source: 'mcp' });
+  assert.equal(resolved.packages['@ours.network/mcp'], undefined);
   assert.equal(resolved.packages['@ours.network/fleet'], undefined);
 });
 
@@ -290,19 +291,18 @@ test('first server install resolves the packaged policy once before retaining it
   assert.deepEqual(events.slice(1), [['preflight', exact], ['retain', exact]]);
 });
 
-test('client verifies daemon and packaged MCP before any integration mutation', async () => {
+test('client verifies daemon API before any integration mutation', async () => {
   const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token' };
   const effects = fx({ profile, json: { '/home/me/profile.json': profile } });
-  effects.verifyPackagedMcp = async () => { throw new Error('Packaged MCP is absent'); };
+  effects.verifyHostProfile = async () => { throw new Error('Daemon API is absent'); };
   assert.equal(await runInstall(['client', 'install', '--config', '/home/me/profile.json'], effects), 2);
   assert.deepEqual(effects.recorder.ran, []);
-  assert.match(effects.recorder.out.join('\n'), /Packaged MCP is absent/);
+  assert.match(effects.recorder.out.join('\n'), /Daemon API is absent/);
 });
 
 test('client-only setup uses the packaged policy without an external sources input', async () => {
   const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token', installer: { integrations: ['codex'] } };
   const effects = fx({ profile, json: { '/home/me/profile.json': profile } });
-  effects.verifyPackagedMcp = async () => {};
   assert.equal(await runInstall(['client', 'install', '--config', '/home/me/profile.json'], effects), 2);
   assert.deepEqual(effects.recorder.ran, []);
   assert.equal(effects.recorder.wrote.length, 1);
@@ -326,7 +326,6 @@ test('client profile resolves relative Fleet settings and retains profile and ou
       '@ours.network/fleet': { type: 'npm', version: '1.1.5' },
     } },
   }, text });
-  effects.verifyPackagedMcp = async () => {};
   effects.acquireClientPackages = async () => ({ localPackages: {}, packages: {}, fleetBin: '/exact/ours-fleet' });
   const run = effects.run;
   effects.run = async (...call) => {
@@ -397,7 +396,7 @@ test('actual packaged Docker prepare keeps daemon fresh for owning HMAC init', {
     assert.deepEqual(readdirSync('/storage/state/daemon'), ['config.json']);
     assert.ok(existsSync('/storage/state/mcp'));
     assert.ok(existsSync('/storage/state/credentials/telegram'));
-    assert.equal(JSON.parse(readFileSync('/storage/state/daemon/config.json')).networkMcp.applicationConfigPath, '/var/lib/ours-mcp/config.json');
+    assert.equal(JSON.parse(readFileSync('/storage/state/daemon/config.json')).networkMcp, undefined);
     invoke('prepare');
     cpSync('/storage/state/daemon/config.json', '/var/lib/ours/config.json'); chownSync('/var/lib/ours/config.json', 1000, 1000);
     writeFileSync('/var/lib/ours/state_data.bin', 'existing-state', { mode: 0o600 }); chownSync('/var/lib/ours/state_data.bin', 1000, 1000);
@@ -452,10 +451,11 @@ test('real native start reactivates a retained daemon definition through its own
       definition: root => join(root, 'Library/LaunchAgents/solutions.adaptframework.ours.data.plist'),
       managerStart: ['launchctl', 'kickstart', `gui/${process.getuid()}/solutions.adaptframework.ours.data`],
     },
-  ]) {
+  ]) for (const splitRuntime of [false, true]) {
     const root = mkdtempSync(join(tmpdir(), `ours-native-${fixture.platform}-`));
     const record = { root, workDir: join(root, 'runtime'), configPath: join(root, 'config.json'), mode: 'packages', project: 'ours-fixture', services: ['daemon'] };
     try {
+      if (splitRuntime) { const binDir = join(record.workDir, 'node_modules/.bin'); mkdirSync(binDir, { recursive: true }); writeFileSync(join(binDir, 'ours-daemon'), 'fixture'); }
       const definition = fixture.definition(root);
       mkdirSync(join(definition, '..'), { recursive: true });
       writeFileSync(definition, 'retained definition bytes\n');
@@ -467,9 +467,10 @@ test('real native start reactivates a retained daemon definition through its own
         return { code: 0, stdout: args.includes('install-service') ? JSON.stringify({ changed: false }) : '' };
       };
       effects.verifyHostProfile = async () => {};
-      effects.verifyPackagedMcp = async () => {};
       await effects.serverLifecycle(record, 'start');
       const install = calls.findIndex(call => call.includes('install-service'));
+      assert.equal(calls[install][0].endsWith(splitRuntime ? '/ours-daemon' : '/ours'), true);
+      assert.equal(calls[install].includes('daemon'), !splitRuntime);
       const managerStart = calls.findIndex(call => JSON.stringify(call) === JSON.stringify(fixture.managerStart));
       assert.ok(install >= 0 && managerStart > install, `${fixture.platform}: owning install precedes native manager start; calls=${JSON.stringify(calls)}`);
       assert.equal(calls.some(call => call.includes('daemon') && call.includes('start')), false, `${fixture.platform}: no detached daemon competes with the service`);
@@ -494,9 +495,8 @@ test('native start waits for a slow daemon before starting consumers and still b
         if (command.endsWith('/ours-cowork') && args.includes('install-service')) consumerStartedAt = elapsed;
         return { code: 0, stdout: '' };
       };
-      effects.verifyHostProfile = async () => {};
-      effects.verifyPackagedMcp = async () => {
-        if (elapsed < readyAfter) throw new Error('MCP is still starting');
+      effects.verifyHostProfile = async () => {
+        if (elapsed < readyAfter) throw new Error('Daemon API is still starting');
       };
       const record = { root, workDir: join(root, 'runtime'), mode: 'packages', project: 'ours-fixture', services: ['daemon', 'cowork'] };
       let settled = false;
@@ -510,9 +510,9 @@ test('native start waits for a slow daemon before starting consumers and still b
       await started;
       if (Number.isFinite(readyAfter)) {
         assert.ifError(failure);
-        assert.ok(consumerStartedAt >= 58, 'consumers start only after MCP becomes ready');
+        assert.ok(consumerStartedAt >= 58, 'consumers start only after daemon API becomes ready');
       } else {
-        assert.match(failure?.message ?? '', /Daemon and packaged MCP are not ready/);
+        assert.match(failure?.message ?? '', /Daemon API is not ready/);
         assert.equal(consumerStartedAt, undefined, 'failed readiness must not start consumers');
       }
     } finally { rmSync(root, { recursive: true, force: true }); }
@@ -554,12 +554,11 @@ test('guided client selection discovers instance, validates before import, and r
   const calls = [];
   effects.discoverClientProfile = async (endpoint, credential) => { calls.push(['discover', endpoint, credential]); return profile; };
   effects.verifyHostProfile = async () => { calls.push('daemon'); };
-  effects.verifyPackagedMcp = async () => { calls.push('mcp'); };
   const publish = effects.importClientProfile;
   effects.importClientProfile = options => { calls.push('import'); return publish(options); };
   effects.acquireClientPackages = async (path, sourcesPath) => { calls.push(['acquire', path, sourcesPath]); return { localPackages: {}, packages: {} }; };
   assert.equal(await runInstall(['client', 'install'], effects), 2);
-  assert.deepEqual(calls.slice(0, 4), [['discover', profile.endpoint, profile.credentialPath], 'daemon', 'mcp', 'import']);
+  assert.deepEqual(calls.slice(0, 3), [['discover', profile.endpoint, profile.credentialPath], 'daemon', 'import']);
   assert.deepEqual(calls.at(-1), ['acquire', '/home/me/.ours-client/profile.json', '/home/me/.ours-client/sources.json']);
   assert.match(effects.recorder.out.join('\n'), /Client setup incomplete \(codex\)/);
   assert.doesNotMatch(effects.recorder.askedLines.join('\n'), /UUID|instance/i);
@@ -572,7 +571,6 @@ test('saved client retry preserves settings, refuses a different server and diag
   const effects = fx({ json: { [configPath]: profile, [sourcesPath]: { packages: {
     '@ours.network/sdk': { type: 'npm', version: '3.7.2' }, '@ours.network/cli': { type: 'npm', version: '2.7.2' }, '@ours.network/fleet': { type: 'npm', version: '1.1.5' },
   } } }, text: { '/home/me/fleet.yaml': 'retained' }, env: { OURS_CONFIG: '/input/removed.json' } });
-  effects.verifyPackagedMcp = async () => {};
   effects.acquireClientPackages = async () => ({ localPackages: {}, packages: {}, fleetBin: '/exact/ours-fleet' });
   assert.equal(await runInstall(['client', 'install'], effects), 0);
   assert.match(effects.recorder.out.join('\n'), /explicit OURS_CONFIG override/);
@@ -588,7 +586,6 @@ test('missing client dependency selection refuses before activating the managed 
   const path = '/home/me/profile.json';
   const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token', installer: { sourcesPath: '/input/sources.json', integrations: ['codex'] } };
   const effects = fx({ profile, json: { [path]: profile, '/input/sources.json': { packages: { '@ours.network/codex': { type: 'npm', version: '1.1.1' } } } } });
-  effects.verifyPackagedMcp = async () => {};
   assert.equal(await runInstall(['client', 'install', '--config', path], effects), 2);
   assert.equal(effects.recorder.wrote.length, 0);
   assert.match(effects.recorder.out.join('\n'), /sdk/);
@@ -604,7 +601,7 @@ test('acquired native commands are published before setup and retried without re
   try {
     const sourcesPath = join(home, 'sources.json');
     writeFileSync(sourcesPath, JSON.stringify({ packages: Object.fromEntries(
-      ['sdk', 'cli', 'fleet', 'codex', 'claude-code'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]),
+      ['sdk', 'cli', 'mcp', 'fleet', 'codex', 'claude-code'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]),
     ) }));
     const effects = realEffects({ env: {}, home });
     const calls = [];
@@ -676,7 +673,6 @@ test('native command publication failure reports incomplete setup and retains it
   const effects = fx({ json: { [configPath]: profile, [sourcesPath]: { packages: Object.fromEntries(
     ['sdk', 'cli', 'fleet'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]),
   ) } }, text: { '/home/me/fleet.yaml': 'retained' } });
-  effects.verifyPackagedMcp = async () => {};
   effects.acquireClientPackages = async () => { throw new Error('configured npm prefix is not writable'); };
   assert.equal(await runInstall(['client', 'install'], effects), 2);
   const output = effects.recorder.out.join('\n');
@@ -785,7 +781,7 @@ test('package preparation keeps MCP and consumer state outside daemon scanning',
   try {
     const root = join(home, 'server');
     const source = join(home, 'sources.json');
-    writeFileSync(source, JSON.stringify({ packages: Object.fromEntries(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }])) }));
+    writeFileSync(source, JSON.stringify({ packages: Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }])) }));
     const effects = realEffects({ env: {}, home });
     const record = { schema: 2, root, mode: 'packages', workDir: join(root, 'runtime'), sourcesPath: join(root, 'sources.json'), configPath: join(root, 'storage/state/daemon/config.json'), instanceId: '12345678-1234-1234-1234-123456789abc', port: 3050, coworkPort: 3052 };
     await effects.initializeSelection(record, source);
@@ -804,8 +800,7 @@ test('package preparation keeps MCP and consumer state outside daemon scanning',
     await effects.prepareInstallation(record);
     const config = JSON.parse(readFileSync(record.configPath));
     assert.equal(config.stateDir, `${root}/storage/state/daemon`);
-    assert.equal(config.networkMcp.applicationConfigPath, `${root}/storage/state/mcp/config.json`);
-    assert.equal(config.networkMcp.profile.credentialPath, `${root}/storage/state/daemon/daemon-token`);
+    assert.equal(config.networkMcp, undefined);
     assert.equal(existsSync(`${root}/storage/state/credentials/cowork`), true);
     assert.equal(existsSync(`${root}/storage/state/mcp/profile.json`), true);
     assert.equal(existsSync(`${root}/data`), false);
@@ -919,7 +914,7 @@ test('Docker mutations refuse a surviving one-off operation while status remains
 test('published server packages need no source-build toolchain during preflight', async () => {
   const { realEffects } = await import('../lib/effects.mjs');
   const effects = realEffects();
-  const packages = Object.fromEntries(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]));
+  const packages = Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]));
   effects.readJson = path => { assert.equal(path, '/supplied/sources.json'); return { packages }; };
   const checked = [];
   effects.run = async (command) => {
@@ -929,4 +924,17 @@ test('published server packages need no source-build toolchain during preflight'
   };
   await effects.serverPreflight({ mode: 'packages' }, 'install', { sourcePath: '/supplied/sources.json' });
   assert.ok(checked.includes('node') && checked.includes('npm'));
+});
+
+test('MCP is selected with harness plugins and excluded from server, CLI-only and Fleet-only installs', () => {
+  assert.ok(!plan.SERVER_PACKAGES.includes('@ours.network/mcp'));
+  assert.ok(plan.SERVER_PACKAGES.includes('@ours.network/daemon'));
+  assert.ok(!plan.SERVER_PACKAGES.includes('@ours.network/fleet'));
+  for (const selected of [[], ['fleet'], ['codex'], ['claude-code']]) assert.ok(!plan.clientPackageNames(selected).includes('daemon'));
+  assert.deepEqual(plan.clientPackageNames([]), ['sdk', 'cli']);
+  assert.deepEqual(plan.clientPackageNames(['fleet']), ['sdk', 'cli', 'fleet']);
+  for (const plugin of ['codex', 'claude-code']) {
+    assert.deepEqual(plan.clientPackageNames([plugin]), ['sdk', 'cli', 'mcp', plugin]);
+  }
+  assert.equal(plan.clientPackageNames(['codex', 'claude-code']).filter(name => name === 'mcp').length, 1);
 });

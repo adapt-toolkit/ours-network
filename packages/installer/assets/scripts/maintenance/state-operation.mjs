@@ -9,6 +9,8 @@ import { createArchive, extractArchive, validateArchive, scanSource, copyPrivate
 import { exchange, tryLock, setMtimeNs } from './state-native.mjs';
 import { recordNames, readBuildRecords, equalBuildRecords, initializeBuildMarker } from './build-context.mjs';
 
+import { daemonOwner } from './daemon-owner.mjs';
+
 const PROVENANCE = '.ours-provenance';
 const APPLICATIONS = ['daemon', 'telegram', 'cowork', 'messenger'];
 const exists = path => { try { fs.lstatSync(path); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } };
@@ -145,9 +147,9 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
   }
   function retainAuthority(staging) {
     if (!['daemon', 'server'].includes(domain)) return;
-    if (!env.OURS_CLI_PATH || !env.OURS_DAEMON_CONFIG) fail('daemon maintenance requires its selected executable and configuration');
+    if (!env.OURS_DAEMON_CONFIG) fail('daemon maintenance requires its selected executable and configuration');
     const daemon = commonTree ? join(staging, 'daemon') : staging;
-    owner([env.OURS_CLI_PATH, 'config', 'access-retain', '--config', env.OURS_DAEMON_CONFIG, '--target-state-dir', daemon, '--json']);
+    owner([daemonOwner(env), 'config', 'access-retain', '--config', env.OURS_DAEMON_CONFIG, '--target-state-dir', daemon, '--json']);
     if (!commonTree) return;
     const credentials = join(live, 'credentials'), destination = join(staging, 'credentials');
     for (const name of ['telegram', 'cowork', 'messenger']) if (!privateStat(join(credentials, name, 'daemon-token'), false, 0o600).size) fail('current managed credential is empty');

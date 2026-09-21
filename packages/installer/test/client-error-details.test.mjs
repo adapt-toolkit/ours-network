@@ -9,7 +9,6 @@ function fixture(status = 'ok') {
   const path = '/home/me/.ours-client/profile.json', sourcesPath = '/home/me/.ours-client/sources.json';
   const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/.ours-client/credential', installer: { sourcesPath, integrations: ['codex'] } };
   const effects = fx({ harnesses: [{ name: 'codex', status, command: 'codex' }], json: { [path]: profile, [sourcesPath]: { packages: {} } } });
-  effects.verifyPackagedMcp = async () => {};
   effects.acquireClientPackages = async () => ({ localPackages: { codex: '/exact/codex' }, packages: {} });
   effects.prepareClientMarketplace = async () => '/private/marketplace';
   return { effects, path };

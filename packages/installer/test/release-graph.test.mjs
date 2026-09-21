@@ -8,7 +8,7 @@ import { verifyReleaseGraph, releaseBinding, hostCliPolicy } from '../assets/scr
 import { resolveSourcePolicy } from '../lib/plan.mjs';
 import { networkEffects } from '../lib/effects.mjs';
 
-const names = ['sdk', 'cli', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'mcp', 'codex', 'claude-code'].map(name => '@ours.network/' + name);
+const names = ['sdk', 'cli', 'daemon', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'mcp', 'codex', 'claude-code'].map(name => '@ours.network/' + name);
 const sdk = names[0], cli = names[1];
 const sri = 'sha512-' + createHash('sha512').update('registry fixture').digest('base64');
 function policy() {
@@ -81,7 +81,7 @@ test('client acquisition refuses drift before readiness or global command instal
   const f = fixture(t), calls = [];
   // Exercise real acquisition orchestration; only the npm process boundary is fake.
   const sources = join(f.root, 'sources.json');
-  f.selected.packages['@ours.network/codex'] = { type: 'npm', version: f.selected.release.packages['@ours.network/codex'].version }; f.write('sources.json', f.selected);
+  for (const name of ['codex', 'mcp']) f.selected.packages[`@ours.network/${name}`] = { type: 'npm', version: f.selected.release.packages[`@ours.network/${name}`].version }; f.write('sources.json', f.selected);
   const effects = { env: {}, home: f.root, async run(command, args, options) {
     calls.push([command, ...args]);
     if (args[0] === 'install' && !args.includes('--global')) {
@@ -155,4 +155,16 @@ test('host CLI selection is a separate strict graph and does not relax service g
     const p = structuredClone(f.selected); p.release.hostCli = malformed;
     assert.throws(() => hostCliPolicy(p), /release/i);
   }
+});
+
+test('shipped development policy resolves complete server and local client selections', async () => {
+  const shipped = JSON.parse(readFileSync(new URL('../assets/sources.json', import.meta.url), 'utf8'));
+  const server = await resolveSourcePolicy(shipped, 'server');
+  assert.ok(server.packages['@ours.network/daemon']);
+  assert.equal(server.packages['@ours.network/fleet'], undefined);
+  assert.equal(server.packages['@ours.network/mcp'], undefined);
+  const client = await resolveSourcePolicy(shipped, 'client', ['sdk', 'cli', 'fleet', 'mcp']);
+  assert.ok(client.packages['@ours.network/fleet']);
+  assert.ok(client.packages['@ours.network/mcp']);
+  assert.equal(client.packages['@ours.network/daemon'], undefined);
 });

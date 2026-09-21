@@ -215,7 +215,7 @@ services:
       OURS_STATE_ROOT: /storage
       OURS_LIVE_ROOT: "${OURS_LIVE_ROOT:-/storage/state}"
       OURS_BUILD_ROOT: /opt/ours
-      OURS_CLI_PATH: /opt/ours/node_modules/.bin/ours
+      OURS_DAEMON_BIN_DIR: /opt/ours/node_modules/.bin
       OURS_DAEMON_CONFIG: /var/lib/ours/config.json
       OURS_COWORK_CLI_PATH: /opt/ours/node_modules/.bin/ours-cowork
       OURS_COWORK_CONFIG: /var/lib/ours-cowork/config.json

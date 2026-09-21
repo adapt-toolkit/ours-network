@@ -194,7 +194,7 @@ test('an unknown platform remains UNSUPPORTED, with what to do instead', () => {
   const p = planServiceInstall({ stateDir: '/home/me/.ours', home: '/home/me', readText: () => null, platform: 'freebsd' });
   assert.equal(p.action, 'unsupported');
   assert.match(p.message, /not available on freebsd/);
-  assert.deepEqual(p.manual, ['ours', 'daemon', 'serve', '--config'], 'a gap, not a dead end');
+  assert.deepEqual(p.manual, ['ours-daemon', 'serve', '--config'], 'a gap, not a dead end');
 });
 
 test('planDaemonConfig merges and preserves every unrelated key', () => {
@@ -244,6 +244,6 @@ test('planDaemonSteps: a version change restarts only a daemon the CLI started',
   assert.deepEqual(mine.map((s) => s.id), ['cli', 'config', 'restart', 'service']);
   const theirs = planDaemonSteps({ action: 'update', stateDir: OURS, port: 3050 }, { cliVersionChanged: true, cliStartedIt: false });
   const step = theirs.find((s) => s.id === 'restart-external');
-  assert.ok(step, '`ours daemon stop` refuses to signal a daemon it did not start');
+  assert.ok(step, '`ours-daemon stop` refuses to signal a daemon it did not start');
   assert.equal(step.command, null, 'the screen names the launcher; the installer runs nothing');
 });

@@ -21,7 +21,7 @@ export function releaseBinding(policy) {
   const pattern = release.channel === 'nightly' ? nightly : stable;
   if (typeof release.installerVersion !== 'string' || !pattern.test(release.installerVersion)) fail('invalid installer version/channel');
   if (release.scope !== undefined && release.scope !== 'host-cli') fail('invalid release scope');
-  const required = release.scope === 'host-cli' ? ['@ours.network/cli', '@ours.network/sdk'] : names;
+  const required = release.scope === 'host-cli' ? ['@ours.network/cli', '@ours.network/sdk'] : [...names, ...(release.packages?.['@ours.network/daemon'] ? ['@ours.network/daemon'] : [])];
   if (!release.packages || JSON.stringify(Object.keys(release.packages).sort()) !== JSON.stringify([...required].sort())) fail('release must select exactly the required ours packages');
   if (release.scope === 'host-cli' && Object.hasOwn(release, 'hostCli')) fail('nested host CLI selection');
   for (const [name, entry] of Object.entries(release.packages)) {

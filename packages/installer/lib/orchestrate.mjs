@@ -26,7 +26,7 @@ import { executeLegacyMigration } from './legacy-migration.mjs';
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { parseNetworkArgs, validateHostProfile, parseInstallArgs, resolveTarget, resolveProfileSelection, profileEnv, InstallUsageError } from './target.mjs';
-import { selectSourcePackages, validateInstallation, SERVER_SERVICES, planDaemonConfig, planServiceInstall, serviceInstallCommand } from './plan.mjs';
+import { clientPackageNames, selectSourcePackages, validateInstallation, SERVER_SERVICES, planDaemonConfig, planServiceInstall, serviceInstallCommand } from './plan.mjs';
 import {
   COMPONENTS,
   planComponentSelection, planMcpAttachment, planTgAttachment, planCoworkAttachment,
@@ -145,6 +145,7 @@ function incompatibleUpgrade(target, cliDependencies) {
 async function prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatch) {
   const dir = target.stateDir;
   const configPath = join(dir, 'config.json');
+  const owner = effects.readJson(join(dir, 'ours-cli-daemon.json'))?.owner === '@ours.network/daemon' ? ['ours-daemon'] : ['ours', 'daemon'];
   if (mismatch.unknown) {
     effects.out(warn(`ours: cannot verify whether ${cliPkg} can restore daemon v${mismatch.runningVersion}. Nothing was changed.`));
     effects.out(info('Check npm registry access and re-run; compatibility checks fail closed.'));
@@ -188,13 +189,13 @@ async function prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatc
   }
 
   await perform(effects, false, 'stop the incompatible daemon', () => effects.run(
-    'ours', ['daemon', 'stop', '--state-dir', dir, '--config', configPath], { stream: true },
+    owner[0], [...owner.slice(1), 'stop', '--state-dir', dir, '--config', configPath], { stream: true },
   ));
   try {
     await perform(effects, false, `back up complete daemon state to ${backupPath}`, () => effects.copyDir(dir, backupPath));
   } catch (error) {
     try {
-      await effects.run('ours', ['daemon', 'start', '--state-dir', dir, '--config', configPath], { stream: true });
+      await effects.run(owner[0], [...owner.slice(1), 'start', '--state-dir', dir, '--config', configPath], { stream: true });
       effects.out(ok('backup failed, but the old daemon was started again'));
     } catch {
       effects.out(warn(`backup failed and the old daemon did not restart; its state is still untouched at ${dir}`));
@@ -203,11 +204,11 @@ async function prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatc
   }
   try {
     await perform(effects, false, 'remove the incompatible daemon boot service', () => effects.run(
-      'ours', ['daemon', 'uninstall-service', '--yes', '--state-dir', dir, '--config', configPath], { stream: true },
+      owner[0], [...owner.slice(1), 'uninstall-service', '--yes', '--state-dir', dir, '--config', configPath], { stream: true },
     ));
   } catch (error) {
     try {
-      await effects.run('ours', ['daemon', 'start', '--state-dir', dir, '--config', configPath], { stream: true });
+      await effects.run(owner[0], [...owner.slice(1), 'start', '--state-dir', dir, '--config', configPath], { stream: true });
       effects.out(ok(`service removal failed, but the old daemon was started again; backup retained at ${backupPath}`));
     } catch {
       effects.out(warn(`service removal failed and the old daemon did not restart; state remains at ${dir} and the backup is at ${backupPath}`));
@@ -368,14 +369,13 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
   const mcpPkg = exactSuite?.packages?.mcp
     ? `@ours.network/mcp@${exactSuite.packages.mcp}`
     : componentSpec(componentByKey('mcp'), args.channel);
-  // The CLI intentionally publishes only `latest`; unlike the lockstep MCP and
-  // connector packages it has no nightly dist-tag. Keep this untagged on every
-  // installer channel, and inspect that package's SDK dependency for the gate.
-  const cliPkg = '@ours.network/cli';
+  // Inspect the runtime package SDK compatibility before replacing the owner.
+  const cliPkg = args.channel === 'nightly' ? '@ours.network/cli@nightly' : '@ours.network/cli';
+  const daemonPkg = args.channel === 'nightly' ? '@ours.network/daemon@nightly' : '@ours.network/daemon';
   if (!creating && target.daemonVersion) {
-    const mismatch = incompatibleUpgrade(target, effects.packageDependencies(cliPkg));
+    const mismatch = incompatibleUpgrade(target, effects.packageDependencies(daemonPkg));
     if (mismatch) {
-      const prepared = await prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatch);
+      const prepared = await prepareIncompatibleUpgrade(args, effects, target, daemonPkg, mismatch);
       if (prepared.refused) return { target, refused: prepared.refused, steps };
       creating = prepared.purged === true;
       target.backupPath = prepared.backupPath;
@@ -384,6 +384,18 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
   }
   await perform(effects, args.dryRun, `MCP server installed (npm i -g ${mcpPkg})`, () => effects.run('npm', ['i', '-g', mcpPkg]));
   steps.push({ id: 'mcp-package', changed: true, packageRefresh: true });
+  await perform(effects, args.dryRun, 'daemon runtime installed', () => effects.run('npm', ['i', '-g', daemonPkg]));
+  // A retained global unit still points into the old CLI package. Rewrite and
+  // activate that owned unit before npm replaces its executable with thin CLI.
+  let migratedService;
+  if (!creating) {
+    const retained = planServiceInstall({ stateDir: dir, home: effects.home, readText: effects.readText, platform: effects.platform?.platform });
+    if (retained.unitPath && effects.readText(retained.unitPath) !== null) {
+      try { migratedService = await runServicePhase(args, effects, dir, target.port); }
+      catch (error) { await recoverDaemon(args, effects, dir, join(dir, 'config.json'), target.port); throw error; }
+      if (migratedService.refused) return { target, refused: migratedService.refused, steps };
+    }
+  }
   await perform(effects, args.dryRun, `ours CLI installed (npm i -g ${cliPkg})`, () => effects.run('npm', ['i', '-g', cliPkg]));
   steps.push({ id: 'cli', changed: true, packageRefresh: true });
 
@@ -418,14 +430,14 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
 
   try {
     if (creating) {
-      await perform(effects, args.dryRun, `start the daemon on port ${target.port}`, () => effects.run('ours', ['daemon', 'start', '--config', configPath], { stream: true }));
+      await perform(effects, args.dryRun, `start the daemon on port ${target.port}`, () => effects.run('ours-daemon', [ 'start', '--config', configPath], { stream: true }));
       steps.push({ id: 'start', changed: true });
     } else {
-      await perform(effects, args.dryRun, `restart the daemon on port ${target.port}`, () => effects.run('ours', ['daemon', 'restart', '--config', configPath], { stream: true }));
+      await perform(effects, args.dryRun, `restart the daemon on port ${target.port}`, () => effects.run('ours-daemon', [ 'restart', '--config', configPath], { stream: true }));
       steps.push({ id: 'restart', changed: true });
     }
 
-    const service = await runServicePhase(args, effects, dir, target.port);
+    const service = migratedService ?? await runServicePhase(args, effects, dir, target.port);
     if (service.unsupported) serviceUnsupported = service.unsupported;
     if (service.refused) {
       // A REFUSAL IS A FAILURE TO REACH THE STATE, not a special case. An unknown
@@ -455,7 +467,7 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
       effects.out(recovery.recovered
         ? ok('your daemon is running again — nothing was committed, and the service is unchanged')
         : warn('and the daemon did NOT come back up — start it yourself before anything else: '
-          + `ours daemon start --config ${configPath}`));
+          + `ours-daemon start --config ${configPath}`));
     }
     throw error;
   }
@@ -478,7 +490,7 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
 async function recoverDaemon(args, effects, dir, configPath, port) {
   if (args.dryRun) return null;
   try {
-    await effects.run('ours', ['daemon', 'start', '--config', configPath]);
+    await effects.run('ours-daemon', [ 'start', '--config', configPath]);
     return { recovered: true };
   } catch (recoveryError) {
     return { recovered: false, reason: reason(recoveryError) };
@@ -829,7 +841,7 @@ export async function runIdentityPhase(args, effects, { target, mcpReady }) {
     }
     if (/not running|not reachable|ECONNREFUSED|connect/i.test(text)) {
       effects.out(warn("The daemon isn't reachable yet — couldn't create your human identity."));
-      effects.out(info(`Fix: run 'ours daemon start --config ${env.OURS_CONFIG}', then 'ours identity create-root --config ${env.OURS_CONFIG} --name "${name}"'.`));
+      effects.out(info(`Fix: run 'ours-daemon start --config ${env.OURS_CONFIG}', then 'ours identity create-root --config ${env.OURS_CONFIG} --name "${name}"'.`));
       return { key: 'identity', label: 'Human identity', state: 'failed', note: 'daemon not reachable' };
     }
     effects.out(warn(`Couldn't create your human identity: ${text.split('\n')[0]}`));
@@ -1441,7 +1453,6 @@ export async function runClientCommand(command, effects) {
   }
   effects.out(info(`Selected server ${profile.endpoint} (instance ${profile.expectedInstanceId}).`));
   await effects.verifyHostProfile(configPath || profile);
-  await effects.verifyPackagedMcp(configPath || profile);
   const settings = saved?.installer ?? (configPath ? effects.readJson(configPath)?.installer : undefined);
   const settingsBase = saved ? dirname(managedPath) : configPath ? dirname(configPath) : process.cwd();
   let integrations = command.integrations ?? settings?.integrations;
@@ -1455,7 +1466,7 @@ export async function runClientCommand(command, effects) {
   if (fleetSettingsPath !== undefined && (typeof fleetSettingsPath !== 'string' || !fleetSettingsPath))
     throw new InstallUsageError('installer.fleetSettingsPath must be a non-empty path when supplied');
   if (fleetSettingsPath) fleetSettingsPath = resolve(settingsBase, fleetSettingsPath);
-  const selectedClients = [...new Set(['sdk', 'cli', ...integrations])];
+  const selectedClients = clientPackageNames(integrations);
   let sourcesPath = settings?.sourcesPath;
   let resolvedSources;
   if (command.sourcePolicy) {

@@ -90,11 +90,11 @@ test('the boot service and the daemon delegate their refusals rather than reimpl
   const [service, stop] = planDaemonRemoval({ stateDir: TG, cliStartedIt: true });
   assert.equal(service.unit, 'ours-tg.service', 'this daemon\'s unit, not the default one');
   assert.deepEqual(service.command, [
-    'ours', 'daemon', 'uninstall-service', '--yes', '--state-dir', TG,
+    'ours-daemon', 'uninstall-service', '--yes', '--state-dir', TG,
     '--config', join(TG, 'config.json'),
   ]);
   assert.deepEqual(stop.command, [
-    'ours', 'daemon', 'stop', '--state-dir', TG,
+    'ours-daemon', 'stop', '--state-dir', TG,
     '--config', join(TG, 'config.json'),
   ]);
 });
@@ -102,7 +102,7 @@ test('the boot service and the daemon delegate their refusals rather than reimpl
 test('a daemon the CLI did not start is named, not signalled, and the run continues', () => {
   const [, stop] = planDaemonRemoval({ stateDir: OURS, cliStartedIt: false });
   assert.equal(stop.id, 'stop-external');
-  assert.equal(stop.command, null, 'ours daemon stop refuses to signal a daemon it did not start');
+  assert.equal(stop.command, null, 'ours-daemon stop refuses to signal a daemon it did not start');
   assert.equal(stop.continues, true, 'someone else supervising it is not a failure of this uninstall');
 });
 

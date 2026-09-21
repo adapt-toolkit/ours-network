@@ -35,11 +35,11 @@ export function fx({
   const fails = (cmd) => runFails.some((f) => cmd.join(' ').includes(f));
   return {
     packagedSourcePolicy: () => ({ packages: Object.fromEntries(
-      ['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code']
+      ['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code']
         .map(name => [`@ours.network/${name}`, { type: 'npm', version: '2.0.1' }]),
     ) }),
     resolveSourcePolicy: async (policy, role, clients = []) => {
-      const names = role === 'server' ? ['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server'] : clients;
+      const names = role === 'server' ? ['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server'] : clients;
       for (const name of names) if (!policy.packages?.[`@ours.network/${name}`]) throw new Error(`Missing source policy for @ours.network/${name}`);
       return { packages: Object.fromEntries(names.map(name => [`@ours.network/${name}`, policy.packages[`@ours.network/${name}`]])) };
     },

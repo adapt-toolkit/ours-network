@@ -322,7 +322,7 @@ test('an unreachable daemon gives the exact retry command, naming THIS daemon', 
   // The hint NAMES THIS DAEMON. A retry command without the config path starts the
   // DEFAULT daemon, and the operator ends up with an identity on a daemon they did
   // not choose, with no error to tell them.
-  assert.match(said(e), new RegExp(`ours daemon start --config ${join(TG, 'config.json')}`));
+  assert.match(said(e), new RegExp(`ours-daemon start --config ${join(TG, 'config.json')}`));
 });
 
 // -------------------------------------------------- the summary + hand-off ---

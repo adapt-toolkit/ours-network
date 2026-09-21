@@ -254,7 +254,7 @@ test('a foreign daemon on the RECORDED port: REFUSED, exit 2, and it names the o
   assert.match(r.message, /owns state directory .*\.ours-tg, not .*\.ours/);
 });
 
-test('something that is not an ours daemon on the RECORDED port: also REFUSED', async () => {
+test('something that is not an ours-daemon on the RECORDED port: also REFUSED', async () => {
   const r = await target({
     readJson: files({ [join(OURS, DAEMON_CONFIG)]: { port: 3060 } }),
     probe: net({ 3060: { ok: true } }),

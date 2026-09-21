@@ -82,8 +82,9 @@ test('Docker layout staging separates complete MCP state and preserves original 
       write(cowork, `#!${process.execPath}\nif(process.argv.slice(2).join(' ')!=='--json prepare-backup')process.exit(2);`);
       fs.chmodSync(cowork, 0o700);
       const entrypoint = fileURLToPath(new URL('../assets/scripts/maintenance/docker-layout-conversion.mjs', import.meta.url));
+      const bin = join(build, 'node_modules/.bin'); fs.mkdirSync(bin, { recursive: true }); fs.symlinkSync(cli, join(bin, 'ours-daemon'));
       const env = { ...process.env, OURS_STATE_ROOT: storage, OURS_CONVERSION_SOURCE: source,
-        OURS_BUILD_ROOT: build, OURS_DAEMON_ID: instanceId, OURS_CLI_PATH: cli,
+        OURS_BUILD_ROOT: build, OURS_DAEMON_ID: instanceId, OURS_CLI_PATH: undefined, OURS_DAEMON_BIN_DIR: bin,
         OURS_DAEMON_CONFIG: configPath, OURS_COWORK_CLI_PATH: cowork };
       execFileSync(process.execPath, [entrypoint, 'validate'], { env });
       write(join(published, 'cowork/config.json'), '{}');
