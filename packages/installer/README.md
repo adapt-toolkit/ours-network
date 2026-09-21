@@ -71,9 +71,9 @@ Client commands report an unavailable server and never start one automatically.
 The development policy selects published SDK `3.8.1-nightly.9`, CLI
 `2.8.1-nightly.7`, and daemon `3.8.1-nightly.1`, together with exact reviewed
 consumer source commits. The isolated host CLI pair uses these released client
-artifacts. The all-package release manifest still selects the prior published
-consumer set: replacing it requires published consumer versions and verified
-SHA512 integrities. Mixed or unselected nested SDK versions remain rejected.
+artifacts. The nightly release manifest selects the complete published consumer
+set and standalone daemon with verified SHA512 integrities. Packaged installers
+use this exact release set; mixed or unselected nested SDK versions remain rejected.
 
 ## Migrate an existing global installation
 
