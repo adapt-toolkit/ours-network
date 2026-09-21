@@ -2,7 +2,7 @@ import { readBuildRecords, initializeBuildMarker } from '../maintenance/build-co
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
-  closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync,
+  existsSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync,
   realpathSync, renameSync, unlinkSync, writeFileSync, readdirSync, chmodSync, chownSync,
 } from 'node:fs';
 
@@ -155,7 +155,7 @@ async function telegramInput() {
 }
 
 function cliJson(args) {
-  const result = spawnSync(process.execPath, ['/opt/ours/node_modules/@ours.network/cli/dist/cli.js', ...args], {
+  const result = spawnSync(process.execPath, [existsSync('/opt/ours/node_modules/@ours.network/daemon/dist/cli.js') ? '/opt/ours/node_modules/@ours.network/daemon/dist/cli.js' : '/opt/ours/node_modules/@ours.network/cli/dist/cli.js', ...args], {
     encoding: 'utf8', timeout: 60_000, maxBuffer: 1024 * 1024,
   });
   if (result.status !== 0) fail('Official OURS CLI operation failed');

@@ -97,7 +97,7 @@ export function launchdLabelForStateDir(stateDir) {
 export function classifyUnit(text) {
   if (text === null || text === undefined) return { kind: 'absent' };
   const s = String(text);
-  if (s.startsWith(CLI_UNIT_MARKER)) return { kind: 'cli-managed' };
+  if ((s.startsWith(CLI_UNIT_MARKER) || s.startsWith('# Managed by @ours.network/daemon'))) return { kind: 'cli-managed' };
   const looksLikeOursMcp = /ExecStart=.*\bours-mcp\b/.test(s)
     || /^Description=ours MCP daemon\b/m.test(s)
     || (/^Environment=OURS_STATE_DIR=/m.test(s) && /^Environment=OURS_TRANSPORT=http$/m.test(s));
@@ -138,7 +138,7 @@ export function planServiceInstall({ stateDir, home, readText, platform = 'linux
       platform,
       reason: 'no-service-manager',
       message: `installing a boot service is not available on ${platform} — the ours CLI supports Linux user systemd and macOS launchd`,
-      manual: ['ours', 'daemon', 'serve', '--config'],
+      manual: ['ours-daemon', 'serve', '--config'],
     };
   }
 
@@ -224,7 +224,7 @@ export function serviceInstallCommand({ stateDir, adoptLegacyUnit = false }) {
   // --json so the caller can read back whether the unit actually CHANGED rather
   // than assuming it did. --force is reachable only through the explicit argument
   // above, and the CLI refuses to overwrite a unit it did not write.
-  const cmd = ['ours', 'daemon', 'install-service', '--yes', '--json', '--state-dir', dir, '--config', join(dir, 'config.json')];
+  const cmd = ['ours-daemon', 'install-service', '--yes', '--json', '--state-dir', dir, '--config', join(dir, 'config.json')];
   if (adoptLegacyUnit) cmd.push('--force');
   return cmd;
 }
@@ -265,20 +265,20 @@ export function planDaemonSteps(target, { cliVersionChanged = false, cliStartedI
   const steps = [{ id: 'cli', label: 'install the ours-sdk CLI', command: ['npm', 'i', '-g', '@ours.network/cli'] }];
   steps.push({ id: 'config', label: `write ${join(dir, 'config.json')}`, port: target.port });
   if (target.action === 'create') {
-    steps.push({ id: 'start', label: `start the daemon on port ${target.port}`, command: ['ours', 'daemon', 'start', '--config', join(dir, 'config.json')] });
+    steps.push({ id: 'start', label: `start the daemon on port ${target.port}`, command: ['ours-daemon', 'start', '--config', join(dir, 'config.json')] });
   } else if (cliVersionChanged) {
     // `ours daemon stop` refuses to signal a daemon it did not start, so a
     // daemon under another launcher is left running and the caller says which
     // launcher must be restarted instead.
     steps.push(cliStartedIt
-      ? { id: 'restart', label: 'restart the daemon (package version changed)', command: ['ours', 'daemon', 'restart', '--config', join(dir, 'config.json')] }
+      ? { id: 'restart', label: 'restart the daemon (package version changed)', command: ['ours-daemon', 'restart', '--config', join(dir, 'config.json')] }
       : { id: 'restart-external', label: 'daemon was not started by the CLI — restart it with its own launcher', command: null });
   }
   steps.push({ id: 'service', label: 'install the boot service', command: serviceInstallCommand({ stateDir: dir }) });
   return steps;
 }
 
-export const SERVER_PACKAGES = ['sdk', 'cli', 'tg-connector', 'cowork', 'messenger-server'].map(n => `@ours.network/${n}`);
+export const SERVER_PACKAGES = ['sdk', 'cli', 'daemon', 'tg-connector', 'cowork', 'messenger-server'].map(n => `@ours.network/${n}`);
 export const SERVER_DEPENDENCIES = {
   daemon: [], telegram: ['daemon'], cowork: ['daemon'], messenger: ['daemon'],
 };

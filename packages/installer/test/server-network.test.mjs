@@ -20,9 +20,9 @@ test('explicit server selection rejects ambiguous and cross-operation options', 
 
 test('source selection retains complete authority but only selects server packages', () => {
   assert.equal(typeof plan.selectSourcePackages, 'function');
-  const packages = Object.fromEntries(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code', 'install'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '2.6.2' }]));
-  assert.deepEqual(Object.keys(plan.selectSourcePackages({ packages }, 'server')), ['@ours.network/sdk', '@ours.network/cli', '@ours.network/tg-connector', '@ours.network/cowork', '@ours.network/messenger-server']);
-  assert.equal(Object.keys(packages).length, 10);
+  const packages = Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'codex', 'claude-code', 'install'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '2.6.2' }]));
+  assert.deepEqual(Object.keys(plan.selectSourcePackages({ packages }, 'server')), ['@ours.network/sdk', '@ours.network/cli', '@ours.network/daemon', '@ours.network/tg-connector', '@ours.network/cowork', '@ours.network/messenger-server']);
+  assert.equal(Object.keys(packages).length, 11);
   assert.throws(() => plan.selectSourcePackages({ packages: { ...packages, '@ours.network/sdk': { type: 'npm', version: 'latest' } } }, 'server'));
 });
 
@@ -31,6 +31,7 @@ test('source policy resolves selected npm ranges to exact versions and preserves
   const policy = { sources: { mcp: { type: 'git', url: 'https://example.invalid/ours-mcp.git', commit } }, packages: {
     '@ours.network/sdk': { type: 'npm', version: '^2.0.1' },
     '@ours.network/cli': { type: 'npm', version: '~2.1.0' },
+    '@ours.network/daemon': { type: 'npm', version: '3.8.0' },
     '@ours.network/mcp': { source: 'mcp' },
     '@ours.network/tg-connector': { type: 'npm', version: '2.0.4' },
     '@ours.network/cowork': { type: 'npm', version: '2.0.5' },
@@ -450,10 +451,11 @@ test('real native start reactivates a retained daemon definition through its own
       definition: root => join(root, 'Library/LaunchAgents/solutions.adaptframework.ours.data.plist'),
       managerStart: ['launchctl', 'kickstart', `gui/${process.getuid()}/solutions.adaptframework.ours.data`],
     },
-  ]) {
+  ]) for (const splitRuntime of [false, true]) {
     const root = mkdtempSync(join(tmpdir(), `ours-native-${fixture.platform}-`));
     const record = { root, workDir: join(root, 'runtime'), configPath: join(root, 'config.json'), mode: 'packages', project: 'ours-fixture', services: ['daemon'] };
     try {
+      if (splitRuntime) { const binDir = join(record.workDir, 'node_modules/.bin'); mkdirSync(binDir, { recursive: true }); writeFileSync(join(binDir, 'ours-daemon'), 'fixture'); }
       const definition = fixture.definition(root);
       mkdirSync(join(definition, '..'), { recursive: true });
       writeFileSync(definition, 'retained definition bytes\n');
@@ -467,6 +469,8 @@ test('real native start reactivates a retained daemon definition through its own
       effects.verifyHostProfile = async () => {};
       await effects.serverLifecycle(record, 'start');
       const install = calls.findIndex(call => call.includes('install-service'));
+      assert.equal(calls[install][0].endsWith(splitRuntime ? '/ours-daemon' : '/ours'), true);
+      assert.equal(calls[install].includes('daemon'), !splitRuntime);
       const managerStart = calls.findIndex(call => JSON.stringify(call) === JSON.stringify(fixture.managerStart));
       assert.ok(install >= 0 && managerStart > install, `${fixture.platform}: owning install precedes native manager start; calls=${JSON.stringify(calls)}`);
       assert.equal(calls.some(call => call.includes('daemon') && call.includes('start')), false, `${fixture.platform}: no detached daemon competes with the service`);
@@ -777,7 +781,7 @@ test('package preparation keeps MCP and consumer state outside daemon scanning',
   try {
     const root = join(home, 'server');
     const source = join(home, 'sources.json');
-    writeFileSync(source, JSON.stringify({ packages: Object.fromEntries(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }])) }));
+    writeFileSync(source, JSON.stringify({ packages: Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }])) }));
     const effects = realEffects({ env: {}, home });
     const record = { schema: 2, root, mode: 'packages', workDir: join(root, 'runtime'), sourcesPath: join(root, 'sources.json'), configPath: join(root, 'storage/state/daemon/config.json'), instanceId: '12345678-1234-1234-1234-123456789abc', port: 3050, coworkPort: 3052 };
     await effects.initializeSelection(record, source);
@@ -910,7 +914,7 @@ test('Docker mutations refuse a surviving one-off operation while status remains
 test('published server packages need no source-build toolchain during preflight', async () => {
   const { realEffects } = await import('../lib/effects.mjs');
   const effects = realEffects();
-  const packages = Object.fromEntries(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]));
+  const packages = Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]));
   effects.readJson = path => { assert.equal(path, '/supplied/sources.json'); return { packages }; };
   const checked = [];
   effects.run = async (command) => {
@@ -924,6 +928,9 @@ test('published server packages need no source-build toolchain during preflight'
 
 test('MCP is selected with harness plugins and excluded from server, CLI-only and Fleet-only installs', () => {
   assert.ok(!plan.SERVER_PACKAGES.includes('@ours.network/mcp'));
+  assert.ok(plan.SERVER_PACKAGES.includes('@ours.network/daemon'));
+  assert.ok(!plan.SERVER_PACKAGES.includes('@ours.network/fleet'));
+  for (const selected of [[], ['fleet'], ['codex'], ['claude-code']]) assert.ok(!plan.clientPackageNames(selected).includes('daemon'));
   assert.deepEqual(plan.clientPackageNames([]), ['sdk', 'cli']);
   assert.deepEqual(plan.clientPackageNames(['fleet']), ['sdk', 'cli', 'fleet']);
   for (const plugin of ['codex', 'claude-code']) {

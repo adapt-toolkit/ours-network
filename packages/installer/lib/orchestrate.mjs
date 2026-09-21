@@ -368,14 +368,13 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
   const mcpPkg = exactSuite?.packages?.mcp
     ? `@ours.network/mcp@${exactSuite.packages.mcp}`
     : componentSpec(componentByKey('mcp'), args.channel);
-  // The CLI intentionally publishes only `latest`; unlike the lockstep MCP and
-  // connector packages it has no nightly dist-tag. Keep this untagged on every
-  // installer channel, and inspect that package's SDK dependency for the gate.
-  const cliPkg = '@ours.network/cli';
+  // Inspect the runtime package SDK compatibility before replacing the owner.
+  const cliPkg = args.channel === 'nightly' ? '@ours.network/cli@nightly' : '@ours.network/cli';
+  const daemonPkg = args.channel === 'nightly' ? '@ours.network/daemon@nightly' : '@ours.network/daemon';
   if (!creating && target.daemonVersion) {
-    const mismatch = incompatibleUpgrade(target, effects.packageDependencies(cliPkg));
+    const mismatch = incompatibleUpgrade(target, effects.packageDependencies(daemonPkg));
     if (mismatch) {
-      const prepared = await prepareIncompatibleUpgrade(args, effects, target, cliPkg, mismatch);
+      const prepared = await prepareIncompatibleUpgrade(args, effects, target, daemonPkg, mismatch);
       if (prepared.refused) return { target, refused: prepared.refused, steps };
       creating = prepared.purged === true;
       target.backupPath = prepared.backupPath;
@@ -384,6 +383,7 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
   }
   await perform(effects, args.dryRun, `MCP server installed (npm i -g ${mcpPkg})`, () => effects.run('npm', ['i', '-g', mcpPkg]));
   steps.push({ id: 'mcp-package', changed: true, packageRefresh: true });
+  await perform(effects, args.dryRun, 'daemon runtime installed', () => effects.run('npm', ['i', '-g', daemonPkg]));
   await perform(effects, args.dryRun, `ours CLI installed (npm i -g ${cliPkg})`, () => effects.run('npm', ['i', '-g', cliPkg]));
   steps.push({ id: 'cli', changed: true, packageRefresh: true });
 
@@ -418,10 +418,10 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
 
   try {
     if (creating) {
-      await perform(effects, args.dryRun, `start the daemon on port ${target.port}`, () => effects.run('ours', ['daemon', 'start', '--config', configPath], { stream: true }));
+      await perform(effects, args.dryRun, `start the daemon on port ${target.port}`, () => effects.run('ours-daemon', [ 'start', '--config', configPath], { stream: true }));
       steps.push({ id: 'start', changed: true });
     } else {
-      await perform(effects, args.dryRun, `restart the daemon on port ${target.port}`, () => effects.run('ours', ['daemon', 'restart', '--config', configPath], { stream: true }));
+      await perform(effects, args.dryRun, `restart the daemon on port ${target.port}`, () => effects.run('ours-daemon', [ 'restart', '--config', configPath], { stream: true }));
       steps.push({ id: 'restart', changed: true });
     }
 
@@ -455,7 +455,7 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
       effects.out(recovery.recovered
         ? ok('your daemon is running again — nothing was committed, and the service is unchanged')
         : warn('and the daemon did NOT come back up — start it yourself before anything else: '
-          + `ours daemon start --config ${configPath}`));
+          + `ours-daemon start --config ${configPath}`));
     }
     throw error;
   }
@@ -478,7 +478,7 @@ export async function runDaemonPhase(args, effects, exactSuite = null) {
 async function recoverDaemon(args, effects, dir, configPath, port) {
   if (args.dryRun) return null;
   try {
-    await effects.run('ours', ['daemon', 'start', '--config', configPath]);
+    await effects.run('ours-daemon', [ 'start', '--config', configPath]);
     return { recovered: true };
   } catch (recoveryError) {
     return { recovered: false, reason: reason(recoveryError) };
@@ -829,7 +829,7 @@ export async function runIdentityPhase(args, effects, { target, mcpReady }) {
     }
     if (/not running|not reachable|ECONNREFUSED|connect/i.test(text)) {
       effects.out(warn("The daemon isn't reachable yet — couldn't create your human identity."));
-      effects.out(info(`Fix: run 'ours daemon start --config ${env.OURS_CONFIG}', then 'ours identity create-root --config ${env.OURS_CONFIG} --name "${name}"'.`));
+      effects.out(info(`Fix: run 'ours-daemon start --config ${env.OURS_CONFIG}', then 'ours identity create-root --config ${env.OURS_CONFIG} --name "${name}"'.`));
       return { key: 'identity', label: 'Human identity', state: 'failed', note: 'daemon not reachable' };
     }
     effects.out(warn(`Couldn't create your human identity: ${text.split('\n')[0]}`));

@@ -6,7 +6,7 @@ import { runServerCommand } from '../lib/orchestrate.mjs';
 
 const root = '/private/install';
 const record = { schema: 2, mode: 'packages', root, workDir: `${root}/runtime`, sourcesPath: `${root}/sources.json`, configPath: `${root}/storage/state/daemon/config.json`, instanceId: '12345678-1234-1234-1234-123456789abc', project: 'ours-test', services: ['daemon', 'telegram', 'cowork', 'messenger'], port: 3050, coworkPort: 3052, messengerPort: 8420, uid: 1000, gid: 1000 };
-const policy = { packages: Object.fromEntries(['sdk', 'cli', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'codex', 'claude-code', 'fleet'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '1.0.0' }])) };
+const policy = { packages: Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'codex', 'claude-code', 'fleet'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '1.0.0' }])) };
 const options = { scope: 'all', operation: 'install', mode: 'packages', stateDir: root, identityName: 'Test Human', integrations: ['codex'], port: 3050, coworkPort: 3052, messengerPort: 8420, interactive: false };
 function fixture(existing = false) {
   const events = [], lines = [];

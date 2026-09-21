@@ -56,6 +56,24 @@ The installer embeds exact component versions and SHA-512 values for its release
 An existing server's retained release selects matching local clients. Secrets are
 read from protected files, and client setup never copies the daemon API master.
 
+## Runtime and client packages
+
+Server selections include `@ours.network/daemon`, whose `ours-daemon` binary owns
+runtime startup and service administration. Docker runs `ours-daemon serve`;
+native installations install its systemd/launchd service. Existing retained
+installations can still stop and restore their older CLI-owned runtime.
+
+Client selections contain the thin SDK and CLI, plus MCP when a harness needs
+it. They exclude the daemon and its native database/ADAPT dependencies. Fleet
+runs beside the harnesses on the client machine and calls the daemon HTTP API.
+Client commands report an unavailable server and never start one automatically.
+
+The source split needs a source policy selecting the new daemon package from the
+SDK repository, alongside matching SDK and CLI artifacts. Retained published
+manifests remain valid for maintenance; they do not acquire an invented daemon
+version or integrity. A new packaged release must select real published thin
+SDK/CLI and daemon artifacts before it can install this topology by default.
+
 ## Migrate an existing global installation
 
 The wizard detects the old `~/.ours/config.json` and offers to keep its identities,

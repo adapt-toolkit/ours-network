@@ -207,7 +207,7 @@ export async function runDockerLayoutCommand(argv, env = process.env) {
   const build = env.OURS_BUILD_ROOT || '/opt/ours';
   const options = {
     uid: process.getuid(), gid: process.getgid(), instanceId: env.OURS_DAEMON_ID,
-    cli: env.OURS_CLI_PATH || '/opt/ours/node_modules/.bin/ours',
+    cli: env.OURS_CLI_PATH || (fs.existsSync('/opt/ours/node_modules/.bin/ours-daemon') ? '/opt/ours/node_modules/.bin/ours-daemon' : '/opt/ours/node_modules/.bin/ours'),
     configPath: env.OURS_DAEMON_CONFIG || '/var/lib/ours/config.json',
     provenance: readBuildRecords(build),
   };

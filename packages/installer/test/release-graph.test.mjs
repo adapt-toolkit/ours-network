@@ -8,7 +8,7 @@ import { verifyReleaseGraph, releaseBinding, hostCliPolicy } from '../assets/scr
 import { resolveSourcePolicy } from '../lib/plan.mjs';
 import { networkEffects } from '../lib/effects.mjs';
 
-const names = ['sdk', 'cli', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'mcp', 'codex', 'claude-code'].map(name => '@ours.network/' + name);
+const names = ['sdk', 'cli', 'daemon', 'tg-connector', 'cowork', 'messenger-server', 'fleet', 'mcp', 'codex', 'claude-code'].map(name => '@ours.network/' + name);
 const sdk = names[0], cli = names[1];
 const sri = 'sha512-' + createHash('sha512').update('registry fixture').digest('base64');
 function policy() {

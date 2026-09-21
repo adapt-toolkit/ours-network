@@ -23,7 +23,7 @@ const PROFILE = { endpoint: 'http://127.0.0.1:8787', expectedInstanceId: '6d1e0b
 
 test('NO code path this orchestrator takes ever runs systemctl, or splits the daemon pair', () => {
   // The one rule that outranks every feature here. systemd is reached only
-  // through `ours daemon install-service`, which owns its own refusals.
+  // through `ours-daemon install-service`, which owns its own refusals.
   //
   // Second host constraint: now that run() can carry
   // an environment, EVERY invocation must carry the whole daemon pair or none of
@@ -351,8 +351,8 @@ test('CHANNEL=nightly installs the NIGHTLY component packages, not stable ones b
     installs.some((spec) => /^@ours\.network\/mcp@\d+\.\d+\.\d+-nightly\.\d+$/.test(spec)),
     `mcp must be pinned to the resolved nightly suite, got: ${installs.join(', ')}`,
   );
-  assert.ok(installs.includes('@ours.network/cli'), `the CLI intentionally stays on its only published channel, got: ${installs.join(', ')}`);
-  assert.ok(!installs.includes('@ours.network/cli@nightly'), 'the CLI has no nightly dist-tag');
+  assert.ok(installs.includes('@ours.network/cli@nightly'));
+  assert.ok(installs.includes('@ours.network/daemon@nightly'));
   assert.ok(
     !installs.includes('@ours.network/mcp'),
     'and never the untagged name on a nightly run — that installs @latest',
@@ -366,7 +366,7 @@ test('an incompatible major is refused before package replacement when purge is 
       [join(OURS, 'ours-cli-daemon.json')]: { version: 1, owner: '@ours.network/cli', pid: 42, port: 3050, stateDir: OURS },
     },
     net: { 3050: { ok: true, stateDir: OURS, version: '2.9.4' } },
-    packageDeps: { '@ours.network/cli': { '@ours.network/sdk': '^3.0.0' } },
+    packageDeps: { '@ours.network/daemon': { '@ours.network/sdk': '^3.0.0' } },
     answers: [false],
   });
   const result = await runDaemonPhase(
@@ -387,7 +387,7 @@ test('a confirmed incompatible major stops, backs up, purges, and initializes in
       [join(OURS, 'ours-cli-daemon.json')]: { version: 1, owner: '@ours.network/cli', pid: 42, port: 3050, stateDir: OURS },
     },
     net: { 3050: { ok: true, stateDir: OURS, version: '2.9.4' } },
-    packageDeps: { '@ours.network/cli': { '@ours.network/sdk': '^3.0.0' } },
+    packageDeps: { '@ours.network/daemon': { '@ours.network/sdk': '^3.0.0' } },
     answers: [true],
   });
   const result = await runDaemonPhase(
@@ -415,7 +415,7 @@ test('a failed incompatible service removal keeps both copies and restarts the o
       [join(OURS, 'ours-cli-daemon.json')]: { version: 1, owner: '@ours.network/cli', pid: 42, port: 3050, stateDir: OURS },
     },
     net: { 3050: { ok: true, stateDir: OURS, version: '2.9.4' } },
-    packageDeps: { '@ours.network/cli': { '@ours.network/sdk': '^3.0.0' } },
+    packageDeps: { '@ours.network/daemon': { '@ours.network/sdk': '^3.0.0' } },
     answers: [true],
     runFails: ['uninstall-service'],
   });
@@ -536,7 +536,7 @@ test('a failed rollback is REPORTED, never swallowed and never thrown over the r
   const e = fx({ runFails: ['daemon start'], restoreFails: [join(OURS, 'config.json')] });
   // The original failure must be what propagates: losing it to a second error
   // raised by the recovery would hide the thing that actually went wrong.
-  await assert.rejects(() => runInstall([], e), /ours exited 1/, 'the original failure survives');
+  await assert.rejects(() => runInstall([], e), /ours-daemon exited 1/, 'the original failure survives');
   assert.match(said(e), /could NOT roll back .*config\.json: permission denied/);
 });
 
@@ -653,7 +653,7 @@ test('a config that did not change is not snapshotted, so nothing is "rolled bac
 
 test('the replaced legacy unit is NAMED in the rollback, because it cannot be restored', async () => {
   // Writing unit bytes back into ~/.config/systemd/user would break the invariant
-  // that systemd is reached only through `ours daemon install-service`, and without
+  // that systemd is reached only through `ours-daemon install-service`, and without
   // a daemon-reload it would not even mean anything. So it is reported, not fixed.
   const e = fx({
     text: { [unitPath('ours.service')]: LEGACY_UNIT },
@@ -805,7 +805,7 @@ test('a failed install-service does not leave the daemon down without trying to 
   await assert.rejects(() => runInstall([], e));
   const started = e.recorder.ran.filter((c) => c.join(' ').includes('daemon start'));
   assert.equal(started.length, 1, 'exactly one recovery attempt');
-  assert.deepEqual(started[0], ['ours', 'daemon', 'start', '--config', join(OURS, 'config.json')]);
+  assert.deepEqual(started[0], ['ours-daemon', 'start', '--config', join(OURS, 'config.json')]);
   assert.match(said(e), /your daemon is running again/);
 });
 
@@ -820,7 +820,7 @@ test('the two outcomes are told apart, because only one of them needs a human no
   });
   await assert.rejects(() => runInstall([], e));
   assert.match(said(e), /the daemon did NOT come back up/);
-  assert.match(said(e), /ours daemon start --config .*config\.json/, 'and the exact command to fix it');
+  assert.match(said(e), /ours-daemon start --config .*config\.json/, 'and the exact command to fix it');
 });
 
 test('a daemon that never started is not "recovered" — there is nothing to recover', async () => {
@@ -856,7 +856,7 @@ test('on macOS the installer requests the CLI-managed daemon LaunchAgent before 
   assert.equal(await runInstall([], e), EXIT_OK);
   const service = e.recorder.ran.find((c) => c.join(' ').includes('daemon install-service'));
   assert.deepEqual(service, [
-    'ours', 'daemon', 'install-service', '--yes', '--json', '--state-dir', OURS,
+    'ours-daemon', 'install-service', '--yes', '--json', '--state-dir', OURS,
     '--config', join(OURS, 'config.json'),
   ], 'the CLI dispatches this exact request to its launchd adapter');
   assert.ok(!service.includes('--force'), 'Darwin never enters Linux legacy-unit adoption');
@@ -896,11 +896,11 @@ test('a failed macOS LaunchAgent install reports the failure and attempts daemon
     runFails: ['install-service'],
     env: { OURS_ASSUME_YES: '1' },
   });
-  await assert.rejects(() => runInstall([], e), /ours exited 1/);
+  await assert.rejects(() => runInstall([], e), /ours-daemon exited 1/);
   assert.ok(e.recorder.ran.some((c) => c.join(' ').includes('daemon install-service')));
   assert.deepEqual(
     e.recorder.ran.filter((c) => c.join(' ').includes('daemon start')),
-    [['ours', 'daemon', 'start', '--config', join(OURS, 'config.json')]],
+    [['ours-daemon', 'start', '--config', join(OURS, 'config.json')]],
     'one recovery attempt after the launchd adapter failure',
   );
   assert.match(said(e), /your daemon is running again/);

@@ -580,8 +580,9 @@ export function networkEffects(effects) {
     return { ...common, OURS_MESSENGER_STATE_DIR: state, ...(record.messengerIdentity ? { OURS_MESSENGER_IDENTITY: record.messengerIdentity } : {}), OURS_MESSENGER_PORT: String(record.messengerPort), OURS_MESSENGER_HOST: '127.0.0.1', OURS_MESSENGER_PUBLIC_ORIGIN: `http://127.0.0.1:${record.messengerPort}` };
   };
   const ownerCommand = (record, service, op, options = {}) => {
-    const name = { daemon: 'ours', telegram: 'ours-tg-connector', cowork: 'ours-cowork' }[service];
-    const args = service === 'daemon' ? ['daemon', op, ...(['install-service', 'uninstall-service'].includes(op) ? ['--yes'] : []), '--config', record.configPath, '--state-dir', installationPaths(record).daemon, '--json'] : [op];
+    const daemonBinary = existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours';
+    const name = { daemon: daemonBinary, telegram: 'ours-tg-connector', cowork: 'ours-cowork' }[service];
+    const args = service === 'daemon' ? [...(daemonBinary === 'ours' ? ['daemon'] : []), op, ...(['install-service', 'uninstall-service'].includes(op) ? ['--yes'] : []), '--config', record.configPath, '--state-dir', installationPaths(record).daemon, '--json'] : [op];
     return effects.run(bin(record, name), args, { ...options, env: localEnv(record, service) });
   };
   const requireCleanContainerExit = async (record, selected) => {
@@ -937,9 +938,9 @@ export function networkEffects(effects) {
         return;
       }
       const options = { env: localEnv(record), sensitive: true };
-      if (operation !== 'access-issue') return effects.run(bin(record, 'ours'), ['config', operation, '--config', record.configPath, ...(operation === 'access-replace' ? ['--confirm'] : migrate ? ['--migrate'] : []), '--json'], options);
+      if (operation !== 'access-issue') return effects.run(bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'), ['config', operation, '--config', record.configPath, ...(operation === 'access-replace' ? ['--confirm'] : migrate ? ['--migrate'] : []), '--json'], options);
       const outputs = output ? [output] : [join(installationPaths(record).daemon, 'daemon-token'), ...['telegram', 'cowork', 'messenger'].map(s => installationPaths(record).credentials[s])];
-      for (const path of outputs) await effects.run(bin(record, 'ours'), ['config', operation, '--config', record.configPath, '--output', path, ...(output ? [] : ['--replace']), '--json'], options);
+      for (const path of outputs) await effects.run(bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'), ['config', operation, '--config', record.configPath, '--output', path, ...(output ? [] : ['--replace']), '--json'], options);
     },
     async recordRuntimeBuild(record) {
       if (record.mode === 'docker') return; // Image preparation records its build.
@@ -983,7 +984,7 @@ export function networkEffects(effects) {
         await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/maintenance/state-operation.mjs'), ...command], {
           env: { ...localEnv(record), OURS_STATE_DOMAIN: args.domain,
             OURS_STATE_ROOT: join(record.root, 'storage'), OURS_LIVE_ROOT: ['server', 'daemon'].includes(args.domain) ? paths.state : paths[args.domain],
-            OURS_BUILD_ROOT: record.workDir, OURS_CLI_PATH: bin(record, 'ours'),
+            OURS_BUILD_ROOT: record.workDir, OURS_CLI_PATH: bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'),
             OURS_DAEMON_CONFIG: record.configPath, OURS_COWORK_CLI_PATH: bin(record, 'ours-cowork'),
             OURS_COWORK_CONFIG: join(paths.cowork, 'config.json'), OURS_COWORK_STATE_DIR: paths.cowork },
         });
@@ -1068,7 +1069,7 @@ export function networkEffects(effects) {
       await ownerCommand(record, 'cowork', 'prepare-backup');
     },
     async retainConvertedPackageAuthority(record, daemon) {
-      await effects.run(bin(record, 'ours'), [
+      await effects.run(bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'), [
         'config', 'access-retain', '--config', record.configPath,
         '--target-state-dir', daemon, '--json',
       ], { env: localEnv(record), sensitive: true });

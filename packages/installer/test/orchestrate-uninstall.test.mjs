@@ -147,16 +147,16 @@ test('a daemon the CLI did not start is named, not signalled', async () => {
 });
 
 test('a managed daemon is stopped, whichever daemon wrote the record', async () => {
-  // EITHER record proves it: ours-cli-daemon.json is what `ours daemon start`
+  // EITHER record proves it: ours-cli-daemon.json is what `ours-daemon start`
   // writes now, while daemon.pid is retained only as prerelease migration
   // evidence. Reading only one would decline to stop a daemon we can stop.
   const byCli = fx({ json: { [join(OURS, 'config.json')]: CFG, [join(OURS, 'ours-cli-daemon.json')]: { pid: 1, port: 3050 } } });
   await runUninstall(['--state-dir', OURS], byCli);
-  assert.ok(byCli.recorder.ran.some((c) => c.join(' ').startsWith('ours daemon stop ')), 'the CLI-written record still counts');
+  assert.ok(byCli.recorder.ran.some((c) => c.join(' ').startsWith('ours-daemon stop ')), 'the CLI-written record still counts');
 
   const byMcp = fx({ json: { [join(OURS, 'config.json')]: CFG }, text: { [join(OURS, 'daemon.pid')]: '4242' } });
   await runUninstall(['--state-dir', OURS], byMcp);
-  assert.ok(byMcp.recorder.ran.some((c) => c.join(' ').startsWith('ours daemon stop ')), 'and so does the legacy pid file');
+  assert.ok(byMcp.recorder.ran.some((c) => c.join(' ').startsWith('ours-daemon stop ')), 'and so does the legacy pid file');
 });
 
 test('--dry-run removes, stops and deletes nothing', async () => {
@@ -330,9 +330,9 @@ test('a daemon that will not go away leaves its connectors attached, not detache
       [TG_CFG]: { daemonUrl: 'http://127.0.0.1:3050', daemonStateDir: OURS, botToken: 'secret' },
     },
     answers: [true],
-    runFails: ['ours daemon uninstall-service'],
+    runFails: ['ours-daemon uninstall-service'],
   });
-  await assert.rejects(() => runUninstall(['--state-dir', OURS], e), /ours exited 1/,
+  await assert.rejects(() => runUninstall(['--state-dir', OURS], e), /ours-daemon exited 1/,
     'the original failure is what propagates, never the recovery');
   const [path, snapshot] = e.recorder.restored[0];
   assert.equal(path, TG_CFG);
@@ -352,9 +352,9 @@ test('a re-apply that itself fails is reported and does not replace the real fau
       [COWORK_CFG]: { stateDir: '/home/me/.ours-cowork', daemon: { mode: 'external', endpoint: 'http://127.0.0.1:3050', stateDir: OURS } },
     },
     answers: [true],
-    runFails: ['ours daemon uninstall-service', 'ours-cowork install-service'],
+    runFails: ['ours-daemon uninstall-service', 'ours-cowork install-service'],
   });
-  await assert.rejects(() => runUninstall(['--state-dir', OURS], e), /ours exited 1/);
+  await assert.rejects(() => runUninstall(['--state-dir', OURS], e), /ours-daemon exited 1/);
   assert.deepEqual(e.recorder.restored.map(([p]) => p), [COWORK_CFG], 'the bytes still went back');
   assert.match(said(e), /could NOT re-apply cowork's service/);
   assert.match(said(e), /run 'ours-cowork install-service' yourself/);
@@ -375,7 +375,7 @@ test('a dry-run detach journals nothing, because it wrote nothing', async () => 
   const e = fx({
     json: { [join(OURS, 'config.json')]: CFG, [TG_CFG]: { daemonStateDir: OURS } },
     answers: [true],
-    runFails: ['ours daemon uninstall-service'],
+    runFails: ['ours-daemon uninstall-service'],
   });
   assert.equal(await runUninstall(['--state-dir', OURS, '--dry-run'], e), EXIT_OK);
   assert.deepEqual(e.recorder.restored, []);
@@ -485,7 +485,7 @@ test('OURS_UNINSTALL_DAEMON=yes removes the daemon and, unset, no harness plugin
   });
   assert.equal(await runUninstall(['--state-dir', OURS], e), EXIT_OK);
   const ran = e.recorder.ran.map((c) => c.join(' '));
-  assert.ok(ran.some((c) => c.startsWith('ours daemon uninstall-service ')));
+  assert.ok(ran.some((c) => c.startsWith('ours-daemon uninstall-service ')));
   assert.deepEqual(e.recorder.wroteText, [], 'no plugin config touched');
   assert.deepEqual(e.recorder.removed, [], 'no plugin directory deleted');
   assert.ok(!ran.includes('npm rm -g @ours.network/hermes'));
@@ -580,6 +580,6 @@ test('every platform removes the boot service through the shared CLI', async () 
   const e = fx({ json: { [join(OURS, 'config.json')]: CFG } });
   const onMac = { ...e, platform: { platform: 'darwin', release: '23.0.0' } };
   assert.equal(await runUninstall(['--state-dir', OURS], onMac), EXIT_OK);
-  assert.ok(e.recorder.ran.some((c) => c.join(' ').startsWith('ours daemon uninstall-service ')), 'attempted, not skipped');
+  assert.ok(e.recorder.ran.some((c) => c.join(' ').startsWith('ours-daemon uninstall-service ')), 'attempted, not skipped');
   assert.doesNotMatch(said(e), /nothing of ours to remove here/);
 });

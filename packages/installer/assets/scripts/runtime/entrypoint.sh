@@ -10,4 +10,4 @@ else
   exit "$status"
 fi
 node /opt/ours/docker/check-start.mjs
-exec node /opt/ours/node_modules/@ours.network/cli/dist/cli.js daemon serve
+exec node /opt/ours/node_modules/@ours.network/daemon/dist/cli.js serve
