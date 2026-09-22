@@ -5,6 +5,11 @@ const tuple = { endpoint: 'https://server.example:8443/', expectedInstanceId: '6
 test('HTTPS profile keeps server identity and credential, normalizing only origin', () => {
   assert.deepEqual(validateHostProfile(tuple), { ...tuple, endpoint: 'https://server.example:8443' });
 });
-for (const endpoint of ['ftp://server.example', 'wss://server.example', 'https://user:pass@server.example', 'https://server.example/path', 'https://server.example?q=1', 'https://server.example#fragment']) {
+for (const endpoint of ['ftp://server.example', 'wss://server.example', 'https://user:pass@server.example', 'https://server.example?q=1', 'https://server.example#fragment']) {
   test(`invalid profile origin rejects ${endpoint}`, () => assert.throws(() => validateHostProfile({ ...tuple, endpoint })));
 }
+
+test('HTTPS profile preserves a daemon URL prefix', () => {
+  const endpoint = 'https://server.example/base/daemon';
+  assert.deepEqual(validateHostProfile({...tuple, endpoint}), {...tuple, endpoint});
+});

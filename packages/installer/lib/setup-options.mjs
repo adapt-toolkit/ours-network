@@ -1,9 +1,10 @@
+import { serverBase } from './gateway.mjs';
 import { join, resolve, isAbsolute, dirname } from 'node:path';
 
 const scopes = ['all', 'server', 'client'];
 const integrations = ['codex', 'claude-code', 'fleet'];
 const valueFlags = new Map(Object.entries({
-  '--scope': 'scope', '--action': 'operation', '--mode': 'mode', '--state-dir': 'stateDir',
+  '--server-url': 'serverUrl', '--scope': 'scope', '--action': 'operation', '--mode': 'mode', '--state-dir': 'stateDir',
   '--identity-name': 'identityName', '--integrations': 'integrations', '--fleet-settings': 'fleetSettingsPath',
   '--config': 'config', '--sources': 'sources', '--migrate-from': 'migrateFrom', '--port': 'port', '--cowork-port': 'coworkPort', '--messenger-port': 'messengerPort',
 }));
@@ -40,6 +41,10 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
   if (missing.length) throw new Error(`Missing required setup options: ${missing.join(', ')}`);
   if (options.mode === 'native') options.mode = 'packages';
   if (server && !['packages', 'docker'].includes(options.mode)) throw new Error('Mode must be packages (or native) or docker');
+  if (options.serverUrl !== undefined) {
+    if (!server || options.mode !== 'docker' || options.operation !== 'install') throw new Error('--server-url requires Docker server installation');
+    options.serverUrl = serverBase(options.serverUrl);
+  }
   if (server && options.config !== undefined) throw new Error('--config is only valid for client scope');
   if (!server) for (const key of ['mode', 'stateDir', 'identityName', ...Object.keys(defaults), 'compatible', 'migrate']) {
     if (options[key] !== undefined) throw new Error(`${key} is only valid for server or all scope`);

@@ -53,6 +53,7 @@ export async function serverBuildTransition(record, args, effects) {
   }
   await stage('Verify retained state and identities', () => effects.validateServerBuildState(record));
   await stage('Restore previously running services and check readiness', () => effects.serverLifecycle(record, 'start', runningServices));
+  if (record.gateway && ['daemon', 'cowork', 'gateway'].every(name => runningServices.includes(name))) await stage('Verify authenticated gateway management', () => effects.verifyGateway(record));
   const completed = { ...record, sourcePolicyHash: candidate.sourcePolicyHash };
   delete completed.buildTransition;
   effects.writeJson(path, JSON.stringify(completed, null, 2) + '\n');

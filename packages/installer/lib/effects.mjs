@@ -20,6 +20,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { clientPackageNames, maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
 import { validateHostProfile } from './target.mjs';
+import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress } from './gateway.mjs';
 import { createServerOnboarding } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
@@ -537,6 +538,7 @@ export function networkEffects(effects) {
   const baseEnv = (record) => ({
     OURS_DAEMON_ID: record.instanceId,
     OURS_IMAGE: `${record.project}:runtime`,
+    OURS_GATEWAY_IMAGE: `${record.project}:gateway`,
     OURS_MAINTENANCE_IMAGE: `${record.project}:maintenance`,
     OURS_UID: String(record.uid ?? 1000), OURS_GID: String(record.gid ?? 1000),
     OURS_HOST_PORT: String(record.port ?? 3050),
@@ -548,6 +550,7 @@ export function networkEffects(effects) {
     'compose', '--project-directory', record.workDir, '--file', join(record.workDir,
       record.schema === 1 && existsSync(join(record.workDir, 'docker-compose.legacy.yaml'))
         ? 'docker-compose.legacy.yaml' : 'docker-compose.yaml'),
+    ...(record.gateway ? ['--file', join(record.workDir, 'docker-compose.gateway.yaml')] : []),
     '--project-name', record.project, ...args,
   ];
   const compose = (record, args, options = {}) => effects.run('docker', composeArgs(record, args),
@@ -630,7 +633,7 @@ export function networkEffects(effects) {
       const instanceId = env.OURS_DAEMON_ID || randomUUID();
       if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(instanceId)) throw new Error('OURS_DAEMON_ID must be a lowercase UUID');
       const project = `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
-      return { schema: 2, root, mode, instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES], port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
+      return { schema: 2, root, mode, instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES, ...(mode === 'docker' ? ['gateway'] : [])], ...(mode === 'docker' ? { gateway: { version: 1 } } : {}), port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
     },
     async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName } = {}) {
       if (existing) {
@@ -709,6 +712,44 @@ export function networkEffects(effects) {
       if (!retainConfig) writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
     },
     async qualifyDockerRuntime(record) { return qualifyDockerRuntime(record, effects); },
+    async prepareGateway(record) {
+      atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
+      atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
+      atomicWriteConfig(join(record.workDir, 'Dockerfile.gateway'), readFileSync(join(INSTALLER_ASSETS, 'Dockerfile.gateway'), 'utf8'));
+      await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+    },
+    async removeGatewayContainer(record) { await compose(record, ['rm', '-f', 'gateway']); },
+    async verifyGateway(record) {
+      const { prefix } = gatewayAddress(record);
+      const script = `const fs=require('node:fs');(async()=>{
+        const base=${JSON.stringify('http://gateway:8080' + prefix)};
+        const get=async(path,options={})=>{const r=await fetch(base+path,{...options,redirect:'error',signal:AbortSignal.timeout(5000)});if(!r.ok)throw Error('Gateway readiness HTTP '+r.status);return r.json();};
+        const selection=await get('/daemon/selection');
+        if(selection.instanceId!==${JSON.stringify(record.instanceId)})throw Error('Gateway daemon instance mismatch');
+        const denied=await fetch(base+'/cowork/management/rpc',{method:'POST',redirect:'error',signal:AbortSignal.timeout(5000),headers:{'content-type':'application/json'},body:'{}'});
+        await denied.body?.cancel();if(denied.status!==401)throw Error('Gateway management does not reject unauthenticated requests');
+        const token=fs.readFileSync('/var/lib/ours/daemon-token','utf8').trim();
+        const headers={'x-ours-api-token':token,'content-type':'application/json'};
+        const identities=await get('/daemon/identities',{headers});
+        if(!Array.isArray(identities.identities))throw Error('Gateway daemon API invalid');
+        const result=await get('/cowork/management/rpc',{method:'POST',headers,body:JSON.stringify({version:1,id:'installer-readiness',method:'room.list',params:{}})});
+        if(result.version!==1||result.id!=='installer-readiness'||!Array.isArray(result.result)||result.error)throw Error('Gateway Cowork management unavailable');
+      })().catch(()=>{console.error('Authenticated gateway readiness failed');process.exitCode=1;});`;
+      await compose(record, ['exec', '-T', 'daemon', 'node', '-e', script], { sensitive: true });
+    },
+    async qualifyGatewayRuntime(record) {
+      for (const [name, args, capability] of [
+        ['cowork', ['--json', 'capabilities'], 'cowork.http-management-v1'],
+        ['messenger-server', ['capabilities'], 'messenger.gateway-prefix-v1'],
+        ['tg-connector', ['capabilities'], 'telegram.gateway-listener-v1'],
+      ]) {
+        const probe = await effects.run('docker', ['run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node', `${record.project}:runtime`, `/opt/ours/node_modules/@ours.network/${name}/dist/cli.js`, ...args]);
+        let value; try { value = JSON.parse(probe.stdout); } catch {}
+        const capabilities = value?.result?.capabilities ?? value?.capabilities;
+        if (!Array.isArray(capabilities) || !capabilities.includes(capability))
+          throw new Error(`Selected ${name} artifact lacks ${capability}; select a compatible release before enabling the gateway`);
+      }
+    },
     async prepareInstallation(record, { runtimeOnly = false } = {}) {
       let copied = false;
       if (!existsSync(record.workDir)) {
@@ -723,12 +764,20 @@ export function networkEffects(effects) {
       else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
       if (record.mode === 'docker') {
         refreshDockerPolicyCopy(record);
+        if (record.gateway) {
+          atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
+          atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
+        }
         // The installer owns these dependencies in both installation modes.
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
         const image = await effects.run('docker', ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
         if (image.code !== 0) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         await effects.qualifyDockerRuntime(record);
+        if (record.gateway) {
+          await effects.qualifyGatewayRuntime(record);
+          await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+        }
         if (runtimeOnly) return;
         await compose(record, ['run', '--rm', '--no-deps', '-T', 'prepare', 'prepare']);
       } else {
@@ -869,7 +918,7 @@ export function networkEffects(effects) {
     async publishServerBuild(record, candidate) {
       const previous = join(candidate.root, 'previous-runtime');
       if (record.mode === 'docker') {
-        for (const target of ['runtime', 'maintenance']) {
+        for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
           const retained = `${candidate.project}:previous-${target}`;
           const found = await effects.run('docker', ['image', 'inspect', retained], { allowCodes: [1] });
           if (found.code !== 0) {
@@ -890,7 +939,7 @@ export function networkEffects(effects) {
         renameSync(candidate.workDir, record.workDir);
       } else privateDirectory(record.workDir);
       if (record.mode === 'docker') {
-        for (const target of ['runtime', 'maintenance']) {
+        for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
           await effects.run('docker', ['tag', `${candidate.project}:${target}`, `${record.project}:${target}`]);
         }
       }
@@ -905,7 +954,7 @@ export function networkEffects(effects) {
     },
     async discardServerBuild(candidate) {
       if (candidate.mode === 'docker') {
-        for (const target of ['runtime', 'maintenance', 'previous-runtime', 'previous-maintenance']) {
+        for (const target of ['runtime', 'maintenance', 'previous-runtime', 'previous-maintenance', ...(candidate.gateway ? ['gateway', 'previous-gateway'] : [])]) {
           const image = `${candidate.project}:${target}`;
           const found = await effects.run('docker', ['image', 'inspect', image], { allowCodes: [1] });
           if (found.code === 0) await effects.run('docker', ['image', 'rm', image]);
@@ -1155,14 +1204,17 @@ export function networkEffects(effects) {
       return JSON.parse(readFileSync(path, 'utf8'));
     },
     async discoverClientProfile(endpoint, credentialPath) {
-      const url = new URL(endpoint);
-      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
-        throw new Error('Client endpoint must be an HTTP or HTTPS origin');
-      const response = await fetch(`${url.origin}/selection`, { redirect: 'error', signal: AbortSignal.timeout(5000) });
+      const base = serverBase(endpoint);
+      const request = path => fetch(`${base}${path}`, { redirect: 'error', signal: AbortSignal.timeout(5000) });
+      const discovery = await request('/.well-known/ours');
+      if (discovery.ok) return validateGatewayDiscovery(base, await discovery.json(), resolve(credentialPath));
+      // Only an absent discovery resource denotes a legacy direct daemon. Never
+      // reinterpret authentication, redirect, or malformed metadata as legacy.
+      if (discovery.status !== 404) throw new Error(`Gateway discovery answered HTTP ${discovery.status}`);
+      const response = await request('/selection');
       if (!response.ok) throw new Error(`Daemon selection answered HTTP ${response.status}`);
       const selection = await response.json();
-      // Full metadata and authenticated capability validation follows before publication.
-      return validateHostProfile({ endpoint: url.origin, expectedInstanceId: selection.instanceId, credentialPath: resolve(credentialPath) });
+      return validateHostProfile({ endpoint: base, expectedInstanceId: selection.instanceId, credentialPath: resolve(credentialPath) });
     },
     importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh = false }) {
       const root = join(home, '.ours-client');
@@ -1196,7 +1248,26 @@ export function networkEffects(effects) {
       atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
       return { configPath, profile: validateHostProfile(saved), settings };
     },
-    async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false, hostCliOnly = false } = {}) {
+    async qualifyInstalledGatewayClient(profile) {
+      if (!profile.installer?.integrations?.includes('fleet')) return;
+      let info;
+      try { info = JSON.parse((await effects.run('ours-fleet', ['version', '--json'])).stdout); } catch {}
+      if (!Array.isArray(info?.capabilities) || !info.capabilities.includes('cowork.http-management-v1'))
+        throw new Error('Installed Fleet does not support gateway HTTP management; upgrade Fleet before gateway-enable');
+    },
+    async qualifyGatewayClient({ profile, sourcesPath, sources, integrations, refresh = false }) {
+      if (!profile.serverUrl || !integrations.includes('fleet')) return;
+      // Acquire into the retained package cache without publishing a profile,
+      // credential, native command, or integration. Normal acquisition rechecks it.
+      const staging = mkdtempSync(join(home, '.ours-gateway-client-'));
+      try {
+        const stagedSources = join(staging, 'sources.json');
+        writeFileSync(stagedSources, sources ? JSON.stringify(sources, null, 2) + '\n' : readFileSync(sourcesPath), { mode: 0o600 });
+        await effects.acquireClientPackages(join(home, '.ours-client/profile.json'), stagedSources, integrations,
+          { refresh, gatewayServerUrl: profile.serverUrl, qualifyOnly: true });
+      } finally { rmSync(staging, { recursive: true, force: true }); }
+    },
+    async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false, hostCliOnly = false, gatewayServerUrl, qualifyOnly = false } = {}) {
       const manifest = JSON.parse(readFileSync(sourcesPath, 'utf8'));
       // Every client installation includes the native CLI and its SDK dependency.
       const selected = clientPackageNames(integrations);
@@ -1234,6 +1305,13 @@ export function networkEffects(effects) {
         writePrivateNew(join(root, '.packages-ready'), 'ready\n');
       }
       verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
+      if (integrations.includes('fleet') && (gatewayServerUrl || readHostProfileFile(configPath)?.serverUrl)) {
+        let info;
+        try { info = JSON.parse(readFileSync(join(root, 'node_modules/@ours.network/fleet/dist/build-info.json'), 'utf8')); } catch {}
+        if (!Array.isArray(info?.capabilities) || !info.capabilities.includes('cowork.http-management-v1'))
+          throw new Error('Selected Fleet artifact does not support gateway HTTP management; select a compatible client release');
+      }
+      if (qualifyOnly) return;
       const cliPolicy = hostCliOnly ? null : hostCliPolicy(manifest);
       // Local acquisition alone does not publish native commands. Use the user's
       // configured npm prefix and retained dependency closure, including on retry.

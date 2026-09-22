@@ -1,3 +1,4 @@
+import { gatewayAddress } from './gateway.mjs';
 import { inspectLegacyMigration } from './legacy-migration.mjs';
 import { join } from 'node:path';
 import { parseSetupArgs, collectSetupOptions, validateSetupOptions } from './setup-options.mjs';
@@ -10,7 +11,7 @@ import { USAGE } from './usage.mjs';
 import { validateIdentityName } from './server-onboarding.mjs';
 import { validateFleetSettings } from './fleet-settings.mjs';
 
-const maintenance = new Set(['status', 'start', 'stop', 'restart', 'rebuild', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
+const maintenance = new Set(['status', 'start', 'stop', 'restart', 'rebuild', 'gateway-enable', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
 
 export function completeReleasePolicy(retained, supplied) {
   if (retained?.release) {
@@ -67,7 +68,7 @@ export async function prepareSetupPlan(options, effects) {
     }
     // Reject a local client already attached to another server before changing the server.
     const saved = options.scope === 'all' ? effects.readManagedClientProfile() : null;
-    if (saved && (!plan.existing || saved.expectedInstanceId !== plan.existing.instanceId || saved.endpoint !== `http://127.0.0.1:${plan.port}`)) {
+    if (saved && (!plan.existing || saved.expectedInstanceId !== plan.existing.instanceId || saved.endpoint !== (plan.existing?.gateway ? gatewayAddress(plan.existing).base + '/daemon' : `http://127.0.0.1:${plan.port}`))) {
       throw new InstallUsageError('This user already has clients attached to a different server; their saved connection was not changed');
     }
   } else {

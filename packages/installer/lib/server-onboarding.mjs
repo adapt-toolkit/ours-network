@@ -1,3 +1,4 @@
+import { gatewayAddress } from './gateway.mjs';
 /** Human bootstrap and local client handoff through the existing owner interfaces. */
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
@@ -82,7 +83,8 @@ export function createServerOnboarding(effects, { compose, localEnv, bin }) {
         const settings = JSON.parse(readFileSync(fleetSettingsPath, 'utf8'));
         if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Fleet settings must be a JSON object');
       }
-      const endpoint = `http://127.0.0.1:${record.port}`;
+      const serverUrl = record.gateway ? gatewayAddress(record).base : undefined;
+      const endpoint = serverUrl ? `${serverUrl}/daemon` : `http://127.0.0.1:${record.port}`;
       const current = effects.readManagedClientProfile();
       if (current && (current.endpoint !== endpoint || current.expectedInstanceId !== record.instanceId)) throw new Error('Managed client already selects another server; no credential was issued');
       privatePath(record.root, true);
@@ -93,13 +95,16 @@ export function createServerOnboarding(effects, { compose, localEnv, bin }) {
       const published = join(root, 'issued-' + randomUUID());
       const credential = join(stage, 'credential');
       try {
-        effects.out?.('Issuing a separate local client credential with the retained server authority.');
-        try { await effects.serverAccess(record, 'access-issue', { output: credential }); }
-        catch { throw new Error('Client credential issuance failed; existing profiles were retained'); }
-        const stat = privatePath(credential);
-        if (stat.size > 4096 || !readFileSync(credential, 'utf8').trim()) throw new Error('Issued client credential is empty or invalid');
+        if (!current) {
+          effects.out?.('Issuing a separate local client credential with the retained server authority.');
+          try { await effects.serverAccess(record, 'access-issue', { output: credential }); }
+          catch { throw new Error('Client credential issuance failed; existing profiles were retained'); }
+        }
+        const retainedCredential = current?.credentialPath ?? credential;
+        const stat = privatePath(retainedCredential);
+        if (stat.size > 4096 || !readFileSync(retainedCredential, 'utf8').trim()) throw new Error('Issued client credential is empty or invalid');
         const profile = {
-          ...validateHostProfile({ endpoint, expectedInstanceId: record.instanceId, credentialPath: join(published, 'credential') }),
+          ...validateHostProfile({ ...(serverUrl ? { serverUrl } : {}), endpoint, expectedInstanceId: record.instanceId, credentialPath: current?.credentialPath ?? join(published, 'credential') }),
           installer: { integrations: [...integrations], ...(fleetSettingsPath !== undefined ? { fleetSettingsPath } : {}) },
         };
         writeFileSync(join(stage, 'profile.json'), JSON.stringify(profile, null, 2) + '\n', { flag: 'wx', mode: 0o600 });

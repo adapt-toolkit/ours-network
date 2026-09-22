@@ -1,3 +1,4 @@
+import { serverBase } from './gateway.mjs';
 // ours-install v3 — argument handling and daemon detection.
 //
 // Pure argument handling and daemon-target selection. The orchestrator
@@ -85,17 +86,23 @@ export function validateHostProfile(value) {
   const mixed = LEGACY_PROFILE_KEYS.filter((key) => Object.hasOwn(value, key));
   if (mixed.length) throw profileError(`legacy selection keys cannot be mixed with a host profile (${mixed.join(', ')}).`);
   const { endpoint, expectedInstanceId, credentialPath } = value;
-  if (typeof endpoint !== 'string' || endpoint.trim() !== endpoint || endpoint === '') throw profileError('endpoint must be a non-empty HTTP or HTTPS origin.');
+  if (typeof endpoint !== 'string' || endpoint.trim() !== endpoint || endpoint === '') throw profileError('endpoint must be a non-empty HTTP or HTTPS base URL.');
   if (typeof expectedInstanceId !== 'string' || !PROFILE_UUID.test(expectedInstanceId)) throw profileError('expectedInstanceId must be a lowercase UUID.');
   if (typeof credentialPath !== 'string' || credentialPath === '' || !credentialPath.startsWith('/') || resolve(credentialPath) !== credentialPath) {
     throw profileError('credentialPath must be a normalized absolute path.');
   }
   let url;
-  try { url = new URL(endpoint); } catch { throw profileError('endpoint must be an HTTP or HTTPS origin.'); }
-  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw profileError('endpoint must be an HTTP or HTTPS origin without credentials, path, query, or fragment.');
+  try { url = new URL(endpoint); } catch { throw profileError('endpoint must be an HTTP or HTTPS base URL.'); }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || url.search || url.hash) {
+    throw profileError('endpoint must be an HTTP or HTTPS base URL without credentials, query, or fragment.');
   }
-  return { endpoint: url.origin, expectedInstanceId, credentialPath };
+  const endpointBase = serverBase(endpoint);
+  if (value.serverUrl !== undefined) {
+    const serverUrl = serverBase(value.serverUrl);
+    if (endpointBase !== serverUrl + '/daemon') throw profileError('endpoint must select serverUrl/daemon.');
+    return { serverUrl, endpoint: endpointBase, expectedInstanceId, credentialPath };
+  }
+  return { endpoint: endpointBase, expectedInstanceId, credentialPath };
 }
 
 export function resolveProfileSelection({ args, env = {}, home = homedir(), exists, readProfile }) {
@@ -454,10 +461,11 @@ export function searchFreePort(isTaken, { floor = FREE_PORT_FLOOR, reserved = IN
 export function parseNetworkArgs(argv) {
   if (!['server', 'client'].includes(argv[0])) return null;
   const [role, operation] = argv;
-  const operations = role === 'client' ? ['install'] : ['install', 'status', 'start', 'stop', 'restart', 'access-issue', 'access-replace', 'backup', 'restore', 'reset', 'update', 'rebuild'];
+  const operations = role === 'client' ? ['install'] : ['install', 'status', 'start', 'stop', 'restart', 'access-issue', 'access-replace', 'backup', 'restore', 'reset', 'update', 'rebuild', 'gateway-enable'];
   if (!operations.includes(operation)) throw new InstallUsageError(`Unsupported ${role} operation: ${operation ?? '(missing)'}`);
   const allowed = role === 'client' ? ['config'] : ['state-dir'];
   if (role === 'server' && operation === 'install') allowed.push('mode', 'sources', 'migrate');
+  if (role === 'server' && ['install', 'gateway-enable'].includes(operation)) allowed.push('server-url');
   if (operation === 'access-issue') allowed.push('output');
   if (['access-replace', 'reset'].includes(operation)) allowed.push('confirm');
   if (['restore', 'update'].includes(operation)) allowed.push('compatible');
@@ -486,7 +494,7 @@ export function parseNetworkArgs(argv) {
     } else {
       const value = inline ?? argv[++i];
       if (!value || value.startsWith('--')) throw new InstallUsageError(`--${name} requires a value`);
-      result[key] = name === 'mode' ? value : resolve(value);
+      result[key] = name === 'mode' ? value : name === 'server-url' ? serverBase(value) : resolve(value);
     }
   }
   const required = role === 'client' ? [] : ['stateDir'];

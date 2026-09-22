@@ -1,3 +1,4 @@
+import { gatewayAddress } from './gateway.mjs';
 // ours-install v3 — daemon creation and boot-service installation.
 //
 // Pure planning code, like lib/target.mjs: the orchestrator
@@ -362,9 +363,14 @@ export function validateInstallation(record, root) {
     || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(record.instanceId ?? '')
     || !/^ours-[a-z0-9]+$/.test(record.project ?? '')
     || (record.sourcePolicyHash !== undefined && !/^[0-9a-f]{64}$/.test(record.sourcePolicyHash))
-    || !Array.isArray(record.services) || record.services[0] !== 'daemon' || new Set(record.services).size !== record.services.length || record.services.some(s => !SERVER_SERVICES.includes(s))) {
+    || !Array.isArray(record.services) || record.services[0] !== 'daemon' || new Set(record.services).size !== record.services.length || record.services.some(s => !SERVER_SERVICES.includes(s) && !(s === 'gateway' && record.gateway?.version === 1))) {
     throw new Error('Invalid or conflicting installation selection');
   }
+  if (record.gateway !== undefined && (record.schema !== 2 || record.mode !== 'docker' || record.gateway?.version !== 1
+    || Object.keys(record.gateway).some(key => !['version', 'serverUrl'].includes(key)) || record.services.at(-1) !== 'gateway')) {
+    throw new Error('Invalid gateway installation selection');
+  }
+  if (record.gateway) gatewayAddress(record);
   if (record.layoutConversion !== undefined) {
     // DEPRECATED (introduced in 2.0): legacy managed-layout conversion only.
     // Removal target: 3.0, after supported installs convert and upgrade inputs
@@ -402,7 +408,7 @@ export function validateInstallation(record, root) {
       throw new Error('Invalid server build transition');
     }
     validateInstallation(candidate, candidate.root);
-    for (const key of ['schema', 'mode', 'instanceId', 'services', 'port', 'coworkPort', 'messengerPort', 'messengerIdentity', 'uid', 'gid']) {
+    for (const key of ['schema', 'mode', 'instanceId', 'services', 'gateway', 'port', 'coworkPort', 'messengerPort', 'messengerIdentity', 'uid', 'gid']) {
       if (JSON.stringify(candidate[key]) !== JSON.stringify(record[key])) throw new Error('Conflicting server build candidate');
     }
   }

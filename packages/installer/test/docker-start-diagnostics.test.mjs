@@ -87,3 +87,23 @@ test('Docker image build streams progress while credential operations remain cap
   assert.equal(credentials.options.sensitive, true);
   assert.notEqual(credentials.options.stream, true);
 });
+
+for (const supported of [false,true]) test(`gateway preparation gates exact Cowork artifact before enabling listener: ${supported}`, async t => {
+  const root=mkdtempSync(join(tmpdir(),'ours-gateway-build-'));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const sourcesPath=join(root,'sources.json');writeFileSync(sourcesPath,JSON.stringify({packages:{}}));
+  const effects=realEffects({env:{},out:()=>{}}), calls=[];
+  effects.run=async(command,args,options)=>{
+    calls.push({command,args,options});
+    return {code:args.includes('inspect')?1:0,stdout:args.includes('capabilities')?JSON.stringify({ok:true,result:{capabilities:supported?['cowork.http-management-v1','messenger.gateway-prefix-v1','telegram.gateway-listener-v1']:[]}}):''};
+  };
+  effects.qualifyDockerRuntime=async()=>{};
+  const selected={...record,root,sourcesPath,workDir:join(root,'runtime'),gateway:{version:1},port:3050,coworkPort:3052};
+  if(supported) await effects.prepareInstallation(selected,{runtimeOnly:true});
+  else await assert.rejects(effects.prepareInstallation(selected,{runtimeOnly:true}),/lacks cowork.http-management/);
+  const probe=calls.find(c=>c.args.includes('capabilities'));
+  assert.ok(probe.args.includes(`${record.project}:runtime`));
+  assert.ok(probe.args.includes('none'));
+  assert.equal(calls.some(c=>c.args.includes('build')&&c.args.at(-1)==='gateway'),supported);
+  assert.equal(calls.some(c=>c.args.includes('up')),false);
+});

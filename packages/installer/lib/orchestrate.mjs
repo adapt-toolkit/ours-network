@@ -1,3 +1,4 @@
+import { enableGateway } from './gateway-transition.mjs';
 import { executeLegacyMigration } from './legacy-migration.mjs';
 // ours-install v3 — the orchestrator.
 //
@@ -1324,6 +1325,12 @@ async function executeServerCommand(args, effects) {
     record = effects.newInstallation(args.stateDir, args.mode);
     for (const key of ['port', 'coworkPort', 'messengerPort']) if (args[key] !== undefined) record[key] = args[key];
   }
+  if (effects.readJson(join(record.root, 'gateway-transition.json')) && args.operation !== 'gateway-enable' && args.operation !== 'status') throw new Error('Interrupted gateway migration; run server gateway-enable before other changes');
+  if (args.serverUrl && args.operation === 'install') {
+    if (!record.gateway) throw new Error('Use server gateway-enable to migrate an existing Docker installation');
+    if (existing && record.gateway.serverUrl !== args.serverUrl) throw new Error('Conflicting gateway server URL');
+    record.gateway = { ...record.gateway, serverUrl: args.serverUrl };
+  }
   if (record.layoutConversion && !['install', 'start', 'stop', 'status'].includes(args.operation)) {
     throw new Error('Layout conversion is incomplete; resume with server install or server start before changing state or authority');
   }
@@ -1390,7 +1397,10 @@ async function executeServerCommand(args, effects) {
     } else {
       await installStage('Service startup', 'Start the daemon and selected services, then check readiness.', () => effects.serverLifecycle(record, 'start'));
     }
+    if (record.gateway) await effects.verifyGateway(record);
     if (showInstallProgress) effects.out(progress(installStageCount, installStageCount, 'Installation complete', 'The selected services are ready.'));
+  } else if (args.operation === 'gateway-enable') {
+    await enableGateway(record, args, effects);
   } else if (['backup', 'restore', 'reset'].includes(args.operation)) {
     await effects.serverMaintenance(record, args);
   } else if (['update', 'rebuild'].includes(args.operation)) {
@@ -1479,6 +1489,7 @@ export async function runClientCommand(command, effects) {
     resolvedSources = await effects.resolveSourcePolicy(policy, 'client', selectedClients);
   }
   effects.out(progress(0, 4, 'Client configuration', 'Prepare the selected integrations and private connection profile.'));
+  if (profile.serverUrl && integrations.includes('fleet')) await effects.qualifyGatewayClient({ profile, sourcesPath, sources: resolvedSources, integrations, refresh: !!command.preset });
   const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh: !!command.preset });
   let phase = 'Validate saved server connection';
   try {

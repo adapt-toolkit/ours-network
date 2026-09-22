@@ -64,6 +64,7 @@ export function fx({
     isTaken: (port) => taken.includes(port),
     readJson: (p) => (Object.prototype.hasOwnProperty.call(json, p) ? json[p] : null),
     readManagedClientProfile: () => json[join(HOME, '.ours-client/profile.json')] ?? null,
+    qualifyGatewayClient: async () => {},
     importClientProfile: ({ profile: input, sourcesPath, sources, integrations, fleetSettingsPath }) => {
       const configPath = join(HOME, '.ours-client/profile.json');
       const settings = { sourcesPath: join(HOME, '.ours-client/sources.json'), integrations,
