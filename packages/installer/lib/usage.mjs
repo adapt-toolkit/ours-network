@@ -29,6 +29,7 @@ export const USAGE = `ours-install — interactive setup or complete CLI presets
   --config PATH             complete connection profile for client-only setup
   --sources PATH            explicit full development source policy override
   --port N                  daemon port (default 3050 on a fresh installation)
+  --server-url URL          external gateway URL (Docker install; configure authenticated entry separately)
   --cowork-port N           cowork port (default 3052)
   --messenger-port N        messenger port (default 8420)
   --compatible              required for server updates and legacy state migration
@@ -46,6 +47,7 @@ Fleet is configured but left stopped for operator review.
 
 Scoped maintenance:
   ours-install server status|start|stop|restart|rebuild --state-dir PATH
+  ours-install server gateway-enable --state-dir PATH [--server-url URL]
   ours-install server access-issue --state-dir PATH --output PATH
   ours-install server access-replace --state-dir PATH --confirm
   ours-install server backup|restore server|daemon|telegram|cowork|messenger LABEL --state-dir PATH

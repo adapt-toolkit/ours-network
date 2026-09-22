@@ -68,12 +68,12 @@ it. They exclude the daemon and its native database/ADAPT dependencies. Fleet
 runs beside the harnesses on the client machine and calls the daemon HTTP API.
 Client commands report an unavailable server and never start one automatically.
 
-The development policy selects published SDK `3.8.1-nightly.9`, CLI
-`2.8.1-nightly.7`, and daemon `3.8.1-nightly.1`, together with exact reviewed
-consumer source commits. The isolated host CLI pair uses these released client
-artifacts. The nightly release manifest selects the complete published consumer
-set and standalone daemon with verified SHA512 integrities. Packaged installers
-use this exact release set; mixed or unselected nested SDK versions remain rejected.
+The checked-in source policy and packed installer select the same exact published
+nightly release set, including SDK `3.8.1-nightly.10`, CLI `2.8.1-nightly.8`, and
+daemon `3.8.1-nightly.2`. The isolated host CLI pair uses these released client
+artifacts. `releases/nightly.json` binds the gateway-capable consumers and daemon
+to verified SHA512 integrities. Mixed or unselected nested ours versions remain
+rejected. An explicit `--sources` override remains available for development.
 
 ## Migrate an existing global installation
 
@@ -333,3 +333,113 @@ origin directly. UUID/capability checks still precede credential-bearing calls.
 This adds client HTTPS support, not an HTTPS daemon listener, certificate
 provisioning or automatic reverse-proxy configuration. Existing local HTTP and
 SSH-tunnel profiles continue to work.
+
+## One-URL Docker gateway
+
+New Docker installations use one loopback-published nginx port (default 3050).
+Clients import one `serverUrl`; their daemon endpoint is `<serverUrl>/daemon` and
+Fleet derives `<serverUrl>/cowork/management/rpc`. Cowork, Messenger and Telegram
+backend ports are internal only. Existing installations retain their prior layout
+on ordinary install/update. Select compatible releases before explicitly migrating:
+
+```sh
+ours-install server gateway-enable --state-dir /private/ours
+```
+
+Migration checks the installed Cowork, Messenger and Telegram capabilities before
+stopping services, verifies authenticated daemon and read-only Cowork management,
+and preserves the existing credential and client integration settings. Failure
+restores routing, client profile and prior service selection. An interrupted
+migration blocks other mutations: repeat `gateway-enable` to finish rollback,
+then run it again to attempt migration. The private `gateway-transition.json`
+retains recovery state until rollback or migration completes. Back up the whole
+installation using the normal server backup procedure before maintenance.
+
+For a nested external URL, pass `--server-url https://ours.example/base` during
+Docker install or `gateway-enable`. This sets browser origin and path configuration;
+it does **not** publish a public listener, provide TLS, or install external
+credentials. Configure the authenticated entry first and retain the `/base` path
+when proxying. A compatible release must contain these capabilities:
+`cowork.http-management-v1`, `messenger.gateway-prefix-v1`, and
+`telegram.gateway-listener-v1`. Older releases are rejected without enabling the
+new listener; no package version is silently substituted.
+
+### Authenticated external entry
+
+Messenger has no application authentication. Loopback access trusts local users;
+never forward this gateway publicly without authentication. All applications on
+this origin share one trust boundary: scripts or XSS in any application can make
+requests to the others. Cowork's entered server credential grants operator room
+administration and stays in memory until reload. Path prefixes do not isolate
+applications. Only expose this origin to trusted operators.
+
+A supported external entry is nginx TLS plus HTTP Basic authentication for browser
+paths, with machine paths left to their existing server-token checks. Create the
+password file using an interactive `htpasswd` prompt and make it readable by the
+proxy worker. Use real certificates and the matching `--server-url`. The inner
+gateway remains bound to `127.0.0.1:3050`; neither backend ports nor the inner
+listener should be externally forwarded. Example for `/base`:
+
+```nginx
+# In http {}:
+map $http_upgrade $ours_connection { default upgrade; '' close; }
+server {
+    listen 443 ssl;
+    server_name ours.example;
+    ssl_certificate /private/tls/fullchain.pem;
+    ssl_certificate_key /private/tls/key.pem;
+    auth_basic "ours operators";
+    auth_basic_user_file /private/ours-users;
+    access_log off;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $ours_connection;
+    proxy_http_version 1.1;
+    proxy_read_timeout 300s;
+    proxy_buffering off;
+    location = /base/.well-known/ours { auth_basic off; proxy_pass http://127.0.0.1:3050; }
+    location /base/daemon/ { auth_basic off; proxy_pass http://127.0.0.1:3050; }
+    location = /base/cowork/management/rpc { auth_basic off; proxy_pass http://127.0.0.1:3050; }
+    location /base/tg-connector/ { auth_basic off; proxy_pass http://127.0.0.1:3050; }
+    location /base/ { proxy_pass http://127.0.0.1:3050; }
+    location / { return 404; }
+}
+```
+
+Browser requests include same-origin proxy credentials. Fleet/SDK use the issued
+`X-Ours-Api-Token`, require no browser login, and reject redirects. An SSH tunnel
+to the loopback gateway is another private transport option, but every client must
+establish its own tunnel and use a URL/origin matching that tunnel; it is not
+automatic remote access. Do not treat a token entered in Cowork as Messenger auth.
+
+Publish compatible Cowork, Messenger, Telegram and Fleet artifacts before enabling
+gateway defaults in a qualified installer release. Gateway client setup acquires
+and checks Fleet before activating the managed profile or publishing native
+commands. Migration also checks the installed `ours-fleet version --json`
+capability before stopping services when the selected managed profile includes
+Fleet. Upgrade that executable first. The gate does not inventory differently pinned
+running Fleet instances or remote clients: upgrade every client using this server
+to a compatible Fleet release before cutover.
+
+### Cross-repository gateway qualification
+
+Build Cowork, Fleet, Messenger and Telegram checkouts with their locked dependencies.
+The real-service test uses disposable local daemon state, a local test broker,
+nginx Docker containers and Chromium; it never uses installed identities or tokens.
+It requires Linux Docker host networking and `openssl`. Set:
+
+```sh
+OURS_TEST_GATEWAY_SERVICES=1 \
+OURS_TEST_COWORK_ROOT=/checkouts/ours-cowork \
+OURS_TEST_FLEET_ROOT=/checkouts/ours-fleet \
+OURS_TEST_MESSENGER_ROOT=/checkouts/ours-messenger-server \
+OURS_TEST_TELEGRAM_ROOT=/checkouts/ours-tg-connector \
+OURS_TEST_BROWSER=/opt/google/chrome/chrome \
+node --test packages/installer/test/gateway-services.test.mjs
+```
+
+Run `OURS_TEST_DOCKER=1 node --test packages/installer/test/gateway-docker.test.mjs`
+separately for Compose port isolation with a client container. That routing test
+uses echo upstreams; the real-service test covers Fleet room operations, browser
+paths, external authentication and Messenger WebSocket access. Neither test is
+cross-platform Docker Desktop qualification or a live deployment test.

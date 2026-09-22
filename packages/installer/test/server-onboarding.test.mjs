@@ -89,3 +89,17 @@ test('insecure issued credentials are never published', async t => {
 for (const integrations of [[], ['unknown'], ['codex', 'codex']]) test('invalid client selection fails before any issuance: ' + JSON.stringify(integrations), async t => {
   const f = fixture(t); await assert.rejects(f.helper().prepareLocalClient(f.record, integrations), /integrations/i); assert.equal(f.calls.length, 0);
 });
+
+test('gateway handoff derives daemon prefix and retains existing managed credential on rerun', async t => {
+  const f = fixture(t);
+  f.record.mode = 'docker'; f.record.gateway = { version: 1 };
+  const first = await f.helper().prepareLocalClient(f.record, ['fleet']);
+  assert.equal(first.profile.serverUrl, 'http://127.0.0.1:3050');
+  assert.equal(first.profile.endpoint, 'http://127.0.0.1:3050/daemon');
+  f.effects.readManagedClientProfile = () => first.profile;
+  const second = await f.helper().prepareLocalClient(f.record, ['fleet', 'codex']);
+  assert.equal(f.calls.length, 1, 'reruns must not issue another credential');
+  assert.equal(second.profile.credentialPath, first.profile.credentialPath);
+  assert.deepEqual(second.profile.installer.integrations, ['fleet', 'codex']);
+  assert.equal(readFileSync(first.profile.credentialPath, 'utf8'), 'issued-client-secret\n');
+});

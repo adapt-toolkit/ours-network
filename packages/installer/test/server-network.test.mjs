@@ -621,6 +621,7 @@ test('acquired native commands are published before setup and retried without re
       }
       return { ok: true, code: 0, stdout: '' };
     };
+    writeFileSync(join(home, 'profile.json'), JSON.stringify({}), { mode: 0o600 });
     const acquire = () => effects.acquireClientPackages(join(home, 'profile.json'), sourcesPath, ['fleet', 'codex', 'claude-code']);
     await assert.rejects(acquire(), /configured npm prefix is not writable/);
     refuse = false;
@@ -937,4 +938,16 @@ test('MCP is selected with harness plugins and excluded from server, CLI-only an
     assert.deepEqual(plan.clientPackageNames([plugin]), ['sdk', 'cli', 'mcp', plugin]);
   }
   assert.equal(plan.clientPackageNames(['codex', 'claude-code']).filter(name => name === 'mcp').length, 1);
+});
+
+test('client gateway capability rejection occurs before importing active managed inputs', async () => {
+  const profile = { serverUrl: 'http://server:3050/base', endpoint: 'http://server:3050/base/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token', installer: { integrations: ['fleet'] } };
+  const effects = fx({ profile, json: { '/home/me/profile.json': profile } });
+  let imported = false;
+  effects.qualifyGatewayClient = async () => { throw new Error('old Fleet artifact'); };
+  effects.importClientProfile = () => { imported = true; throw new Error('must not import'); };
+  assert.equal(await runInstall(['client', 'install', '--config', '/home/me/profile.json'], effects), 2);
+  assert.equal(imported, false);
+  assert.deepEqual(effects.recorder.wrote, []);
+  assert.match(effects.recorder.out.join('\n'), /old Fleet artifact/);
 });
