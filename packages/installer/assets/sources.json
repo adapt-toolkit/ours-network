@@ -1,64 +1,101 @@
 {
-  "sources": {
-    "telegram": {
-      "type": "git",
-      "url": "https://github.com/adapt-toolkit/ours-tg-connector.git",
-      "commit": "0048a750c39967fe63556dccd95ab0ffede2a45b"
+  "release": {
+    "schema": 1,
+    "channel": "nightly",
+    "installerVersion": "1.2.0-nightly.3",
+    "packages": {
+      "@ours.network/sdk": {
+        "version": "3.8.1-nightly.10",
+        "integrity": "sha512-FrWOzqWuVVdHb2qNfG8GtDQkuVN8SsZfUrG/cG37j4qtvRtR4gHcvoeZhgcBB3OvrDh2jn3B+Y2bqTYoSTKwCw=="
+      },
+      "@ours.network/cli": {
+        "version": "2.8.1-nightly.8",
+        "integrity": "sha512-7kZ1EzLpWNsyAdil4NoZfQc5RtAcbfIqc0AgTaMyaGA+ayqZRVdarYuBOo+fOT6dwbLLlMvWpZQgVMtR7ND4Lg=="
+      },
+      "@ours.network/tg-connector": {
+        "version": "1.0.1-nightly.5",
+        "integrity": "sha512-WyoqnWg7Y2D45J2b4aJ20PydSKaSheC8NdVJTnrjQozsD4pW0ueDfuTwvuO5zx56KUqhhWXRVP7kztk9pycU5w=="
+      },
+      "@ours.network/cowork": {
+        "version": "1.3.2-nightly.20260922.70e6adf",
+        "integrity": "sha512-RpbbD9pxundiln4+3eD1wwMgXd13nM24CbaabFUQMartqpNMVm1cVzU6sGvuZ2hgMMRVwWbrmjk1gL7DtxiZ4g=="
+      },
+      "@ours.network/messenger-server": {
+        "version": "1.0.31-nightly.5",
+        "integrity": "sha512-4UtUeq+WNgTSQjeWKMAer7mSPeue8hUrY23AgnSwreBfVui4GjN/aJ6jS6Znz9v3nS5D9DM+faeW1JVHEpgyDg=="
+      },
+      "@ours.network/fleet": {
+        "version": "1.2.0-nightly.5",
+        "integrity": "sha512-wCM7oLwgpfnMuJv1/nB/2zhHqEqyl2x29gCo41RXKBMw7PJI64NVMpjeSu7SiCyjNlelAMOkRMGRcv+IdUnvgA=="
+      },
+      "@ours.network/mcp": {
+        "version": "1.2.0-nightly.6",
+        "integrity": "sha512-GzZ2u8U3Al76rVd2BY8/Shqy5myDxGY7bvuKlVeNwJBohszqza1Qre49CYx3rV+WnOVwcJkWlb8irxWK30MzwQ=="
+      },
+      "@ours.network/codex": {
+        "version": "1.2.0-nightly.6",
+        "integrity": "sha512-Ckv6aqsDkrTWKCcuFCR1Yzc0h50pR0q9ICLgyiFVmfKStXQh8j4D6cNT2wKayQHMCo1T+wkyKLgBXrIdpPDc8A=="
+      },
+      "@ours.network/claude-code": {
+        "version": "1.2.0-nightly.6",
+        "integrity": "sha512-Xt7mQw3R4yyhkExMsj9nvZX1dEXgpgYAKhgBfylAgA+nJ+2f4tgjwuIg+6fQEiMjq4mTNs0JUkkw2Kh6Hwn/PQ=="
+      },
+      "@ours.network/daemon": {
+        "version": "3.8.1-nightly.2",
+        "integrity": "sha512-QgQJJm9xNLtpMBKOK1iXyDxJxwsKkVZdJPNDY9ptYnV4QJWasYii+EIcTPbYY4w/Apr8Fpbi1k9eUMiinft3eg=="
+      }
     },
-    "cowork": {
-      "type": "git",
-      "url": "https://github.com/adapt-toolkit/ours-cowork.git",
-      "commit": "047ec1b79fd827ee6efb1757437711cd1fec6f6d"
-    },
-    "messenger": {
-      "type": "git",
-      "url": "https://github.com/adapt-toolkit/ours-messenger-server.git",
-      "commit": "00f0a1056efff51eea984e8906543f38ffe3c6cb"
-    },
-    "fleet": {
-      "type": "git",
-      "url": "https://github.com/adapt-toolkit/ours-fleet.git",
-      "commit": "81cfaf23ae844669a9b64b7c57ad908c15432196"
-    },
-    "mcp": {
-      "type": "git",
-      "url": "https://github.com/adapt-toolkit/ours-mcp.git",
-      "commit": "abebf0e691caddb059101dc70e087afe0dc2a0db"
+    "hostCli": {
+      "@ours.network/sdk": {
+        "version": "3.8.1-nightly.10",
+        "integrity": "sha512-FrWOzqWuVVdHb2qNfG8GtDQkuVN8SsZfUrG/cG37j4qtvRtR4gHcvoeZhgcBB3OvrDh2jn3B+Y2bqTYoSTKwCw=="
+      },
+      "@ours.network/cli": {
+        "version": "2.8.1-nightly.8",
+        "integrity": "sha512-7kZ1EzLpWNsyAdil4NoZfQc5RtAcbfIqc0AgTaMyaGA+ayqZRVdarYuBOo+fOT6dwbLLlMvWpZQgVMtR7ND4Lg=="
+      }
     }
   },
   "packages": {
     "@ours.network/sdk": {
       "type": "npm",
-      "version": "3.8.1-nightly.9"
+      "version": "3.8.1-nightly.10"
     },
     "@ours.network/cli": {
       "type": "npm",
-      "version": "2.8.1-nightly.7"
+      "version": "2.8.1-nightly.8"
     },
     "@ours.network/tg-connector": {
-      "source": "telegram"
+      "type": "npm",
+      "version": "1.0.1-nightly.5"
     },
     "@ours.network/cowork": {
-      "source": "cowork"
+      "type": "npm",
+      "version": "1.3.2-nightly.20260922.70e6adf"
     },
     "@ours.network/messenger-server": {
-      "source": "messenger"
+      "type": "npm",
+      "version": "1.0.31-nightly.5"
     },
     "@ours.network/fleet": {
-      "source": "fleet"
+      "type": "npm",
+      "version": "1.2.0-nightly.5"
     },
     "@ours.network/mcp": {
-      "source": "mcp"
+      "type": "npm",
+      "version": "1.2.0-nightly.6"
     },
     "@ours.network/codex": {
-      "source": "mcp"
+      "type": "npm",
+      "version": "1.2.0-nightly.6"
     },
     "@ours.network/claude-code": {
-      "source": "mcp"
+      "type": "npm",
+      "version": "1.2.0-nightly.6"
     },
     "@ours.network/daemon": {
       "type": "npm",
-      "version": "3.8.1-nightly.1"
+      "version": "3.8.1-nightly.2"
     }
   }
 }

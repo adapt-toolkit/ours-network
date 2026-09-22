@@ -68,12 +68,12 @@ it. They exclude the daemon and its native database/ADAPT dependencies. Fleet
 runs beside the harnesses on the client machine and calls the daemon HTTP API.
 Client commands report an unavailable server and never start one automatically.
 
-The development policy selects published SDK `3.8.1-nightly.9`, CLI
-`2.8.1-nightly.7`, and daemon `3.8.1-nightly.1`, together with exact reviewed
-consumer source commits. The isolated host CLI pair uses these released client
-artifacts. The nightly release manifest selects the complete published consumer
-set and standalone daemon with verified SHA512 integrities. Packaged installers
-use this exact release set; mixed or unselected nested SDK versions remain rejected.
+The checked-in source policy and packed installer select the same exact published
+nightly release set, including SDK `3.8.1-nightly.10`, CLI `2.8.1-nightly.8`, and
+daemon `3.8.1-nightly.2`. The isolated host CLI pair uses these released client
+artifacts. `releases/nightly.json` binds the gateway-capable consumers and daemon
+to verified SHA512 integrities. Mixed or unselected nested ours versions remain
+rejected. An explicit `--sources` override remains available for development.
 
 ## Migrate an existing global installation
 
