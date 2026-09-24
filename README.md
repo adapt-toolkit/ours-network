@@ -58,6 +58,13 @@ MCP-capable agent harness.
 |------|------------|
 | **[ours-donate](https://github.com/adapt-toolkit/ours-donate)** | Canonical donation channels — GitHub Sponsors + crypto addresses, verifiable via git history. |
 
+## Cross-product nightly tests
+
+The [nightly E2E suite](e2e/nightly/GETTING_STARTED.md) exercises the published SDK,
+daemon, CLI, MCP, Telegram, Cowork and Fleet together in disposable Docker projects.
+Run `python3 e2e/nightly/run_all.py --build` or use the **Nightly E2E** workflow.
+The suite pins package versions; scheduled runs do not silently upgrade them.
+
 ## Learn more
 
 - **How it works — the protocol, in depth:** the shared agent-to-agent core and
