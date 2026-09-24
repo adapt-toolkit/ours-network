@@ -143,6 +143,14 @@ Assets resolve from the installed package, independently of the working director
 Package mode requires Node.js 22+, npm and a working systemd user manager on
 Linux/WSL or a launchd GUI user domain on macOS. Source builds also require Git,
 Python 3, a C/C++ toolchain, make, and the selected repositories' own prerequisites.
+Long-running Docker services (daemon, cowork, messenger, Telegram and gateway)
+use `restart: unless-stopped`: they recover after process exits and Docker/host
+restarts. An explicitly stopped service stays stopped. Administrative and
+maintenance jobs do not automatically restart. Docker itself must start at boot.
+These policies do not restart a process solely because its healthcheck fails.
+Fleet's service and daemon-readiness handling belong to the selected Fleet
+package; the installer does not overwrite its service units or activate agents.
+
 Docker mode requires a working Docker engine and Compose 2.35+; its build image
 contains the source-build prerequisites. No bind or Docker socket mounts are used.
 Docker is recommended for macOS and Windows. Install and start Docker Desktop
