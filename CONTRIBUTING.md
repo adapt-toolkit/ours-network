@@ -6,16 +6,16 @@ Thank you for your interest in ours.network. We welcome bug reports, feature dis
 
 - **Bug reports and ideas:** open an issue. Please include reproduction steps and your environment.
 - **Security issues:** do **not** open a public issue — see [SECURITY.md](./SECURITY.md).
-- **Code and documentation patches:** pull requests are welcome. Read the contribution terms below and record your acceptance in the PR; no separate CLA form is required.
+- **Code and documentation patches:** pull requests are welcome. The contribution terms below apply when you submit a PR, including later commits to the same PR; no separate CLA form or acceptance step is required.
 
-## The CLA, and why we require it
+## Why contribution terms are needed
 
 ours.network is licensed under the Functional Source License (FSL-1.1-Apache-2.0): source-available today and converting to Apache 2.0 in the future, with paid commercial licences available for organisations that need terms beyond the FSL. The commercial licences are what fund full-time maintenance of this project.
 
 For that model to work, Adapt Framework Solutions Ltd needs sufficient rights in
 external contributions, including commercial relicensing rights. The contribution
 terms below combine assignment of specified rights where effective with broad
-licensing. You accept them within the PR itself. Issues, discussion and pull
+licensing. No extra rights-acceptance step is required. Issues, discussion and pull
 requests are welcome; no separate CLA signing service is required.
 
 ## Pull request guidelines
@@ -23,38 +23,41 @@ requests are welcome; no separate CLA signing service is required.
 1. Open or comment on an issue first for anything non-trivial, so we can agree the approach before you write code.
 2. Keep PRs focused — one change per PR.
 3. Include tests for behavioural changes and update documentation affected by your change.
-4. Read the contribution terms and record acceptance in your PR (see Accepting in your PR below).
+4. Read the contribution terms below; they apply when you submit your PR and later commits to it.
 5. Use clear commit messages; reference the issue number.
 
 ## Code of conduct
 
 Be kind, be constructive, assume good faith. Maintainers may close issues or PRs that don't follow these guidelines.
 
-## Contribution rights and acceptance
+## Contribution rights
 
-**Contribution Terms v2 — 2026-09-24.** Pull requests are welcome. You can accept
-these terms in your PR description or a comment; no separate CLA form, signing
-service or bot is required. Missing acceptance can be resolved in the open PR.
+**Contribution Terms v3 — 2026-09-24.** Pull requests are welcome. Creating a PR
+is the contribution process: no separate CLA form, acceptance comment, checkbox,
+commit-SHA field, signature service or repeated confirmation is required.
 
-These terms are between you and **Adapt Framework Solutions Ltd** (the Company).
-They cover your code, documentation, tests, designs and other original material
-intentionally submitted for inclusion (the Contribution). They do not cover
-unrelated work, ordinary discussion or bug reports. A patch offered through an
-issue or review for inclusion follows the same terms.
+By submitting a pull request for inclusion in this project, you agree to these
+terms and make the grants below to **Adapt Framework Solutions Ltd** (the Company).
+Your Contribution is the code, documentation, tests, designs and other material
+you intentionally submit for inclusion through that PR, including all additional
+commits, amendments and revisions you later submit to the same PR. The PR identifies
+the scope; you do not need to list commit hashes. Ordinary discussion, bug reports,
+unrelated work and contributions to other PRs are outside that scope.
 
-By intentionally submitting your Contribution after reviewing and accepting
-these terms, you make the grants below. Use the acceptance statement in the PR
-template or under [Accepting in your PR](#accepting-in-your-pr) to record your
-agreement and intent to sign electronically. The PR and its identified commits
-record the Contribution covered by that acceptance.
+The terms in effect when you open the PR apply to your submissions to that PR,
+including later commits. A subsequent policy change does not silently change
+those terms or earlier grants. These terms do not retrospectively apply to PRs
+opened before they were published. Patches intentionally offered for inclusion
+through an issue or review follow the terms in effect for that submission.
 
 1. **Assignment.** You hereby assign to the Company all transferable copyright,
    database rights and design rights that you own in your original Contribution,
    worldwide for their full duration, including extensions and renewals, to the
    extent permitted by applicable law. Patents are licensed below, not assigned.
    This does not transfer your unrelated inventions, background materials,
-   trademarks or third-party rights. You will reasonably assist with additional
-   transfer documents required by law, at the Company's expense.
+   trademarks or third-party rights. For later contributions to the same PR, the
+   assignment takes effect when the rights arise and you submit that material,
+   to the extent permitted by applicable law.
 2. **Independent licence and fallback.** Whether or not the assignment is valid,
    you grant the Company a worldwide, non-exclusive, royalty-free, fully paid-up
    licence for the full duration of the rights you can license in the Contribution
@@ -83,10 +86,9 @@ record the Contribution covered by that acceptance.
    authorised by every relevant rights holder to make these grants; that they do
    not breach another agreement; and that, to your knowledge, your original
    material does not infringe others' rights. If an employer, client or co-author
-   owns rights, obtain its written authorisation covering these exact grants or
-   have its authorised representative sign before submission. Identify all such
-   rights holders and permissions. Disclose any known restriction, claim or
-   obligation that could prevent these grants; do not submit confidential material
+   owns rights, you must already have authority to grant those rights; your own
+   submission cannot transfer rights you do not control. Disclose any known
+   restriction, claim or obligation that could prevent these grants; do not submit confidential material
    or material you lack authority to provide. No promise of maintenance or support
    is required.
 6. **Third-party and background material.** Identify pre-existing material and
@@ -98,70 +100,31 @@ record the Contribution covered by that acceptance.
    represent it as wholly owned original work. Preserve required notices.
 7. **Existing and mandatory rights.** These terms do not revoke licences already
    granted to recipients, change this repository's [LICENSE](./LICENSE), or remove
-   third-party conditions. They do not retroactively assign earlier contributions.
+   third-party conditions. They do not change earlier agreements or cover other PRs.
    Nonwaivable statutory rights, including applicable termination rights, remain
    effective despite words such as "irrevocable" or "full duration" above.
 
-
-The assignment changes ownership of the rights it validly transfers. You retain
+The assignment changes ownership of rights it validly transfers. You retain
 excluded rights and may use released material under its applicable published
 licence; these terms do not promise a separate licence back. The independent
-licence permits the Company to incorporate and commercially relicense rights you
-can grant even where an assignment is ineffective. Neither grant lets you transfer
-an employer's, co-author's or third party's rights without authority.
+licence permits the Company to incorporate and commercially relicense rights
+you can grant even where assignment is ineffective. Your submission covers your
+own contributions and rights you are authorised to grant, not another author's
+or employer's rights merely because their work appears in the same PR.
 
-### Accepting in your PR
+### Legal effect
 
-Read these terms before submitting. Include this statement in the PR description
-or post it yourself as a comment. A maintainer can supply the commit and terms
-references for you to confirm:
-
-> I have read and agree to Contribution Terms v2 (2026-09-24) in CONTRIBUTING.md.
-> I intend my submission of this statement as my electronic signature accepting
-> those terms for my contributions in this PR at the commit SHA identified below.
-> I confirm that I own the granted rights or am authorised by their owners to
-> grant them, and have disclosed other owners and excluded material.
-
-The PR template provides space for references and disclosures. You may leave the
-commit SHA and terms link blank when opening the PR; a maintainer can fill them in.
-Before merge, confirm the identified contribution snapshot and exact version of
-CONTRIBUTING.md (linked at an immutable Git commit URL) in the PR. You do not need
-to find technical permalinks before submitting.
-If new contributions or authors are added, confirm the new commit SHA in the PR;
-prior acceptance is not silently extended to new material or changed terms.
-Co-authors who own rights must accept for their own contributions, or an authorised
-representative must identify whom they represent. An employee's personal agreement
-does not establish authority over employer-owned rights.
-
-You may open a PR before this information is complete. Maintainers will help
-resolve missing acceptance, authority or licence information in the PR before
-merging; there is no blanket closure of contribution intake. Where an employer
-owns the rights, its authorised representative can accept in the same PR flow.
-Do not post confidential authorisation documents or private personal details;
-arrange private verification with a maintainer if necessary.
-
-### Maintainer review and legal limits
-
-Before merging, check the affirmative acceptance, accepted terms version, covered
-commit SHA, relevant rights holders and disclosed third-party licences. Preserve
-a dated copy of the acceptance and exact terms with the contribution record;
-GitHub descriptions and comments can be edited. A template supplies notice and
-an acceptance prompt, not automatic verification or immutable evidence. No bot,
-required check or external signing service is asserted to be installed.
-
-Electronic acceptance can avoid separate paperwork, but the validity of an
-assignment depends on applicable law, intent to sign and the contributor's
-actual authority. Merely opening a PR without clear assent is not proof of a
-valid transfer. Maintainers must not claim ownership beyond rights validly
-obtained. Seek jurisdiction-specific legal review of the Company's full legal
-identity, execution requirements, moral rights and mandatory termination rules;
-resolve a specific ownership or formalities issue before relying on that transfer.
-The fallback licence itself also depends on valid assent and authority.
+These terms state the intended grants from PR submission. Whether submission
+establishes enforceable assent or satisfies assignment formalities depends on
+applicable law and the circumstances; this notice does not guarantee a valid
+ownership transfer for every PR or jurisdiction. The fallback licence also depends
+on valid assent and authority. These limits do not introduce a separate signing
+step or prevent contributors from opening PRs. Maintainers should not claim
+ownership beyond the rights actually obtained.
 
 ## Licence of contributions
 
 The repository's existing licences and notices continue to govern distributed
-material. These accepted terms additionally permit the Company to release covered
+material. These terms additionally provide for the Company to release covered
 contributions under other licences, including commercial terms, subject to
-third-party and nonwaivable rights. They do not change the repository's LICENSE
-or retroactively transfer earlier contributions.
+third-party and nonwaivable rights. They do not change the repository's LICENSE.
