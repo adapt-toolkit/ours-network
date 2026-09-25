@@ -17,6 +17,13 @@ function readJournal(root) {
   if (j.schema !== 1 || j.targetRoot !== root || !phases.includes(j.phase) || !Array.isArray(j.identities)) throw new Error('Invalid legacy migration journal');
   return j;
 }
+// Legacy cutover publishes a Docker/package launcher; Podman cutover is not supported.
+function rejectPodmanMigration(options, effects, ...records) {
+  if (options.containerEngine === 'podman' || records.some(record => record?.containerEngine === 'podman')
+      || effects.readJson(join(options.stateDir, 'installation.json'))?.containerEngine === 'podman') {
+    throw new Error('Legacy migration to Podman is not supported. Use a fresh Podman installation or migrate with Docker/packages.');
+  }
+}
 function selection(source) {
   return { env: { OURS_CONFIG: source.configPath, OURS_STATE_DIR: source.stateDir, OURS_PORT: String(source.config.port ?? 3050), OURS_API_TOKEN: undefined, OURS_DAEMON_ID: undefined, OURS_DAEMON_URL: undefined, OURS_DAEMON_CREDENTIAL_PATH: undefined }, sensitive: true };
 }
@@ -31,10 +38,11 @@ function validateIdentities(rows, source) {
 }
 
 export async function inspectLegacyMigration(options, effects, deps = {}) {
+  const journal = readJournal(options.stateDir);
+  rejectPodmanMigration(options, effects, journal?.record, options.legacyPlan?.journal?.record);
   const inspect = deps.inspectLegacyState ?? inspectLegacyState;
   await (deps.ensureLegacyLockSupport ?? ensureLegacyLockSupport)();
   const cliPlan = options.dryRun ? null : await (deps.inspectManagedCli ?? inspectManagedCli)(effects, options.stateDir);
-  const journal = readJournal(options.stateDir);
   if (journal) {
     if (journal.sourceConfig !== options.migrateFrom) throw new Error('Another legacy source is already selected for this target');
     return { journal, cliPlan, source: journal.phase === 'complete' ? null : { ...inspect(options.migrateFrom, options.stateDir), originalProgram: cliPlan?.originalProgram } };
@@ -80,12 +88,15 @@ export async function prepareMigrationCliRuntime(record, effects) {
 
 /** Called under the normal installation lock; retries never overwrite imported state. */
 export async function executeLegacyMigration(args, effects, install, deps = {}) {
+  const retainedJournal = readJournal(args.stateDir);
+  rejectPodmanMigration(args, effects, retainedJournal?.record, args.legacyPlan?.journal?.record);
   const stage = deps.stageLegacyState ?? stageLegacyState;
   const lock = deps.withLegacyStateLock ?? withLegacyStateLock;
   const save = (root, value) => (deps.atomicWriteConfig ?? atomicWriteConfig)(journalPath(root), JSON.stringify(value, null, 2) + '\n');
   const prepareCli = deps.prepareMigrationCliRuntime ?? prepareMigrationCliRuntime;
   const inspected = args.legacyPlan ?? await inspectLegacyMigration(args, effects, deps);
-  let journal = readJournal(args.stateDir) ?? inspected.journal;
+  let journal = retainedJournal ?? inspected.journal;
+  rejectPodmanMigration(args, effects, journal?.record);
   if (journal.phase === 'complete') {
     const retained = effects.readJson(join(args.stateDir, 'installation.json'));
     inspected.cliPlan.installerPath = await prepareCli(retained, effects);

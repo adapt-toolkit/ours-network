@@ -459,7 +459,10 @@ ours-install server install --mode docker --container-engine podman \
 and standalone Compose provider, plus the UID/GID mapping fingerprint. Records without `containerEngine` continue to
 use Docker. Package/client installs reject the engine option. Existing records
 cannot change engines through a flag or ambient connection change; automatic
-Docker-to-Podman data migration is not provided.
+Docker-to-Podman data migration is not provided. Legacy local-daemon migration
+(`--migrate-from`) to Podman is also unsupported and is refused before source
+shutdown or managed CLI publication, including migration retries. Use a fresh
+Podman installation, or migrate the legacy daemon with Docker/packages.
 
 Podman uses its native build command, with the same resolved Compose build
 context, target, architecture, arguments and secret references, followed by
