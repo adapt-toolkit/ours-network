@@ -1,3 +1,4 @@
+import { runContainer } from './container-engine.mjs';
 import * as fs from 'node:fs';
 import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -46,7 +47,7 @@ export async function convertDockerInstallation(record, operation, effects) {
   await effects.serverLifecycle(record, 'start', running);
   const cleanup = await effects.runDockerConversion(record, volumes, 'cleanup');
   if (cleanup.emptyVolumes.length) {
-    await effects.run('docker', ['volume', 'rm', ...cleanup.emptyVolumes.map(alias => volumes.sources[alias])]);
+    await runContainer(effects, record, ['volume', 'rm', ...cleanup.emptyVolumes.map(alias => volumes.sources[alias])]);
   }
   try {
     const stat = fs.lstatSync(source.configPath);

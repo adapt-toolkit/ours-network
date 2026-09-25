@@ -92,7 +92,7 @@ http {
   uwsgi_temp_path /tmp/uwsgi;
   scgi_temp_path /tmp/scgi;
   proxy_next_upstream off;
-  resolver 127.0.0.11 valid=5s ipv6=off;
+  resolver @@OURS_RESOLVERS@@ valid=5s;
   map $http_upgrade $connection_upgrade { default upgrade; '' close; }
   server {
     listen 8080;

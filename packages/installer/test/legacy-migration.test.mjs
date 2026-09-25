@@ -174,3 +174,33 @@ test('repeating a completed migration verifies retained identities without invok
   assert.equal(readFileSync(f.sourceConfig, 'utf8'), f.sourceConfigBytes);
   assert.equal(await f.run(), 0);
 });
+
+for (const dryRun of [false, true]) {
+  test(`Podman legacy migration is refused before inspection or execution (dryRun=${dryRun})`, async t => {
+    const f = fixture(t);
+    const args = { ...f.args, mode: 'docker', containerEngine: 'podman', dryRun };
+    await assert.rejects(inspectLegacyMigration(args, f.effects, f.deps), /Legacy migration to Podman is not supported/);
+    await assert.rejects(executeLegacyMigration({ ...args, legacyPlan: {} }, f.effects, f.install, f.deps), /Legacy migration to Podman is not supported/);
+    assert.deepEqual(f.events, []);
+    assert.equal(readFileSync(f.sourceConfig, 'utf8'), f.sourceConfigBytes);
+    assert.deepEqual(f.readJson(join(f.targetRoot, 'installation.json')), null);
+  });
+}
+
+for (const phase of ['prepared', 'stopped', 'copied', 'activating', 'verified', 'complete']) {
+  for (const location of ['journal', 'installation', 'legacyPlan']) {
+    test(`retained Podman ${location} refuses ${phase} migration before any effects`, async t => {
+      const f = fixture(t);
+      const journal = { schema: 1, targetRoot: f.targetRoot, sourceConfig: f.sourceConfig, phase, identities: f.identities };
+      const record = { mode: 'docker', containerEngine: 'podman', root: f.targetRoot };
+      if (location === 'journal') journal.record = record;
+      if (location === 'installation') writeFileSync(join(f.targetRoot, 'installation.json'), JSON.stringify(record), { mode: 0o600 });
+      if (location !== 'legacyPlan') writeFileSync(join(f.targetRoot, 'legacy-migration.json'), JSON.stringify(journal), { mode: 0o600 });
+      const args = { ...f.args, legacyPlan: { journal: { ...journal, ...(location === 'legacyPlan' ? { record } : {}) } } };
+      await assert.rejects(inspectLegacyMigration(args, f.effects, f.deps), /Legacy migration to Podman is not supported/);
+      await assert.rejects(executeLegacyMigration(args, f.effects, f.install, f.deps), /Legacy migration to Podman is not supported/);
+      assert.deepEqual(f.events, []);
+      assert.equal(readFileSync(f.sourceConfig, 'utf8'), f.sourceConfigBytes);
+    });
+  }
+}

@@ -443,3 +443,74 @@ separately for Compose port isolation with a client container. That routing test
 uses echo upstreams; the real-service test covers Fleet room operations, browser
 paths, external authentication and Messenger WebSocket access. Neither test is
 cross-platform Docker Desktop qualification or a live deployment test.
+
+### Rootless Podman (qualification in progress)
+
+Container installations can select a local Linux rootless backend explicitly:
+
+```sh
+export PODMAN_COMPOSE_PROVIDER=/absolute/path/to/docker-compose
+ours-install server install --mode docker --container-engine podman \
+  --state-dir "$HOME/.ours-server-podman" --identity-name "Your Name"
+```
+
+`mode: docker` remains the legacy container-layout name. `containerEngine` and
+`containerBinding` retain Podman, the invoking UID, native storage paths, socket
+and standalone Compose provider, plus the UID/GID mapping fingerprint. Records without `containerEngine` continue to
+use Docker. Package/client installs reject the engine option. Existing records
+cannot change engines through a flag or ambient connection change; automatic
+Docker-to-Podman data migration is not provided. Legacy local-daemon migration
+(`--migrate-from`) to Podman is also unsupported and is refused before source
+shutdown or managed CLI publication, including migration retries. Use a fresh
+Podman installation, or migrate the legacy daemon with Docker/packages.
+
+Podman uses its native build command, with the same resolved Compose build
+context, target, architecture, arguments and secret references, followed by
+Compose `--no-build` startup. It does not require the Docker CLI or daemon.
+The selected standalone Docker Compose provider must be version 2.35 or newer;
+version checks do not replace the behavioral capability probe. `podman-compose`
+is not an interchangeable provider for this implementation. Secrets sourced
+from environment variables use Podman's native build-secret mechanism, never
+build arguments or temporary copies.
+
+Prerequisites include a working rootless API socket, sufficient subordinate
+UID/GID mappings, and native volume-subpath isolation. Before setup/start, an
+isolated disposable project tests Compose `!reset`, health waiting, JSON status,
+service DNS, private UID-1000 storage and subpath isolation. A failed check stops
+installation rather than substituting the whole volume. Existing volumes must
+have this installation's project and volume labels. Docker contexts, unrelated
+containers and host directory ownership are not changed.
+
+Server boot recovery requires an enabled user `podman.socket`, an enabled
+`podman-restart.service` using `--filter should-start-on-boot=true`, and user
+linger. The standard user-service environment/default socket must select the
+same storage; custom XDG paths and sockets are rejected for server startup.
+The installer diagnoses missing prerequisites and never runs hidden sudo or
+rewrites the vendor unit. Long-running Podman services get `unless-stopped`;
+administration jobs do not. Stop/status remain available when boot prerequisites
+are missing, provided the retained backend is accessible. Runtime-only test
+harnesses may select a separate local socket with `OURS_PODMAN_SOCKET`; its
+storage must match native Podman and the selection cannot change afterward.
+
+Gateway images read and validate IPv4/IPv6 nameservers from their container at
+startup. Only the resolver placeholder is replaced; nginx variables and existing
+authentication/routes remain intact. UID 101, read-only rootfs, dropped
+capabilities and tmpfs are retained. Setup and start verify authenticated
+upstream requests in addition to liveness.
+
+This change is **not yet a fully qualified server-support release**. Debian's
+Podman 5.4.2 with Compose 5.5.1 failed subpath isolation and has incompatible boot
+recovery semantics. Podman 6.1.2 passed the isolated capability probe on native
+Linux amd64; production and prerelease-source builds, service lifecycle, rebuild and scoped maintenance also passed. See [validation evidence](ROOTLESS_PODMAN_VALIDATION.md). The full public installer/maintenance matrix,
+SELinux Enforcing, logout/reboot, explicit-stop recovery, and Docker regression
+matrix must all be recorded before declaring a supported engine/provider pair.
+The supplied ARM VM results are historical feasibility evidence, not this
+release's qualification.
+
+Opt-in gateway fixture (isolated project, only owned resources removed):
+
+```sh
+OURS_TEST_DOCKER=1 node --test test/gateway-docker.test.mjs
+PODMAN_COMPOSE_PROVIDER=/absolute/path/to/docker-compose \
+  OURS_TEST_PODMAN=1 node --test test/gateway-docker.test.mjs
+```

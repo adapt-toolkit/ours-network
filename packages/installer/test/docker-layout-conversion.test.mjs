@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 test('Docker layout staging separates complete MCP state and preserves original source and credentials', async () => {
-  const { stageDockerLayout, bindDockerLayout, prepareDockerLayout, cleanupDockerSource } = await import('../assets/scripts/maintenance/docker-layout-conversion.mjs');
+  const { stageDockerLayout, bindDockerLayout, prepareDockerLayout, cleanupDockerSource, validateDockerLayout } = await import('../assets/scripts/maintenance/docker-layout-conversion.mjs');
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'ours-docker-layout-')));
   const source = join(root, 'source');
   const staging = join(root, 'staging');
@@ -63,6 +63,17 @@ test('Docker layout staging separates complete MCP state and preserves original 
     await prepareDockerLayout(source, storage, 'original', { ...options, cli, configPath });
     const published = join(storage, 'state');
     const backup = fs.readFileSync(join(storage, 'backups/original/state.tar'));
+    const managedConfigPath = join(published, 'daemon/config.json');
+    const retainedConfig = JSON.parse(fs.readFileSync(managedConfigPath));
+    const freshConfig = { ...retainedConfig }; delete freshConfig.networkMcp;
+    write(managedConfigPath, JSON.stringify(freshConfig));
+    assert.doesNotThrow(() => validateDockerLayout(published, options), 'fresh installs have no embedded networkMcp');
+    for (const networkMcp of [null, {}, { ...retainedConfig.networkMcp, applicationConfigPath: '/external/config.json' }]) {
+      write(managedConfigPath, JSON.stringify({ ...freshConfig, networkMcp }));
+      assert.throws(() => validateDockerLayout(published, options), /configuration is inconsistent/);
+    }
+    write(managedConfigPath, JSON.stringify(retainedConfig));
+
     assert.equal(fs.readFileSync(join(published, 'mcp/other-state'), 'utf8'), 'entire MCP tree');
     assert.equal(JSON.parse(fs.readFileSync(join(published, 'daemon/config.json'))).networkMcp.applicationConfigPath, '/var/lib/ours-mcp/config.json');
     assert.deepEqual(fs.readFileSync(configPath), original);

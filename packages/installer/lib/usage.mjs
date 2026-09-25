@@ -22,6 +22,7 @@ export const USAGE = `ours-install — interactive setup or complete CLI presets
   --scope all|server|client   preset which parts to configure (default all)
   --action install|update    equivalent to the positional operation
   --mode docker|native      packages is also accepted for native mode
+  --container-engine docker|podman  server container backend (default Docker); retained for maintenance
   --state-dir PATH          installation root; required for all/server
   --identity-name NAME      desired Human name for a fresh server; existing root is retained
   --integrations LIST       codex,claude-code,fleet; use none to skip clients explicitly

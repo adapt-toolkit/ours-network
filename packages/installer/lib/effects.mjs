@@ -1,3 +1,5 @@
+import { qualifyPodman } from './podman-preflight.mjs';
+import { engineName, bindPodman, runContainer, nativeBuildCommands } from './container-engine.mjs';
 // ours-install v3 — the real side effects.
 //
 // Every mutation the installer can perform lives here and nowhere else, behind
@@ -551,14 +553,54 @@ export function networkEffects(effects) {
       record.schema === 1 && existsSync(join(record.workDir, 'docker-compose.legacy.yaml'))
         ? 'docker-compose.legacy.yaml' : 'docker-compose.yaml'),
     ...(record.gateway ? ['--file', join(record.workDir, 'docker-compose.gateway.yaml')] : []),
+    ...(engineName(record) === 'podman' ? ['--file', join(record.workDir, 'compose.podman.json')] : []),
     '--project-name', record.project, ...args,
   ];
-  const compose = (record, args, options = {}) => effects.run('docker', composeArgs(record, args),
-    { ...options, env: { ...baseEnv(record), ...options.env } });
+  const container = (record, args, options = {}) => runContainer(effects, record, args, options);
+  const compose = async (record, args, options = {}) => {
+    const selected = { ...options, env: { ...baseEnv(record), ...options.env } };
+    if (engineName(record) === 'podman' && args[0] === 'build') {
+      const result = await container(record, composeArgs(record, ['--profile', '*', 'config', '--format', 'json']), { env: selected.env });
+      for (const command of nativeBuildCommands(JSON.parse(result.stdout), args.slice(1), { ...env, ...selected.env })) await container(record, command, selected);
+      return { code: 0, stdout: '' };
+    }
+    if (engineName(record) === 'podman' && ['run', 'up'].includes(args[0])) {
+      const resolved = JSON.parse((await container(record, composeArgs(record, ['--profile', '*', 'config', '--format', 'json']), { env: selected.env })).stdout);
+      for (const [key, volume] of Object.entries(resolved.volumes ?? {})) {
+        if (volume.external) throw new Error('Unexpected external installation volume');
+        const name = volume.name ?? `${record.project}_${key}`;
+        const found = await container(record, ['volume', 'inspect', '--format', '{{json .}}', name], { allowCodes: [1] });
+        if (found.code === 1) continue;
+        const value = JSON.parse(found.stdout);
+        if (value.Name !== name || value.Labels?.['com.docker.compose.project'] !== record.project || value.Labels?.['com.docker.compose.volume'] !== key) throw new Error(`Refusing foreign volume: ${name}`);
+      }
+    }
+    // Compose run can implicitly build an absent administration image. Build
+    // its resolved target natively first, just like explicit build operations.
+    if (engineName(record) === 'podman' && args[0] === 'run') {
+      const resolved = JSON.parse((await container(record, composeArgs(record, ['--profile', '*', 'config', '--format', 'json']), { env: selected.env })).stdout);
+      const takesValue = new Set(['--name', '--entrypoint', '--env', '-e', '--user', '-u', '--workdir', '-w', '--volume', '-v', '--publish', '-p', '--label', '-l', '--pull']);
+      let name;
+      for (let i = 1; i < args.length; i++) {
+        if (takesValue.has(args[i])) { i++; continue; }
+        if (args[i].startsWith('-')) continue;
+        name = args[i]; break;
+      }
+      const service = resolved.services?.[name];
+      if (!service) throw new Error(`Unresolved Podman administration service: ${name}`);
+      if (service.build) {
+        const image = await container(record, ['image', 'inspect', service.image], { allowCodes: [1] });
+        if (image.code === 1) for (const command of nativeBuildCommands(resolved, [name], { ...env, ...selected.env })) await container(record, command, selected);
+      }
+    }
+    return container(record, composeArgs(record, args), selected);
+  };
   const dockerStartupError = async (record, service, cause) => {
     const args = ['logs', '--no-color', '--tail', '50', '--timestamps', service];
     const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
-    const command = `OURS_DAEMON_ID=${quote(record.instanceId)} docker ${composeArgs(record, args).map(quote).join(' ')}`;
+    const engine = engineName(record);
+    const prefix = engine === 'podman' ? ['--remote', '--url', `unix://${record.containerBinding.socket}`] : [];
+    const command = `OURS_DAEMON_ID=${quote(record.instanceId)} ${engine} ${[...prefix, ...composeArgs(record, args)].map(quote).join(' ')}`;
     let detail;
     try {
       const logs = await compose(record, args);
@@ -569,7 +611,7 @@ export function networkEffects(effects) {
     } catch {
       detail = 'Container logs could not be read.';
     }
-    return new Error(`Docker service "${service}" failed to start or become healthy.\n${detail}\nStartup error: ${cause.message}\nInspect logs: ${command}`, { cause });
+    return new Error(`${engine === 'podman' ? 'Podman' : 'Docker'} service "${service}" failed to start or become healthy.\n${detail}\nStartup error: ${cause.message}\nInspect logs: ${command}`, { cause });
   };
   const bin = (record, name) => join(record.workDir, 'node_modules', '.bin', name);
   const localEnv = (record, service = 'daemon') => {
@@ -591,7 +633,7 @@ export function networkEffects(effects) {
   const requireCleanContainerExit = async (record, selected) => {
     const containers = await compose(record, ['ps', '-aq', ...selected]);
     for (const id of containers.stdout.split(/\s+/).filter(Boolean)) {
-      const result = await effects.run('docker', ['inspect', '--format', '{{json .State}}', id]);
+      const result = await container(record, ['inspect', '--format', '{{json .State}}', id]);
       const state = JSON.parse(result.stdout);
       if (state.Status !== 'exited' || state.ExitCode !== 0 || state.OOMKilled !== false || state.Dead !== false) {
         throw new Error('Selected source container did not stop cleanly; state operation refused');
@@ -625,7 +667,7 @@ export function networkEffects(effects) {
         return version;
       });
     },
-    newInstallation(root, mode) {
+    newInstallation(root, mode, { containerEngine } = {}) {
       if (existsSync(root)) {
         privateDirectory(root);
         if (readdirSync(root).some(name => name !== '.operation.lock')) throw new Error('Installation root is not empty and has no selection record');
@@ -633,7 +675,7 @@ export function networkEffects(effects) {
       const instanceId = env.OURS_DAEMON_ID || randomUUID();
       if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(instanceId)) throw new Error('OURS_DAEMON_ID must be a lowercase UUID');
       const project = `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
-      return { schema: 2, root, mode, instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES, ...(mode === 'docker' ? ['gateway'] : [])], ...(mode === 'docker' ? { gateway: { version: 1 } } : {}), port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
+      return { schema: 2, root, mode, ...(containerEngine ? { containerEngine } : {}), instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES, ...(mode === 'docker' ? ['gateway'] : [])], ...(mode === 'docker' ? { gateway: { version: 1 } } : {}), port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
     },
     async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName } = {}) {
       if (existing) {
@@ -643,37 +685,55 @@ export function networkEffects(effects) {
         if (env.OURS_DAEMON_ID && env.OURS_DAEMON_ID !== record.instanceId) throw new Error('Conflicting instance ID');
       }
       if (record.mode === 'docker') {
-        const nativeRoot = existing ? '/path/to/new-empty-directory' : record.root;
-        const quotedRoot = `'${String(nativeRoot).replaceAll("'", "'\\''")}'`;
-        const quotedName = `'${String(identityName ?? record.messengerIdentity ?? 'Your Name').replaceAll("'", "'\\''")}'`;
-        const recovery = [
-          'Please install Docker Desktop on macOS/Windows, or Docker Engine with the Compose plugin on Linux, and start Docker before retrying.',
-          'Docker is recommended for macOS and Windows.',
-          `Alternatively, use native installation: ours-install server install --mode packages --state-dir ${quotedRoot} --identity-name ${quotedName}`,
-          'Native mode requires systemd user services on Linux/WSL or a launchd GUI session on macOS.',
-          ...(existing ? ['Keep this existing Docker installation in Docker mode; use a separate empty directory for a new native installation.'] : []),
-        ].join('\n');
-        try {
-          await effects.run('docker', ['info', '--format', '{{.ServerVersion}}']);
-        } catch (cause) {
-          const problem = cause.code === 'ENOENT'
-            ? 'Docker command was not found in PATH.'
-            : `Docker Engine is not reachable. Start Docker and check that your user can access it.\nDetails: ${cause.message}`;
-          throw new Error(`${problem}\n${recovery}`, { cause });
-        }
-        let version;
-        try {
-          version = await effects.run('docker', ['compose', 'version', '--short']);
-        } catch (cause) {
-          throw new Error(`Docker Compose 2.35 or newer is required, but the Compose plugin could not run. Update Docker Desktop or install the Docker Compose plugin.\n${recovery}`, { cause });
-        }
-        const match = /^v?(\d+)\.(\d+)/.exec(version.stdout.trim());
-        if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 35)) {
-          throw new Error(`Docker Compose 2.35 or newer is required. Update Docker Desktop or the Docker Compose plugin.\n${recovery}`);
+        if (engineName(record) === 'podman') {
+          await bindPodman(effects, record);
+          if (['install', 'start', 'restart', 'update', 'rebuild', 'gateway-enable'].includes(operation)) {
+            const userHome = userInfo().homedir;
+            for (const [key, expected] of Object.entries({ HOME: userHome, XDG_CONFIG_HOME: join(userHome, '.config'), XDG_DATA_HOME: join(userHome, '.local/share'), XDG_RUNTIME_DIR: `/run/user/${process.getuid()}` })) {
+              if (env[key] && env[key] !== expected) throw new Error(`${key} selects a custom Podman environment that the standard boot service does not retain`);
+            }
+            if (record.containerBinding.socket !== `/run/user/${process.getuid()}/podman/podman.sock`) throw new Error('The standard user boot service requires the default local Podman socket');
+            await effects.run('systemctl', ['--user', 'is-enabled', 'podman.socket']);
+            await effects.run('systemctl', ['--user', 'is-enabled', 'podman-restart.service']);
+            const restart = await effects.run('systemctl', ['--user', 'show', 'podman-restart.service', '--property=ExecStart', '--value']);
+            if (!/--filter[ =]+should-start-on-boot=true(?:[ ;}]|$)/.test(restart.stdout)) throw new Error('Installed podman-restart.service cannot recover unless-stopped workloads; use a Podman release with should-start-on-boot support');
+            const linger = await effects.run('loginctl', ['show-user', String(process.getuid()), '--property=Linger', '--value']);
+            if (linger.stdout.trim() !== 'yes') throw new Error('Rootless server requires user linger for logout/reboot recovery; ask your administrator to enable it');
+            await qualifyPodman(effects, record);
+          }
+        } else {
+          const nativeRoot = existing ? '/path/to/new-empty-directory' : record.root;
+          const quotedRoot = `'${String(nativeRoot).replaceAll("'", "'\\''")}'`;
+          const quotedName = `'${String(identityName ?? record.messengerIdentity ?? 'Your Name').replaceAll("'", "'\\''")}'`;
+          const recovery = [
+            'Please install Docker Desktop on macOS/Windows, or Docker Engine with the Compose plugin on Linux, and start Docker before retrying.',
+            'Docker is recommended for macOS and Windows.',
+            `Alternatively, use native installation: ours-install server install --mode packages --state-dir ${quotedRoot} --identity-name ${quotedName}`,
+            'Native mode requires systemd user services on Linux/WSL or a launchd GUI session on macOS.',
+            ...(existing ? ['Keep this existing Docker installation in Docker mode; use a separate empty directory for a new native installation.'] : []),
+          ].join('\n');
+          try {
+            await container(record, ['info', '--format', '{{.ServerVersion}}']);
+          } catch (cause) {
+            const problem = cause.code === 'ENOENT'
+              ? 'Docker command was not found in PATH.'
+              : `Docker Engine is not reachable. Start Docker and check that your user can access it.\nDetails: ${cause.message}`;
+            throw new Error(`${problem}\n${recovery}`, { cause });
+          }
+          let version;
+          try {
+            version = await container(record, ['compose', 'version', '--short']);
+          } catch (cause) {
+            throw new Error(`Docker Compose 2.35 or newer is required, but the Compose plugin could not run. Update Docker Desktop or install the Docker Compose plugin.\n${recovery}`, { cause });
+          }
+          const match = /^v?(\d+)\.(\d+)/.exec(version.stdout.trim());
+          if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 35)) {
+            throw new Error(`Docker Compose 2.35 or newer is required. Update Docker Desktop or the Docker Compose plugin.\n${recovery}`);
+          }
         }
         if (operation !== 'status') {
           // Compose clients can disappear while their Engine-owned command continues.
-          const active = await effects.run('docker', ['ps', '--filter', `label=com.docker.compose.project=${record.project}`, '--filter', 'label=com.docker.compose.oneoff=True', '--format', '{{.ID}}']);
+          const active = await container(record, ['ps', '--filter', `label=com.docker.compose.project=${record.project}`, '--filter', 'label=com.docker.compose.oneoff=True', '--format', '{{.ID}}']);
           if (active.stdout.trim()) throw new Error('Another server installation operation is still running in Docker');
         }
       } else {
@@ -715,6 +775,7 @@ export function networkEffects(effects) {
     async prepareGateway(record) {
       atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
       atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
+      atomicWriteConfig(join(record.workDir, 'gateway-entrypoint.sh'), readFileSync(join(INSTALLER_ASSETS, 'gateway-entrypoint.sh'), 'utf8'));
       atomicWriteConfig(join(record.workDir, 'Dockerfile.gateway'), readFileSync(join(INSTALLER_ASSETS, 'Dockerfile.gateway'), 'utf8'));
       await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
     },
@@ -743,7 +804,7 @@ export function networkEffects(effects) {
         ['messenger-server', ['capabilities'], 'messenger.gateway-prefix-v1'],
         ['tg-connector', ['capabilities'], 'telegram.gateway-listener-v1'],
       ]) {
-        const probe = await effects.run('docker', ['run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node', `${record.project}:runtime`, `/opt/ours/node_modules/@ours.network/${name}/dist/cli.js`, ...args]);
+        const probe = await container(record, ['run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node', `${record.project}:runtime`, `/opt/ours/node_modules/@ours.network/${name}/dist/cli.js`, ...args]);
         let value; try { value = JSON.parse(probe.stdout); } catch {}
         const capabilities = value?.result?.capabilities ?? value?.capabilities;
         if (!Array.isArray(capabilities) || !capabilities.includes(capability))
@@ -763,15 +824,17 @@ export function networkEffects(effects) {
       if (!existsSync(materialized)) writePrivateNew(materialized, retained);
       else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
       if (record.mode === 'docker') {
+        if (engineName(record) === 'podman') atomicWriteConfig(join(record.workDir, 'compose.podman.json'), JSON.stringify({ services: Object.fromEntries(record.services.map(name => [name, { restart: 'unless-stopped' }])) }));
         refreshDockerPolicyCopy(record);
         if (record.gateway) {
           atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
           atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
+          for (const file of ['Dockerfile.gateway', 'gateway-entrypoint.sh']) atomicWriteConfig(join(record.workDir, file), readFileSync(join(INSTALLER_ASSETS, file), 'utf8'));
         }
         // The installer owns these dependencies in both installation modes.
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
-        const image = await effects.run('docker', ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
+        const image = await container(record, ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
         if (image.code !== 0) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         await effects.qualifyDockerRuntime(record);
         if (record.gateway) {
@@ -847,17 +910,17 @@ export function networkEffects(effects) {
     },
     async copyDockerBuildRecords(record, directory) {
       // Inspect immutable image metadata; never reinterpret a failed context copy as legacy.
-      const label = (await effects.run('docker', ['image', 'inspect', '--format', '{{ index .Config.Labels "network.ours.build-context" }}', `${record.project}:runtime`])).stdout.trim();
+      const label = (await container(record, ['image', 'inspect', '--format', '{{ index .Config.Labels "network.ours.build-context" }}', `${record.project}:runtime`])).stdout.trim();
       if (!['', '<no value>', '1'].includes(label)) throw new Error('Unsupported image build-context schema');
       const names = [...BASE_RECORDS, ...(label === '1' ? [CONTEXT] : [])];
       const stage = mkdtempSync(join(directory, '.records-'));
       const name = `${record.project}-records`;
       let created = false;
       try {
-        await effects.run('docker', ['create', '--name', name, '--entrypoint', '/bin/true', `${record.project}:runtime`]);
+        await container(record, ['create', '--name', name, '--entrypoint', '/bin/true', `${record.project}:runtime`]);
         created = true;
         for (const file of names) {
-          await effects.run('docker', ['cp', `${name}:/opt/ours/${file}`, join(stage, file)]);
+          await container(record, ['cp', `${name}:/opt/ours/${file}`, join(stage, file)]);
           const st = lstatSync(join(stage, file));
           if (!st.isFile() || st.uid !== process.getuid() || (st.mode & 0o7002)) throw new Error('Unsafe copied build record');
           chmodSync(join(stage, file), 0o600);
@@ -867,7 +930,7 @@ export function networkEffects(effects) {
         for (const file of names) renameSync(join(stage, file), join(directory, file));
         if (label !== '1' && existsSync(join(directory, CONTEXT))) throw new Error('Legacy image conflicts with retained build context');
       } finally {
-        try { if (created) await effects.run('docker', ['rm', name]); }
+        try { if (created) await container(record, ['rm', name]); }
         finally { rmSync(stage, { recursive: true, force: true }); }
       }
     },
@@ -920,10 +983,10 @@ export function networkEffects(effects) {
       if (record.mode === 'docker') {
         for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
           const retained = `${candidate.project}:previous-${target}`;
-          const found = await effects.run('docker', ['image', 'inspect', retained], { allowCodes: [1] });
+          const found = await container(record, ['image', 'inspect', retained], { allowCodes: [1] });
           if (found.code !== 0) {
-            const current = await effects.run('docker', ['image', 'inspect', `${record.project}:${target}`], { allowCodes: [1] });
-            if (current.code === 0) await effects.run('docker', ['tag', `${record.project}:${target}`, retained]);
+            const current = await container(record, ['image', 'inspect', `${record.project}:${target}`], { allowCodes: [1] });
+            if (current.code === 0) await container(record, ['tag', `${record.project}:${target}`, retained]);
           }
         }
       }
@@ -940,7 +1003,7 @@ export function networkEffects(effects) {
       } else privateDirectory(record.workDir);
       if (record.mode === 'docker') {
         for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
-          await effects.run('docker', ['tag', `${candidate.project}:${target}`, `${record.project}:${target}`]);
+          await container(candidate, ['tag', `${candidate.project}:${target}`, `${record.project}:${target}`]);
         }
       }
       atomicWriteConfig(record.sourcesPath, readFileSync(candidate.sourcesPath));
@@ -956,8 +1019,8 @@ export function networkEffects(effects) {
       if (candidate.mode === 'docker') {
         for (const target of ['runtime', 'maintenance', 'previous-runtime', 'previous-maintenance', ...(candidate.gateway ? ['gateway', 'previous-gateway'] : [])]) {
           const image = `${candidate.project}:${target}`;
-          const found = await effects.run('docker', ['image', 'inspect', image], { allowCodes: [1] });
-          if (found.code === 0) await effects.run('docker', ['image', 'rm', image]);
+          const found = await container(candidate, ['image', 'inspect', image], { allowCodes: [1] });
+          if (found.code === 0) await container(candidate, ['image', 'rm', image]);
         }
       }
       privateDirectory(candidate.root);
@@ -975,13 +1038,13 @@ export function networkEffects(effects) {
         try {
           await compose(record, ['run', '--name', name, '--no-deps', '-T', 'access', 'access-issue', issuedPath], { sensitive: true });
           const file = join(staging, 'credential');
-          await effects.run('docker', ['cp', `${name}:${issuedPath}`, file], { sensitive: true });
+          await container(record, ['cp', `${name}:${issuedPath}`, file], { sensitive: true });
           assertPrivateRegularFile(file, 'issued credential');
           // Exclusive publication never overwrites an unrelated credential.
           writePrivateNew(output, readFileSync(file));
         } finally {
           await compose(record, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'rm', 'access', '-f', issuedPath], { sensitive: true });
-          await effects.run('docker', ['rm', '-f', name], { sensitive: true });
+          await container(record, ['rm', '-f', name], { sensitive: true });
           rmSync(staging, { recursive: true, force: true });
         }
         return;
@@ -1051,12 +1114,12 @@ export function networkEffects(effects) {
         if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
           throw new Error('Invalid conversion volume name');
         }
-        const result = await effects.run('docker', ['volume', 'inspect', '--format', '{{json .}}', name], {
+        const result = await container(record, ['volume', 'inspect', '--format', '{{json .}}', name], {
           ...(optional ? { allowCodes: [1] } : {}),
         });
         if (result.code !== 0) {
           if (optional) {
-            const inventory = await effects.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
+            const inventory = await container(record, ['volume', 'ls', '--format', '{{.Name}}']);
             if (inventory.code === 0 && !inventory.stdout.split(/\s+/).includes(name)) return false;
           }
           throw new Error(`Source volume is missing or unavailable: ${name}`);
@@ -1190,6 +1253,7 @@ export function networkEffects(effects) {
           try { await start(service); }
           catch (error) { failures.push({ service, error }); }
         }
+        if (!failures.length && record.gateway && ['daemon', 'cowork', 'gateway'].every(service => selected.includes(service))) await effects.verifyGateway(record);
         if (failures.length) throw new Error(`Application readiness failed: ${failures.map(f => f.service).join(', ')}. Check the selected application prerequisites.\n${failures.map(f => f.error.message).join('\n\n')}`);
         return;
       }

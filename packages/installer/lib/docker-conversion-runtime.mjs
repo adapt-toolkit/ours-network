@@ -1,3 +1,4 @@
+import { runContainer } from './container-engine.mjs';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -33,7 +34,7 @@ ENTRYPOINT ["node", "/opt/ours/docker/state-operation.mjs"]
 `);
     // Build maintenance first: both targets inherit the same retained runtime.
     for (const target of ['maintenance', 'runtime']) {
-      await effects.run('docker', ['build', '--platform', 'linux/amd64', '--target', target,
+      await runContainer(effects, record, ['build', '--platform', 'linux/amd64', '--target', target,
         '--tag', `${record.project}:${target}`, context]);
     }
     atomicWriteConfig(compose, fs.readFileSync(join(assets, 'docker-compose.yaml')));
@@ -82,7 +83,7 @@ export async function runDockerConversion(record, selected, operation, label, ef
   const path = join(record.root, `.conversion-compose-${randomUUID()}.json`);
   try {
     fs.writeFileSync(path, JSON.stringify(definition), { mode: 0o600, flag: 'wx' });
-    const result = await effects.run('docker', ['compose', '--file', path, '--project-name', record.project,
+    const result = await runContainer(effects, record, ['compose', '--file', path, '--project-name', record.project,
       'run', '--rm', '--no-deps', '-T', 'state-operation', operation, ...(label ? [label] : [])]);
     if (operation === 'cleanup') {
       const summary = JSON.parse(result.stdout);
