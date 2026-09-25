@@ -68,10 +68,18 @@ socket isolated all Podman tests from the installed 5.4.2 default backend.
   build output, image inspect/history and final filesystem.
 - Production runtime: native build of the shipped exact package/integrity policy,
   runtime metadata and gateway artifact capability qualification PASS.
+- Development runtime: native build from all exact prerelease commits above,
+  including private SDK/submodule acquisition through an environment build secret,
+  native compilation and gateway capability qualification PASS. The source-built
+  five-service lifecycle and authenticated gateway also PASS.
 - Real runtime: prepare, access-init/access-issue, test Human identity, all five
   services, authenticated gateway readiness, stop/status/start PASS.
 - Maintenance: server backup/restore and Cowork backup/reset/restore PASS; all
   services subsequently restarted with authenticated gateway readiness.
+- Rebuild: the initial fresh-layout validator defect was reproduced and fixed;
+  retained transition recovery PASS after rebuilding the maintenance helper. A
+  second complete rebuild using final code and the real installation lock PASS,
+  including offline state validation and authenticated gateway readiness.
 - Gateway runtime: Docker 2/2 and Podman 2/2 PASS for root/nested paths,
   authentication, WebSockets and changed backend IPs. Combined Podman native
   capability/build-secret and gateway tests: 4/4 PASS.

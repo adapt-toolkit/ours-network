@@ -498,7 +498,7 @@ upstream requests in addition to liveness.
 This change is **not yet a fully qualified server-support release**. Debian's
 Podman 5.4.2 with Compose 5.5.1 failed subpath isolation and has incompatible boot
 recovery semantics. Podman 6.1.2 passed the isolated capability probe on native
-Linux amd64; production build, service lifecycle and scoped maintenance also passed. See [validation evidence](ROOTLESS_PODMAN_VALIDATION.md). The full installer/maintenance, development builds,
+Linux amd64; production and prerelease-source builds, service lifecycle, rebuild and scoped maintenance also passed. See [validation evidence](ROOTLESS_PODMAN_VALIDATION.md). The full public installer/maintenance matrix,
 SELinux Enforcing, logout/reboot, explicit-stop recovery, and Docker regression
 matrix must all be recorded before declaring a supported engine/provider pair.
 The supplied ARM VM results are historical feasibility evidence, not this
