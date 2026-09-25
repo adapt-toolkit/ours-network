@@ -15,7 +15,7 @@ export async function qualifyPodman(effects, record) {
     prepare: { ...common, user: '0:0', network_mode: 'none', cap_add: ['CHOWN', 'DAC_OVERRIDE'],
       command: ['mkdir -p /storage/state/daemon /storage/state/sibling; chmod 700 /storage/state/daemon; chown 1000:1000 /storage/state/daemon'],
       volumes: [{ type: 'volume', source: 'data', target: '/storage', volume: { nocopy: true } }] },
-    probe: { ...common, user: '1000:1000', command: ['test ! -e /data/sibling; test "$(stat -c %a /data)" = 700; echo ready > /data/probe; nslookup -type=A probe.; sleep 120'],
+    probe: { ...common, user: '1000:1000', command: ['test ! -e /data/sibling; test "$(stat -c %a /data)" = 700; nslookup -type=A probe.; echo ready > /data/probe; sleep 120'],
       healthcheck: { test: ['CMD-SHELL', 'test -s /data/probe'], interval: '1s', timeout: '2s', retries: 10 },
       volumes: [{ type: 'volume', source: 'data', target: '/data', volume: { nocopy: true, subpath: 'state/daemon' } }] },
   }, volumes: { data: {} } }), { mode: 0o600 });

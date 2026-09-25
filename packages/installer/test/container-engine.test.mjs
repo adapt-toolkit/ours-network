@@ -1,3 +1,8 @@
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { qualifyPodman } from '../lib/podman-preflight.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { engineName, validateContainerEngine, runContainer, nativeBuildCommands, namespaceDigest } from '../lib/container-engine.mjs';
@@ -69,6 +74,7 @@ test('foreign Podman volumes are rejected before compose can write them',async()
 test('stop/status do not require healthy boot services or linger',async()=>{
  const {realEffects}=await import('../lib/effects.mjs');
  const e=realEffects({env:{}});const calls=[];
+ e.platform = { ...e.platform, platform: 'linux' };
  const selected={...record,containerBinding:{...record.containerBinding,socket:`/run/user/${process.getuid()}/podman/podman.sock`}};
  const info={host:{idMappings:maps,security:{rootless:true},remoteSocket:{path:selected.containerBinding.socket}},store:{graphRoot:'/store',runRoot:'/run/store',graphDriverName:'overlay'}};
  e.run=async(cmd,args)=>{
@@ -121,3 +127,34 @@ test('repair and conversion native builds retain Docker image format',async()=>{
  await runContainer(e,record,['build','--network=none','--tag','ours:repair','/build']);
  assert.deepEqual(actual.slice(actual.indexOf('build'),actual.indexOf('build')+3),['build','--format','docker']);
 });
+
+for (const dnsExit of [0, 1]) {
+ test(`capability probe publishes readiness only after successful DNS (exit=${dnsExit})`, async t => {
+  const data = mkdtempSync(join(tmpdir(), 'probe-dns-test-'));
+  t.after(() => rmSync(data, { recursive: true, force: true }));
+  let service, cleaned = false, checked = false;
+  const effects = { env: {}, async run(_command, args) {
+   if (args.includes('config')) {
+    service = JSON.parse(readFileSync(args[args.indexOf('-f') + 1], 'utf8')).services.probe;
+   }
+   if (args.includes('up')) {
+    // Run the actual generated shell command with controlled DNS and no container.
+    // The stub also asserts that pending DNS has not already published readiness.
+    const script = `stat() { echo 700; }
+nslookup() { test ! -e "$PROBE_DATA/probe" || exit 99; return ${dnsExit}; }
+sleep() { :; }
+` + service.command[0].replaceAll('/data', '"$PROBE_DATA"');
+    const result = spawnSync('/bin/sh', ['-ec', script], { env: { ...process.env, PROBE_DATA: data }, encoding: 'utf8' });
+    assert.equal(result.status, dnsExit, result.stderr);
+    assert.equal(existsSync(join(data, 'probe')), dnsExit === 0);
+    checked = true;
+    if (result.status !== 0) throw new Error('DNS failed; probe never became healthy');
+   }
+   if (args.includes('down')) cleaned = true;
+   return { code: 0, stdout: args.includes('ps') ? JSON.stringify([{ Service: 'probe', State: 'running' }]) : '' };
+  } };
+  if (dnsExit) await assert.rejects(qualifyPodman(effects, record), /DNS failed/);
+  else await qualifyPodman(effects, record);
+  assert.equal(checked, true); assert.equal(cleaned, true);
+ });
+}
