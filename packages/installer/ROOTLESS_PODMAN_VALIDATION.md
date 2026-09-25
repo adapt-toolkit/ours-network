@@ -119,3 +119,68 @@ unexpected exit and explicit-stop behavior. Include Docker parity for the full
 maintenance matrix. This shared host is not a safe reboot/SELinux test target.
 No fallback to privileged containers, whole-volume service mounts, host chown,
 keep-id, or globally disabled SELinux is permitted.
+
+### Disposable VM handoff
+
+Provision a dedicated x86_64 VM (at least 4 vCPU, 8 GiB RAM, 40 GiB free disk)
+whose distribution supplies Podman 6.1.2, compatible netavark/aardvark, subordinate
+UID/GID support and vendor `podman-restart.service` with
+`--filter should-start-on-boot=true`. Use an unprivileged test account, cgroup v2,
+standard HOME/XDG paths, SELinux **Enforcing**, Node.js 22+, npm and standalone
+Docker Compose 5.5.1. The Podman pass must have no Docker CLI/daemon dependency.
+The VM owner must explicitly authorize reboots and terminate all sessions for the
+logout test. These commands are for that disposable VM, not the shared host.
+
+After checking out this PR and preparing installer assets/dependencies, run as the
+test user (administrator provisions subordinate ranges and linger beforehand):
+
+```sh
+uname -m                              # x86_64
+getenforce                           # Enforcing
+podman version                       # native client 6.1.2
+export PODMAN_COMPOSE_PROVIDER=/absolute/path/to/docker-compose
+unset OURS_PODMAN_SOCKET DOCKER_HOST DOCKER_CONTEXT CONTAINER_HOST CONTAINER_CONNECTION
+unset CONTAINERS_CONF CONTAINERS_STORAGE_CONF PODMAN_USERNS
+systemctl --user enable --now podman.socket
+systemctl --user enable podman-restart.service
+systemctl --user show podman-restart.service --property=ExecStart
+loginctl show-user "$(id -u)" --property=Linger  # yes
+export PODMAN_TEST_ROOT="$HOME/ours-podman-qualification"
+node install.mjs server install --mode docker --container-engine podman \
+  --state-dir "$PODMAN_TEST_ROOT" --identity-name RootlessQualification
+node install.mjs server status --state-dir "$PODMAN_TEST_ROOT"
+node install.mjs server backup server before-rebuild --state-dir "$PODMAN_TEST_ROOT"
+node install.mjs server rebuild --state-dir "$PODMAN_TEST_ROOT"
+node install.mjs server restore server before-rebuild --state-dir "$PODMAN_TEST_ROOT"
+```
+
+Record all five healthy services and authenticated gateway requests. From an
+external controller, end **all** test-user sessions, wait, reconnect, and repeat
+status/authenticated checks. Then reboot the VM and repeat the same checks before
+running any explicit start command. Capture relevant user-unit journal and
+SELinux AVC evidence; no denial should be bypassed by changing enforcement.
+
+Next explicitly stop the installation, verify empty running status, reboot, and
+verify it remains stopped. Only then start explicitly and verify all services.
+For unexpected-exit recovery, select the exact project from its retained record
+and kill only its daemon container, then verify automatic recovery and retained
+identity/credentials without printing credential contents:
+
+```sh
+node install.mjs server stop --state-dir "$PODMAN_TEST_ROOT"
+node install.mjs server status --state-dir "$PODMAN_TEST_ROOT"  # no running services
+# Disposable-VM controller reboots here; reconnect and repeat status before start.
+node install.mjs server start --state-dir "$PODMAN_TEST_ROOT"
+PODMAN_TEST_PROJECT=$(node -e 'console.log(require(process.argv[1]).project)' "$PODMAN_TEST_ROOT/installation.json")
+podman kill --signal KILL "${PODMAN_TEST_PROJECT}-daemon-1"
+# Wait for restart/readiness, then verify identities and authenticated gateway.
+node install.mjs server status --state-dir "$PODMAN_TEST_ROOT"
+```
+
+Still required: repeat component backup/reset/restore for daemon, Telegram,
+Cowork and messenger; source update and interrupted retry; fresh schema-1 legacy
+conversion fixtures; foreign/malformed volume refusal; and the equivalent full
+Docker maintenance matrix. These require owned fixture data and before/after
+identity, credential, provenance and mount-boundary assertions; a command exit
+code alone is insufficient. The existing unit conversion tests are not a claim
+that this real-engine legacy fixture matrix has run.
