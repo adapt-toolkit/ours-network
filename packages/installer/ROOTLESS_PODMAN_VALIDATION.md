@@ -163,8 +163,10 @@ SELinux AVC evidence; no denial should be bypassed by changing enforcement.
 Next explicitly stop the installation, verify empty running status, reboot, and
 verify it remains stopped. Only then start explicitly and verify all services.
 For unexpected-exit recovery, select the exact project from its retained record
-and kill only its daemon container, then verify automatic recovery and retained
-identity/credentials without printing credential contents:
+and terminate only its verified container-init host process through a PID handle,
+then verify automatic recovery and retained identity/credentials. Do not use
+`podman kill` for this case: an explicit engine stop suppresses restart policy.
+The following refuses a PID whose cgroup does not identify the selected container:
 
 ```sh
 node install.mjs server stop --state-dir "$PODMAN_TEST_ROOT"
@@ -172,8 +174,29 @@ node install.mjs server status --state-dir "$PODMAN_TEST_ROOT"  # no running ser
 # Disposable-VM controller reboots here; reconnect and repeat status before start.
 node install.mjs server start --state-dir "$PODMAN_TEST_ROOT"
 PODMAN_TEST_PROJECT=$(node -e 'console.log(require(process.argv[1]).project)' "$PODMAN_TEST_ROOT/installation.json")
-podman kill --signal KILL "${PODMAN_TEST_PROJECT}-daemon-1"
-# Wait for restart/readiness, then verify identities and authenticated gateway.
+podman inspect --format '{{.State.StartedAt}} {{.RestartCount}}' "${PODMAN_TEST_PROJECT}-daemon-1"
+python3 - "$PODMAN_TEST_PROJECT" <<'PYTHON'
+import json, subprocess, sys
+project = sys.argv[1]
+container = json.loads(subprocess.check_output(['podman', 'inspect', project+'-daemon-1']))[0]
+assert container['Config']['Labels']['com.docker.compose.project'] == project
+assert container['State']['Running'] and container['State']['Pid'] > 1
+script = """
+import os, signal, sys
+pid, cid = int(sys.argv[1]), sys.argv[2]
+fd = os.pidfd_open(pid)
+try:
+    assert cid in open('/proc/'+str(pid)+'/cgroup').read(), 'Container identity mismatch'
+    assert os.stat('/proc/'+str(pid)).st_uid == 1000, 'Unexpected runtime owner'
+    signal.pidfd_send_signal(fd, signal.SIGKILL)
+finally:
+    os.close(fd)
+"""
+subprocess.run(['podman','unshare','python3','-c',script,str(container['State']['Pid']),container['Id']],check=True)
+PYTHON
+# Wait for recovery; assert changed StartedAt, increased RestartCount and health.
+podman inspect --format '{{.State.StartedAt}} {{.RestartCount}} {{.State.Health.Status}}' "${PODMAN_TEST_PROJECT}-daemon-1"
+# Verify retained identities and authenticated gateway as well.
 node install.mjs server status --state-dir "$PODMAN_TEST_ROOT"
 ```
 
