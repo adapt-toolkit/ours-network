@@ -15,6 +15,7 @@
     "uninstall.mjs",
     "uninstall.sh",
     "README.md",
+    "ROOTLESS_PODMAN_VALIDATION.md",
     "LICENSE"
   ],
   "license": "FSL-1.1-Apache-2.0",

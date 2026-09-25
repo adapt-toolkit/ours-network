@@ -1316,13 +1316,14 @@ async function executeServerCommand(args, effects) {
   const existing = record !== null;
   if (existing) {
     record = validateInstallation(record, args.stateDir);
+    if (args.containerEngine && args.containerEngine !== (record.containerEngine ?? 'docker')) throw new Error('Conflicting container engine; explicit migration is required');
     if (args.mode && args.mode !== record.mode) throw new Error('Conflicting runtime mode; retained installation was not changed');
     if (args.operation !== 'update' && args.sources && (record.sourcePolicyHash
       ? effects.sourcePolicyHash(args.sources) !== record.sourcePolicyHash
       : effects.readText(args.sources) !== effects.readText(record.sourcesPath))) throw new Error('Conflicting source selection; use explicit server update');
   } else {
     if (args.operation !== 'install' || !args.mode) throw new Error('First server install requires --mode');
-    record = effects.newInstallation(args.stateDir, args.mode);
+    record = effects.newInstallation(args.stateDir, args.mode, args);
     for (const key of ['port', 'coworkPort', 'messengerPort']) if (args[key] !== undefined) record[key] = args[key];
   }
   if (effects.readJson(join(record.root, 'gateway-transition.json')) && args.operation !== 'gateway-enable' && args.operation !== 'status') throw new Error('Interrupted gateway migration; run server gateway-enable before other changes');

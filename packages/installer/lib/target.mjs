@@ -464,7 +464,7 @@ export function parseNetworkArgs(argv) {
   const operations = role === 'client' ? ['install'] : ['install', 'status', 'start', 'stop', 'restart', 'access-issue', 'access-replace', 'backup', 'restore', 'reset', 'update', 'rebuild', 'gateway-enable'];
   if (!operations.includes(operation)) throw new InstallUsageError(`Unsupported ${role} operation: ${operation ?? '(missing)'}`);
   const allowed = role === 'client' ? ['config'] : ['state-dir'];
-  if (role === 'server' && operation === 'install') allowed.push('mode', 'sources', 'migrate');
+  if (role === 'server' && operation === 'install') allowed.push('mode', 'sources', 'migrate', 'container-engine');
   if (role === 'server' && ['install', 'gateway-enable'].includes(operation)) allowed.push('server-url');
   if (operation === 'access-issue') allowed.push('output');
   if (['access-replace', 'reset'].includes(operation)) allowed.push('confirm');
@@ -494,13 +494,14 @@ export function parseNetworkArgs(argv) {
     } else {
       const value = inline ?? argv[++i];
       if (!value || value.startsWith('--')) throw new InstallUsageError(`--${name} requires a value`);
-      result[key] = name === 'mode' ? value : name === 'server-url' ? serverBase(value) : resolve(value);
+      result[key] = ['mode', 'container-engine'].includes(name) ? value : name === 'server-url' ? serverBase(value) : resolve(value);
     }
   }
   const required = role === 'client' ? [] : ['stateDir'];
   if (operation === 'access-issue') required.push('output');
   if (['access-replace', 'reset'].includes(operation)) required.push('confirm');
   for (const key of required) if (!result[key]) throw new InstallUsageError(`${operation} requires --${key.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}`);
+  if (result.containerEngine !== undefined && (result.mode !== 'docker' || !['docker', 'podman'].includes(result.containerEngine))) throw new InstallUsageError('--container-engine docker|podman requires --mode docker');
   if (result.mode && !['packages', 'docker'].includes(result.mode)) throw new InstallUsageError('--mode must be packages or docker');
   return result;
 }

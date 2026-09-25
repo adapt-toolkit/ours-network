@@ -54,6 +54,7 @@ export async function prepareSetupPlan(options, effects) {
     const value = effects.readJson(join(options.stateDir, 'installation.json'));
     if (value) {
       plan.existing = validateInstallation(value, options.stateDir);
+      if (options.containerEngine && options.containerEngine !== (plan.existing.containerEngine ?? 'docker')) throw new InstallUsageError('Container engine conflicts with retained installation');
       if (options.mode !== plan.existing.mode) throw new InstallUsageError('The selected mode conflicts with the retained installation; choose its existing mode or a separate empty directory');
       for (const key of ['port', 'coworkPort', 'messengerPort']) {
         if (options.explicitPorts?.includes(key) && options[key] !== plan.existing[key]) throw new InstallUsageError(`${key} conflicts with the retained installation`);

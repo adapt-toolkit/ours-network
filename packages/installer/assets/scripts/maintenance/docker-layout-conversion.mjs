@@ -115,12 +115,14 @@ export function validateDockerLayout(tree, options) {
     const config = join(tree, component, 'config.json');
     if (fs.existsSync(config)) objectAt(config, options);
   }
+  // Fresh managed installs keep the MCP profile separately until configured.
+  // Retained embedded configuration, when present, must still match exactly.
   const daemon = objectAt(join(tree, 'daemon/config.json'), options);
   const profile = objectAt(join(tree, 'mcp/profile.json'), options);
   validateProfile(profile, options.instanceId);
   if (daemon.stateDir !== DAEMON_STATE || daemon.port !== 3050
-    || daemon.networkMcp?.applicationConfigPath !== join(MCP_STATE, 'config.json')
-    || JSON.stringify(daemon.networkMcp.profile) !== JSON.stringify(profile)
+    || (daemon.networkMcp !== undefined && (daemon.networkMcp?.applicationConfigPath !== join(MCP_STATE, 'config.json')
+      || JSON.stringify(daemon.networkMcp?.profile) !== JSON.stringify(profile)))
     || objectAt(join(tree, 'cowork/config.json'), options).stateDir !== '/var/lib/ours-cowork') {
     throw new Error('Converted Docker deployment configuration is inconsistent');
   }

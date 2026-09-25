@@ -1,3 +1,4 @@
+import { runContainer } from './container-engine.mjs';
 /** Qualify cached images before reuse; repair only the known root-owned 0600 policy. */
 import { lstatSync, readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync, openSync, closeSync, fstatSync, fchmodSync, constants } from 'node:fs';
 import { join } from 'node:path';
@@ -66,7 +67,7 @@ export async function qualifyDockerRuntime(record, effects) {
   if (![uid, gid].every(n => Number.isInteger(n) && n > 0)) fail('non-root runtime UID/GID required');
   const tag = `${record.project}:runtime`;
   const inspect = async target => {
-    const { stdout } = await effects.run('docker', ['image', 'inspect', target], { timeout: 60000 });
+    const { stdout } = await runContainer(effects, record, ['image', 'inspect', target], { timeout: 60000 });
     const [value] = JSON.parse(stdout);
     if (!imageId(value?.Id) || !Array.isArray(value.RootFS?.Layers) || value.Config?.Labels?.['network.ours.build-context'] !== '1') fail('image lacks recognized build metadata');
     return value;
@@ -74,13 +75,13 @@ export async function qualifyDockerRuntime(record, effects) {
   const probe = async (id, user) => {
     const name = `ours-runtime-probe-${randomUUID()}`;
     try {
-      const result = await effects.run('docker', ['run', '--rm', '--name', name, '--read-only', '--network', 'none', '--cap-drop', 'ALL',
+      const result = await runContainer(effects, record, ['run', '--rm', '--name', name, '--read-only', '--network', 'none', '--cap-drop', 'ALL',
         '--security-opt', 'no-new-privileges:true', '--pids-limit', '64', '--memory', '256m', '--user', user, '--entrypoint', 'node', id, '-e', probeScript],
       { allowCodes: [1, 74], timeout: 60000 });
       return { code: result.code, report: result.code === 0 ? JSON.parse(result.stdout) : null };
     } catch (error) {
       // A killed Docker client can leave its own bounded probe container behind.
-      try { await effects.run('docker', ['rm', '-f', name], { allowCodes: [1], timeout: 10000 }); } catch {}
+      try { await runContainer(effects, record, ['rm', '-f', name], { allowCodes: [1], timeout: 10000 }); } catch {}
       throw error;
     }
   };
@@ -101,11 +102,11 @@ export async function qualifyDockerRuntime(record, effects) {
   try {
     // Unique local alias transports the immutable ID into BuildKit. The resulting
     // layer ancestry and complete execution config are checked before publication.
-    await effects.run('docker', ['image', 'tag', original.Id, baseTag]);
+    await runContainer(effects, record, ['image', 'tag', original.Id, baseTag]);
     if ((await inspect(baseTag)).Id !== original.Id) fail('repair base image changed');
     writeFileSync(join(directory, 'sources.json'), policy, { mode: 0o600, flag: 'wx' });
     writeFileSync(join(directory, 'Dockerfile'), `FROM ${baseTag}\nCOPY --chmod=644 sources.json ${policyPath}\n`, { mode: 0o600, flag: 'wx' });
-    await effects.run('docker', ['build', '--network=none', '--pull=false', '--tag', candidateTag, directory], { stream: true, timeout: 120000 });
+    await runContainer(effects, record, ['build', '--network=none', '--pull=false', '--tag', candidateTag, directory], { stream: true, timeout: 120000 });
     const candidate = await inspect(candidateTag);
     if (!isDeepStrictEqual(candidate.Config, original.Config) || !isDeepStrictEqual(candidate.RootFS.Layers.slice(0, original.RootFS.Layers.length), original.RootFS.Layers)
         || candidate.RootFS.Layers.length !== original.RootFS.Layers.length + 1) fail('repair changed image execution settings or ancestry');
@@ -114,11 +115,11 @@ export async function qualifyDockerRuntime(record, effects) {
     check(verified.report, 0o644);
     if (!isDeepStrictEqual(verified.report.records, privileged.report.records)) fail('repair changed build provenance');
     if ((await inspect(tag)).Id !== original.Id) fail('selected image changed during repair; retry setup');
-    await effects.run('docker', ['image', 'tag', candidate.Id, tag]);
+    await runContainer(effects, record, ['image', 'tag', candidate.Id, tag]);
     effects.out?.('Cached Docker image repaired and verified; continuing setup.');
   } finally {
     for (const temporary of [candidateTag, baseTag]) {
-      try { await effects.run('docker', ['image', 'rm', temporary], { allowCodes: [1], timeout: 10000 }); } catch {}
+      try { await runContainer(effects, record, ['image', 'rm', temporary], { allowCodes: [1], timeout: 10000 }); } catch {}
     }
     rmSync(directory, { recursive: true, force: true });
   }

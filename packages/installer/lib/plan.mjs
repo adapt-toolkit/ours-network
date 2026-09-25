@@ -1,3 +1,4 @@
+import { validateContainerEngine } from './container-engine.mjs';
 import { gatewayAddress } from './gateway.mjs';
 // ours-install v3 — daemon creation and boot-service installation.
 //
@@ -357,6 +358,7 @@ export function installationPaths(record) {
 }
 
 export function validateInstallation(record, root) {
+  if (record) validateContainerEngine(record);
   if (!record || ![1, 2].includes(record.schema) || !['docker', 'packages'].includes(record.mode)
     || record.root !== root || record.configPath !== installationPaths(record).config
     || record.sourcesPath !== join(root, 'sources.json') || record.workDir !== join(root, 'runtime')
@@ -386,7 +388,8 @@ export function validateInstallation(record, root) {
       throw new Error('Invalid layout conversion record');
     }
     validateInstallation(source, root);
-    if (['mode', 'instanceId', 'project', 'sourcesPath', 'workDir'].some(key => source[key] !== record[key])
+    if (JSON.stringify(source.containerBinding) !== JSON.stringify(record.containerBinding)) throw new Error('Conflicting conversion backend');
+    if (['mode', 'containerEngine', 'instanceId', 'project', 'sourcesPath', 'workDir'].some(key => source[key] !== record[key])
       || JSON.stringify(source.services) !== JSON.stringify(record.services)
       || conversion.runningServices.some(service => !source.services.includes(service))) {
       throw new Error('Conflicting layout conversion source');
@@ -408,7 +411,7 @@ export function validateInstallation(record, root) {
       throw new Error('Invalid server build transition');
     }
     validateInstallation(candidate, candidate.root);
-    for (const key of ['schema', 'mode', 'instanceId', 'services', 'gateway', 'port', 'coworkPort', 'messengerPort', 'messengerIdentity', 'uid', 'gid']) {
+    for (const key of ['schema', 'mode', 'containerEngine', 'containerBinding', 'instanceId', 'services', 'gateway', 'port', 'coworkPort', 'messengerPort', 'messengerIdentity', 'uid', 'gid']) {
       if (JSON.stringify(candidate[key]) !== JSON.stringify(record[key])) throw new Error('Conflicting server build candidate');
     }
   }
