@@ -9,15 +9,22 @@ control local processes; they do not carry server management requests.
 
 ## Release availability
 
-SDK `3.8.1-nightly.13` and CLI `2.8.1-nightly.11` are published and selected
-for the isolated host CLI. Fleet and MCP consumer PRs now use published SDK
-packages rather than source substitution. The installer still requires the
-resulting gateway-aware MCP and Fleet releases in its full release manifest,
-with matching lockfiles and checksums, before the full-stack instructions below
-are release-qualified. The existing server release set is retained until that
-coordinated update; changing only its top-level SDK would leave mismatched nested
-versions in other packages.
-Run the installation commands below only with that coordinated installer release.
+The nightly manifest selects one published dependency graph: SDK
+`3.8.1-nightly.13`, CLI `2.8.1-nightly.11`, daemon `3.8.1-nightly.5`,
+Fleet `1.2.0-nightly.16`, MCP/Codex/Claude Code `1.2.0-nightly.8`,
+Telegram `1.0.1-nightly.7`, Messenger `1.0.31-nightly.7`, and Cowork
+`1.3.3-nightly.20260926.f1dc366`. Exact archive checksums are retained in
+`releases/nightly.json`; the host CLI uses the same SDK/CLI pair.
+
+The coordinated installer release must include these pins before using the
+commands below. Its release gate verifies the actual registry and vendored
+package graphs, client acquisition/retry, and rejection of dependency drift.
+These checks do not deploy or certify an existing server installation.
+
+Known limitation of this daemon version: server-side CLI `daemon stop/restart`
+can report a socket error during shutdown. The correction is tracked in
+[SDK PR70](https://github.com/adapt-toolkit/ours-sdk/pull/70); it is not included
+in the versions above. Client profile commands do not control server processes.
 
 ## Fresh full-stack setup on localhost:4050
 
