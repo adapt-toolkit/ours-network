@@ -9,11 +9,14 @@ control local processes; they do not carry server management requests.
 
 ## Release availability
 
-These instructions describe the coordinated gateway-only source changes. They
-are not a claim that the current npm `nightly` already contains them. Consumer
-PRs remain blocked from merge until reviewed SDK, CLI, MCP and Fleet releases
-are selected with matching lockfiles and installer release checksums. For source
-review, use the exact-revision integration recipe linked from those PRs.
+SDK `3.8.1-nightly.13` and CLI `2.8.1-nightly.11` are published and selected
+for the isolated host CLI. Fleet and MCP consumer PRs now use published SDK
+packages rather than source substitution. The installer still requires the
+resulting gateway-aware MCP and Fleet releases in its full release manifest,
+with matching lockfiles and checksums, before the full-stack instructions below
+are release-qualified. The existing server release set is retained until that
+coordinated update; changing only its top-level SDK would leave mismatched nested
+versions in other packages.
 Run the installation commands below only with that coordinated installer release.
 
 ## Fresh full-stack setup on localhost:4050

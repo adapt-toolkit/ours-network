@@ -70,12 +70,15 @@ it. They exclude the daemon and its native database/ADAPT dependencies. Fleet
 runs beside the harnesses on the client machine and calls the daemon HTTP API.
 Client commands report an unavailable server and never start one automatically.
 
-The checked-in source policy and packed installer select the same exact published
-nightly release set, including SDK `3.8.1-nightly.10`, CLI `2.8.1-nightly.8`, and
-daemon `3.8.1-nightly.2`. The isolated host CLI pair uses these released client
-artifacts. `releases/nightly.json` binds the gateway-capable consumers and daemon
-to verified SHA512 integrities. Mixed or unselected nested ours versions remain
-rejected. An explicit `--sources` override remains available for development.
+The checked-in source policy and packed installer retain the existing server
+release set (SDK `3.8.1-nightly.11`, CLI `2.8.1-nightly.9`, daemon
+`3.8.1-nightly.3`). The isolated host CLI uses published SDK
+`3.8.1-nightly.13` and CLI `2.8.1-nightly.11`, including the shared gateway
+profile resolver. `releases/nightly.json` binds both selections to verified
+SHA512 integrities. Gateway-only Fleet/MCP release adoption is still pending;
+see [GATEWAY_SETUP.md](GATEWAY_SETUP.md). Mixed or unselected nested ours
+versions remain rejected within each selected graph. An explicit `--sources`
+override remains available for development.
 
 ## Migrate an existing global installation
 
