@@ -1,3 +1,4 @@
+import { validateGatewayClientProfile } from './target.mjs';
 import { enableGateway } from './gateway-transition.mjs';
 import { executeLegacyMigration } from './legacy-migration.mjs';
 // ours-install v3 — the orchestrator.
@@ -1449,7 +1450,7 @@ export async function runClientCommand(command, effects) {
     configPath = managedPath;
   }
   let profile;
-  if (configPath) profile = validateHostProfile(effects.readProfile(configPath));
+  if (configPath) profile = validateGatewayClientProfile(effects.readProfile(configPath));
   else if (!command.preset && effects.interactive) {
     const endpoint = await effects.askLine('Server HTTP or HTTPS endpoint: ', 'http://127.0.0.1:3050');
     const credentialPath = await effects.askLine('Private issued-token file: ', '');

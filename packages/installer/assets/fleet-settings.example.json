@@ -1,0 +1,48 @@
+{
+  "subscriptions": [
+    "codex"
+  ],
+  "assignmentStrategy": "one-model",
+  "models": {
+    "development": {
+      "harness": "codex",
+      "session": "acp",
+      "model": "gpt-6-astra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "review": {
+      "harness": "codex",
+      "session": "acp",
+      "model": "gpt-6-astra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    "coordination": {
+      "harness": "codex",
+      "session": "acp",
+      "model": "gpt-6-astra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    }
+  },
+  "reasoning": "balanced"
+}

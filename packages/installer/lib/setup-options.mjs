@@ -16,7 +16,7 @@ const nonempty = value => typeof value === 'string' && value.trim().length > 0 &
 
 export function recommendedMode({ platform, arch, release = '' } = {}) {
   if (platform === 'linux' && /microsoft|wsl/i.test(release)) return { mode: 'docker', reason: 'Docker is recommended on Windows and WSL.' };
-  if (platform === 'linux' && arch === 'x64') return { mode: 'packages', reason: 'Native packages are recommended on Linux x64 with a systemd user manager.' };
+  if (platform === 'linux' && arch === 'x64') return { mode: 'docker', reason: 'Docker provides the integrated gateway for full-stack setup; native mode is server-only.' };
   if (platform === 'darwin') return { mode: 'docker', reason: 'Docker is recommended on macOS.' };
   if (platform === 'win32') return { mode: 'docker', reason: 'Docker is recommended on Windows; run the installer inside WSL with Docker Desktop.' };
   return { mode: 'docker', reason: 'Docker is recommended for this platform.' };

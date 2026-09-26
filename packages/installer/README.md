@@ -1,3 +1,5 @@
+See [one-connection setup, localhost:4050 and systemd migration](GATEWAY_SETUP.md) for the gateway-only client workflow.
+
 # @ours.network/install — one installer for the whole stack
 
 Requires Node.js 22+ and npm. Install the selected release channel:
@@ -10,8 +12,8 @@ ours-install
 With no arguments, the wizard explains each step and offers keyboard choices.
 Use arrow keys and Enter to choose, and Space to select integrations. Recommended
 settings keep advanced ports and package overrides out of the usual flow. Text
-input is used for your name and explicitly customized paths or ports. Linux x64
-recommends native mode; macOS and Windows recommend Docker. On Windows run the
+input is used for your name and explicitly customized paths or ports. Docker is recommended for the integrated full-stack gateway on every platform;
+native packages remain available for server-only setup. On Windows run the
 installer inside WSL with Docker Desktop integration. This recommendation concerns
 packaging and isolation, not a guarantee that emulated x64 is faster on ARM Macs.
 
@@ -232,7 +234,8 @@ an existing override and does not edit shell configuration or running sessions.
 Repeat with `ours-install client install` to reuse imported inputs and installed
 package records. Existing settings and Fleet-generated files are preserved. A
 prepared profile for the same endpoint/instance may supply a valid replacement
-issued token; another server is refused without changing the default. Invalid
+issued token; a different server instance is refused without changing the default. A verified
+new gateway address for the same instance updates the shared profile for new clients. Invalid
 server access is rejected before import. An acquisition or component failure
 reports incomplete setup and keeps the saved configuration for retry. Selected
 native integrations whose executable is unavailable are incomplete, not installed.
@@ -243,7 +246,7 @@ Interactive no-argument installation asks for package/Docker server mode, a
 prepared client profile, or `client`. Client setup offers the saved server when
 present. On first setup it asks for the server HTTP endpoint, issued-token file,
 source manifest and integration choices, obtains the instance UUID from
-`/selection`, displays it, then checks authenticated daemon API access before
+`/.well-known/ours` at the gateway, displays it, then checks authenticated daemon API access before
 saving anything. No UUID must be entered manually. The 2.0 HTTP flow assumes the
 approved trusted same-host deployment; selection metadata is not cryptographic
 server authentication. Fleet collects missing setup answers through its own wizard.

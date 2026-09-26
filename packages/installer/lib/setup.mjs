@@ -1,3 +1,4 @@
+import { validateGatewayClientProfile } from './target.mjs';
 import { gatewayAddress } from './gateway.mjs';
 import { inspectLegacyMigration } from './legacy-migration.mjs';
 import { join } from 'node:path';
@@ -32,6 +33,8 @@ export async function prepareSetupPlan(options, effects) {
   options = validateSetupOptions(options, { interactive: options.interactive });
   if (effects.platform?.platform === 'win32') throw new InstallUsageError('Run ours-install inside WSL with Docker Desktop integration on Windows. Direct Windows Node installations are not supported.');
   const plan = { ...options };
+  if (options.scope === 'all' && options.mode === 'packages' && options.integrations?.length)
+    throw new InstallUsageError('Gateway-only clients require a gateway. Use Docker full-stack setup, or install the native server separately and provision an HTTP gateway before client setup; nothing was changed.');
   if (options.scope !== 'server') {
     for (const name of ['OURS_API_TOKEN', 'OURS_PORT', 'OURS_STATE_DIR', 'OURS_DAEMON_ID']) {
       if (effects.env?.[name]?.trim()) throw new InstallUsageError(`${name} conflicts with the selected client profile. Clear this override before full-stack/client setup; nothing was changed.`);
@@ -73,7 +76,7 @@ export async function prepareSetupPlan(options, effects) {
       throw new InstallUsageError('This user already has clients attached to a different server; their saved connection was not changed');
     }
   } else {
-    const profile = validateHostProfile(readObject(effects, options.config, 'Client profile'));
+    const profile = validateGatewayClientProfile(readObject(effects, options.config, 'Client profile'));
     if (!profile) throw new InstallUsageError('Client profile must contain endpoint, expectedInstanceId and credentialPath');
     if (!effects.readText(profile.credentialPath)?.trim()) throw new InstallUsageError('Client credential file is missing or empty');
     plan.profile = profile;

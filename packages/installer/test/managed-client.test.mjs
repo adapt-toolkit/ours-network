@@ -9,7 +9,7 @@ function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'ours-client-import-'));
   const input = join(home, 'input');
   mkdirSync(input, { mode: 0o700 });
-  const profile = { endpoint: 'http://127.0.0.1:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: join(input, 'token') };
+  const profile = { serverUrl: 'http://127.0.0.1:4050', endpoint: 'http://127.0.0.1:4050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: join(input, 'token') };
   writeFileSync(profile.credentialPath, 'issued-client-token\n', { mode: 0o600 });
   const sourcesPath = join(input, 'sources.json');
   const fleetSettingsPath = join(input, 'fleet.json');
@@ -40,7 +40,7 @@ test('managed import keeps private source-independent state and preserves repeat
     f.effects.importClientProfile({ profile: { ...first.profile, credentialPath: replacement }, sourcesPath: saved.installer.sourcesPath, integrations: ['fleet'] });
     assert.equal(readFileSync(first.profile.credentialPath, 'utf8'), 'replacement-token');
     assert.equal(readFileSync(first.configPath, 'utf8'), before);
-    assert.throws(() => f.effects.importClientProfile({ profile: { ...first.profile, endpoint: 'http://other:3050' }, sourcesPath: saved.installer.sourcesPath, integrations: ['fleet'] }), /another server/i);
+    assert.throws(() => f.effects.importClientProfile({ profile: { ...first.profile, serverUrl: 'http://other:4050', endpoint: 'http://other:4050/daemon', expectedInstanceId: '00000000-0000-4000-8000-000000000001' }, sourcesPath: saved.installer.sourcesPath, integrations: ['fleet'] }), /another server/i);
     assert.equal(readFileSync(first.configPath, 'utf8'), before);
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });
@@ -60,10 +60,10 @@ test('guided metadata is followed by authenticated daemon API validation before 
   const server = createServer(async (req, res) => {
     requests.push([req.url, req.headers['x-ours-api-token']]);
     res.setHeader('content-type', 'application/json');
-    if (req.url === '/.well-known/ours') { res.statusCode = 404; return res.end('{}'); }
-    if (req.url === '/selection') return res.end(JSON.stringify({ schema: 1, instanceId: f.profile.expectedInstanceId, capabilities: ['external-sessions-v1'] }));
+    if (req.url === '/.well-known/ours') { const { gatewayDiscovery } = await import('../lib/gateway.mjs'); return res.end(JSON.stringify(gatewayDiscovery({instanceId:f.profile.expectedInstanceId}))); }
+    if (req.url === '/daemon/selection') return res.end(JSON.stringify({ schema: 1, instanceId: f.profile.expectedInstanceId, capabilities: ['external-sessions-v1'] }));
     if (req.headers['x-ours-api-token'] !== 'issued-client-token') { res.statusCode = 401; return res.end('{}'); }
-    if (req.url === '/version') return res.end('{"version":"test"}');
+    if (req.url === '/daemon/version') return res.end('{"version":"test"}');
     res.statusCode = 404; res.end('{}');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -74,7 +74,7 @@ test('guided metadata is followed by authenticated daemon API validation before 
     await f.effects.verifyHostProfile(profile);
 
     assert.equal(f.effects.readManagedClientProfile(), null, 'validation does not publish a default');
-    assert.ok(requests.some(([url, token]) => url === '/version' && token === 'issued-client-token'));
+    assert.ok(requests.some(([url, token]) => url === '/daemon/version' && token === 'issued-client-token'));
     assert.ok(!requests.some(([url]) => url === '/mcp'));
     writeFileSync(profile.credentialPath, 'wrong', { mode: 0o600 });
     await assert.rejects(f.effects.verifyHostProfile(profile), /HTTP 401/);
@@ -195,5 +195,19 @@ test('installed Fleet gate reads the answering executable and rejects missing or
       if (capabilities?.length) await f.effects.qualifyInstalledGatewayClient(profile);
       else await assert.rejects(f.effects.qualifyInstalledGatewayClient(profile), /upgrade Fleet/);
     }
+  } finally { rmSync(f.home, { recursive: true, force: true }); }
+});
+
+test('same-instance gateway address relocation preserves settings and credential ownership', () => {
+  const f = fixture();
+  try {
+    const first = f.effects.importClientProfile({ profile: f.profile, sourcesPath: f.sourcesPath, integrations: ['fleet'], fleetSettingsPath: f.fleetSettingsPath });
+    const next = { ...f.profile, serverUrl: 'https://gateway.example/base', endpoint: 'https://gateway.example/base/daemon' };
+    const moved = f.effects.importClientProfile({ profile: next, sourcesPath: f.sourcesPath, integrations: ['codex'] });
+    assert.equal(moved.profile.serverUrl, next.serverUrl);
+    assert.equal(moved.profile.expectedInstanceId, first.profile.expectedInstanceId);
+    assert.equal(moved.profile.credentialPath, first.profile.credentialPath);
+    assert.deepEqual(moved.settings, first.settings);
+    assert.equal(f.effects.readManagedClientProfile().endpoint, next.endpoint);
   } finally { rmSync(f.home, { recursive: true, force: true }); }
 });

@@ -58,8 +58,8 @@ test('validation is pure and distinguishes interactive Fleet wizard from strict 
   assert.deepEqual(input, snapshot); assert.notEqual(result.integrations, input.integrations);
 });
 
-test('platform recommendations prefer native Linux x64 and Docker elsewhere', () => {
-  assert.equal(recommendedMode({ platform: 'linux', arch: 'x64', release: '6.8' }).mode, 'packages');
+test('platform recommendations select the integrated Docker gateway', () => {
+  assert.equal(recommendedMode({ platform: 'linux', arch: 'x64', release: '6.8' }).mode, 'docker');
   for (const platform of [{ platform: 'darwin', arch: 'arm64' }, { platform: 'win32', arch: 'x64' }, { platform: 'linux', arch: 'arm64' }, { platform: 'linux', arch: 'x64', release: '5.15-microsoft-standard-WSL2' }]) assert.equal(recommendedMode(platform).mode, 'docker');
 });
 

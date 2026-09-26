@@ -4,7 +4,7 @@ export const USAGE = `ours-install — interactive setup or complete CLI presets
   ours-install
     Opens the console form. Choose all (server + clients), server, or client;
     runtime, installation directory, identity, integrations and Fleet settings.
-    Linux x64 recommends native; macOS/Windows recommend Docker. Windows uses WSL.
+    Docker provides the full-stack gateway; native mode is server-only. Windows uses WSL.
 
   Full stack, with every required answer preset (no prompts):
     ours-install --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json
@@ -29,7 +29,7 @@ export const USAGE = `ours-install — interactive setup or complete CLI presets
   --fleet-settings PATH     JSON settings for Fleet; mandatory for CLI presets selecting Fleet
   --config PATH             complete connection profile for client-only setup
   --sources PATH            explicit full development source policy override
-  --port N                  daemon port (default 3050 on a fresh installation)
+  --port N                  public gateway port for Docker (default 3050; e.g. 4050)
   --server-url URL          external gateway URL (Docker install; configure authenticated entry separately)
   --cowork-port N           cowork port (default 3052)
   --messenger-port N        messenger port (default 8420)
