@@ -10,10 +10,10 @@ control local processes; they do not carry server management requests.
 ## Release availability
 
 The nightly manifest selects one published dependency graph: SDK
-`3.8.1-nightly.13`, CLI `2.8.1-nightly.11`, daemon `3.8.1-nightly.5`,
-Fleet `1.2.0-nightly.16`, MCP/Codex/Claude Code `1.2.0-nightly.8`,
-Telegram `1.0.1-nightly.7`, Messenger `1.0.31-nightly.7`, and Cowork
-`1.3.3-nightly.20260926.f1dc366`. Exact archive checksums are retained in
+`3.8.1-nightly.14`, CLI `2.8.1-nightly.12`, daemon `3.8.1-nightly.6`,
+Fleet `1.2.0-nightly.17`, MCP/Codex/Claude Code `1.2.0-nightly.9`,
+Telegram `1.0.1-nightly.8`, Messenger `1.0.31-nightly.8`, and Cowork
+`1.3.3-nightly.20260926.ceab465`. Exact archive checksums are retained in
 `releases/nightly.json`; the host CLI uses the same SDK/CLI pair.
 
 The coordinated installer release must include these pins before using the
@@ -21,10 +21,9 @@ commands below. Its release gate verifies the actual registry and vendored
 package graphs, client acquisition/retry, and rejection of dependency drift.
 These checks do not deploy or certify an existing server installation.
 
-Known limitation of this daemon version: server-side CLI `daemon stop/restart`
-can report a socket error during shutdown. The correction is tracked in
-[SDK PR70](https://github.com/adapt-toolkit/ours-sdk/pull/70); it is not included
-in the versions above. Client profile commands do not control server processes.
+The daemon includes ADAPT SDK/native `0.12.1` and the shutdown socket-reset
+correction from [SDK PR70](https://github.com/adapt-toolkit/ours-sdk/pull/70).
+Client profile commands do not control server processes.
 
 ## Fresh full-stack setup on localhost:4050
 
