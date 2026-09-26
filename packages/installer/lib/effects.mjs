@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { clientPackageNames, maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
-import { validateHostProfile } from './target.mjs';
+import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
 import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress } from './gateway.mjs';
 import { createServerOnboarding } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
@@ -1272,20 +1272,15 @@ export function networkEffects(effects) {
       const request = path => fetch(`${base}${path}`, { redirect: 'error', signal: AbortSignal.timeout(5000) });
       const discovery = await request('/.well-known/ours');
       if (discovery.ok) return validateGatewayDiscovery(base, await discovery.json(), resolve(credentialPath));
-      // Only an absent discovery resource denotes a legacy direct daemon. Never
-      // reinterpret authentication, redirect, or malformed metadata as legacy.
-      if (discovery.status !== 404) throw new Error(`Gateway discovery answered HTTP ${discovery.status}`);
-      const response = await request('/selection');
-      if (!response.ok) throw new Error(`Daemon selection answered HTTP ${response.status}`);
-      const selection = await response.json();
-      return validateHostProfile({ endpoint: base, expectedInstanceId: selection.instanceId, credentialPath: resolve(credentialPath) });
+      throw new Error(`Gateway discovery answered HTTP ${discovery.status}; enable the gateway. Direct daemon fallback is not supported.`);
     },
     importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh = false }) {
+      profile = validateGatewayClientProfile(profile);
       const root = join(home, '.ours-client');
       const configPath = join(root, 'profile.json');
       const credentialPath = join(root, 'credential');
       const current = effects.readManagedClientProfile();
-      if (current && (current.endpoint !== profile.endpoint || current.expectedInstanceId !== profile.expectedInstanceId))
+      if (current && current.expectedInstanceId !== profile.expectedInstanceId)
         throw new Error('Managed client already selects another server; existing default was not changed');
       assertPrivateRegularFile(profile.credentialPath, 'credential');
       const credential = readFileSync(profile.credentialPath, 'utf8');
@@ -1300,7 +1295,10 @@ export function networkEffects(effects) {
       if (current && !refresh) {
         assertPrivateRegularFile(credentialPath, 'managed credential');
         if (readFileSync(credentialPath, 'utf8') !== credential) atomicWriteConfig(credentialPath, credential);
-        return { configPath, profile: validateHostProfile(current), settings: current.installer };
+        const saved = { ...current, ...profile, credentialPath };
+        if (current.endpoint !== saved.endpoint || current.serverUrl !== saved.serverUrl)
+          atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
+        return { configPath, profile: validateGatewayClientProfile(saved), settings: current.installer };
       }
       const settings = { sourcesPath: join(root, 'sources.json'), integrations };
       if (fleetSettings) settings.fleetSettingsPath = join(root, 'fleet-settings.json');
