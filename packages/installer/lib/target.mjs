@@ -105,6 +105,13 @@ export function validateHostProfile(value) {
   return { endpoint: endpointBase, expectedInstanceId, credentialPath };
 }
 
+/** Client installs require the single gateway even when a legacy server profile exists. */
+export function validateGatewayClientProfile(value) {
+  if (!value || typeof value.serverUrl !== 'string') throw profileError('serverUrl is required; enable the server gateway and import its client profile. Direct daemon endpoints are not client routes.');
+  const serverUrl = serverBase(value.serverUrl);
+  return validateHostProfile({ ...value, endpoint: value.endpoint ?? serverUrl + '/daemon' });
+}
+
 export function resolveProfileSelection({ args, env = {}, home = homedir(), exists, readProfile }) {
   const explicit = (env.OURS_CONFIG ?? '').trim();
   const configPath = explicit ? resolve(explicit) : resolve(home, DEFAULT_STATE_DIR_NAME, DAEMON_CONFIG);

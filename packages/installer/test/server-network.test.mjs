@@ -292,7 +292,7 @@ test('first server install resolves the packaged policy once before retaining it
 });
 
 test('client verifies daemon API before any integration mutation', async () => {
-  const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token' };
+  const profile = { serverUrl: 'http://server:3050', endpoint: 'http://server:3050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token' };
   const effects = fx({ profile, json: { '/home/me/profile.json': profile } });
   effects.verifyHostProfile = async () => { throw new Error('Daemon API is absent'); };
   assert.equal(await runInstall(['client', 'install', '--config', '/home/me/profile.json'], effects), 2);
@@ -301,7 +301,7 @@ test('client verifies daemon API before any integration mutation', async () => {
 });
 
 test('client-only setup uses the packaged policy without an external sources input', async () => {
-  const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token', installer: { integrations: ['codex'] } };
+  const profile = { serverUrl: 'http://server:3050', endpoint: 'http://server:3050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token', installer: { integrations: ['codex'] } };
   const effects = fx({ profile, json: { '/home/me/profile.json': profile } });
   assert.equal(await runInstall(['client', 'install', '--config', '/home/me/profile.json'], effects), 2);
   assert.deepEqual(effects.recorder.ran, []);
@@ -313,7 +313,7 @@ test('client profile resolves relative Fleet settings and retains profile and ou
   const profilePath = '/home/me/private/client/profile.json';
   const sourcesPath = '/home/me/private/client/sources.json';
   const settingsPath = '/home/me/private/client/setup/fleet.json';
-  const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc',
+  const profile = { serverUrl: 'http://server:3050', endpoint: 'http://server:3050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc',
     credentialPath: '/home/me/token', installer: { sourcesPath: 'sources.json', integrations: ['fleet'],
       fleetSettingsPath: 'setup/fleet.json' } };
   const fleetConfig = '/home/me/fleet.yaml';
@@ -544,7 +544,7 @@ test('native owner decoding accepts exact emitted escaped paths, not comments or
 });
 
 test('guided client selection discovers instance, validates before import, and reports unavailable selected integrations', async () => {
-  const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/private/token' };
+  const profile = { serverUrl: 'http://server:3050', endpoint: 'http://server:3050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/private/token' };
   const sources = { packages: {
     '@ours.network/sdk': { type: 'npm', version: '3.7.2' },
     '@ours.network/codex': { type: 'npm', version: '1.1.1' },
@@ -558,7 +558,7 @@ test('guided client selection discovers instance, validates before import, and r
   effects.importClientProfile = options => { calls.push('import'); return publish(options); };
   effects.acquireClientPackages = async (path, sourcesPath) => { calls.push(['acquire', path, sourcesPath]); return { localPackages: {}, packages: {} }; };
   assert.equal(await runInstall(['client', 'install'], effects), 2);
-  assert.deepEqual(calls.slice(0, 3), [['discover', profile.endpoint, profile.credentialPath], 'daemon', 'import']);
+  assert.deepEqual(calls.slice(0, 3), [['discover', profile.serverUrl, profile.credentialPath], 'daemon', 'import']);
   assert.deepEqual(calls.at(-1), ['acquire', '/home/me/.ours-client/profile.json', '/home/me/.ours-client/sources.json']);
   assert.match(effects.recorder.out.join('\n'), /Client setup incomplete \(codex\)/);
   assert.doesNotMatch(effects.recorder.askedLines.join('\n'), /UUID|instance/i);
@@ -567,7 +567,7 @@ test('guided client selection discovers instance, validates before import, and r
 test('saved client retry preserves settings, refuses a different server and diagnoses an explicit environment override', async () => {
   const configPath = '/home/me/.ours-client/profile.json';
   const sourcesPath = '/home/me/.ours-client/sources.json';
-  const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/.ours-client/credential', installer: { sourcesPath, integrations: ['fleet'] } };
+  const profile = { serverUrl: 'http://server:3050', endpoint: 'http://server:3050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/.ours-client/credential', installer: { sourcesPath, integrations: ['fleet'] } };
   const effects = fx({ json: { [configPath]: profile, [sourcesPath]: { packages: {
     '@ours.network/sdk': { type: 'npm', version: '3.7.2' }, '@ours.network/cli': { type: 'npm', version: '2.7.2' }, '@ours.network/fleet': { type: 'npm', version: '1.1.5' },
   } } }, text: { '/home/me/fleet.yaml': 'retained' }, env: { OURS_CONFIG: '/input/removed.json' } });
@@ -575,7 +575,7 @@ test('saved client retry preserves settings, refuses a different server and diag
   assert.equal(await runInstall(['client', 'install'], effects), 0);
   assert.match(effects.recorder.out.join('\n'), /explicit OURS_CONFIG override/);
   assert.match(effects.recorder.out.join('\n'), /no OURS_CONFIG export is required/);
-  effects.readProfile = () => ({ ...profile, endpoint: 'http://other:3050' });
+  effects.readProfile = () => ({ ...profile, serverUrl: 'http://other:3050', endpoint: 'http://other:3050/daemon', expectedInstanceId: '00000000-0000-4000-8000-000000000001' });
   const writes = effects.recorder.wrote.length;
   assert.equal(await runInstall(['client', 'install', '--config', '/input/another.json'], effects), 2);
   assert.equal(effects.recorder.wrote.length, writes);
@@ -584,7 +584,7 @@ test('saved client retry preserves settings, refuses a different server and diag
 
 test('missing client dependency selection refuses before activating the managed profile', async () => {
   const path = '/home/me/profile.json';
-  const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token', installer: { sourcesPath: '/input/sources.json', integrations: ['codex'] } };
+  const profile = { serverUrl: 'http://server:3050', endpoint: 'http://server:3050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/token', installer: { sourcesPath: '/input/sources.json', integrations: ['codex'] } };
   const effects = fx({ profile, json: { [path]: profile, '/input/sources.json': { packages: { '@ours.network/codex': { type: 'npm', version: '1.1.1' } } } } });
   assert.equal(await runInstall(['client', 'install', '--config', path], effects), 2);
   assert.equal(effects.recorder.wrote.length, 0);
@@ -670,7 +670,7 @@ test('prepared plugin dependencies survive native cache relocation and setup ret
 test('native command publication failure reports incomplete setup and retains its retry route', async () => {
   const configPath = '/home/me/.ours-client/profile.json';
   const sourcesPath = '/home/me/.ours-client/sources.json';
-  const profile = { endpoint: 'http://server:3050', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/.ours-client/credential', installer: { sourcesPath, integrations: ['fleet'] } };
+  const profile = { serverUrl: 'http://server:3050', endpoint: 'http://server:3050/daemon', expectedInstanceId: '12345678-1234-1234-1234-123456789abc', credentialPath: '/home/me/.ours-client/credential', installer: { sourcesPath, integrations: ['fleet'] } };
   const effects = fx({ json: { [configPath]: profile, [sourcesPath]: { packages: Object.fromEntries(
     ['sdk', 'cli', 'fleet'].map(name => [`@ours.network/${name}`, { type: 'npm', version: '1.2.3' }]),
   ) } }, text: { '/home/me/fleet.yaml': 'retained' } });

@@ -1,3 +1,4 @@
+import { validateGatewayClientProfile } from './target.mjs';
 import { enableGateway } from './gateway-transition.mjs';
 import { executeLegacyMigration } from './legacy-migration.mjs';
 // ours-install v3 — the orchestrator.
@@ -1449,7 +1450,7 @@ export async function runClientCommand(command, effects) {
     configPath = managedPath;
   }
   let profile;
-  if (configPath) profile = validateHostProfile(effects.readProfile(configPath));
+  if (configPath) profile = validateGatewayClientProfile(effects.readProfile(configPath));
   else if (!command.preset && effects.interactive) {
     const endpoint = await effects.askLine('Server HTTP or HTTPS endpoint: ', 'http://127.0.0.1:3050');
     const credentialPath = await effects.askLine('Private issued-token file: ', '');
@@ -1457,7 +1458,7 @@ export async function runClientCommand(command, effects) {
     profile = await effects.discoverClientProfile(endpoint, credentialPath);
   }
   if (!profile) throw new InstallUsageError('client install requires a complete network profile; supply --config or use the interactive client setup');
-  if (saved && (saved.endpoint !== profile.endpoint || saved.expectedInstanceId !== profile.expectedInstanceId))
+  if (saved && saved.expectedInstanceId !== profile.expectedInstanceId)
     throw new InstallUsageError('Managed client already selects another server; existing default was not changed');
   for (const name of ['OURS_API_TOKEN', 'OURS_PORT', 'OURS_STATE_DIR', 'OURS_DAEMON_ID']) {
     if (effects.env[name]?.trim()) throw new InstallUsageError(`${name} conflicts with client profile selection`);

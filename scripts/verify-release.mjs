@@ -81,6 +81,34 @@ try {
    const { realpathSync } = await import('node:fs');
    if (realpathSync(first.cliBin) !== realpathSync(join(dir,'home/bin/ours'))) throw new Error('Client acquisition published a different CLI');
    console.log('Verified actual client-only acquisition, private host CLI publication and retry after global Fleet installation.');
+   if (release.channel === 'nightly') {
+    const { realEffects } = await import('../packages/installer/lib/effects.mjs');
+    const clientHome = join(dir, 'client-home');
+    mkdirSync(clientHome, {mode:0o700});
+    const acquisition = realEffects({ home: clientHome, env: {...env, HOME:clientHome, NPM_CONFIG_PREFIX:clientHome}, out:console.log });
+    const sourcesPath = join(clientHome,'sources.json');
+    writeFileSync(sourcesPath,JSON.stringify({release,packages:Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,{type:'npm',version:p.version}]))}));
+    const profilePath = join(clientHome,'.ours-client/profile.json');
+    const integrations = ['fleet','codex','claude-code'];
+    const options = {gatewayServerUrl:'http://127.0.0.1:4050/ours'};
+    const first = await acquisition.acquireClientPackages(profilePath,sourcesPath,integrations,options);
+    const second = await acquisition.acquireClientPackages(profilePath,sourcesPath,integrations,options);
+    if (first.fleetBin !== second.fleetBin || first.cliBin !== second.cliBin) throw new Error('Client retry changed retained acquisition');
+    for (const name of ['codex','claude-code']) await acquisition.prepareClientMarketplace(name,first.localPackages[name]);
+    const { dirname } = await import('node:path');
+    const acquisitionRoot = dirname(dirname(dirname(first.fleetBin)));
+    const hiddenLock = join(acquisitionRoot,'node_modules/.package-lock.json');
+    const retained = readFileSync(hiddenLock);
+    const tampered = JSON.parse(retained);
+    tampered.packages['node_modules/@ours.network/sdk'].version = '0.0.0';
+    writeFileSync(hiddenLock,JSON.stringify(tampered));
+    let rejected = false;
+    try { await acquisition.acquireClientPackages(profilePath,sourcesPath,integrations,options); } catch (error) { if (!/Release graph refused/.test(error.message)) throw error; rejected = true; }
+    finally { writeFileSync(hiddenLock,retained); }
+    if (!rejected) throw new Error('Client acquisition accepted SDK drift');
+    console.log('Verified client release acquisition, Fleet gateway capability, both marketplaces, retry and graph tamper rejection.');
+   }
+
   }
  }
 
