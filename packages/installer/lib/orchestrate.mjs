@@ -1458,7 +1458,7 @@ export async function runClientCommand(command, effects) {
     profile = await effects.discoverClientProfile(endpoint, credentialPath);
   }
   if (!profile) throw new InstallUsageError('client install requires a complete network profile; supply --config or use the interactive client setup');
-  if (saved && (saved.endpoint !== profile.endpoint || saved.expectedInstanceId !== profile.expectedInstanceId))
+  if (saved && saved.expectedInstanceId !== profile.expectedInstanceId)
     throw new InstallUsageError('Managed client already selects another server; existing default was not changed');
   for (const name of ['OURS_API_TOKEN', 'OURS_PORT', 'OURS_STATE_DIR', 'OURS_DAEMON_ID']) {
     if (effects.env[name]?.trim()) throw new InstallUsageError(`${name} conflicts with client profile selection`);

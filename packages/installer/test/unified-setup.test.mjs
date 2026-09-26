@@ -7,7 +7,7 @@ import { runServerCommand } from '../lib/orchestrate.mjs';
 const root = '/private/install';
 const record = { schema: 2, mode: 'packages', root, workDir: `${root}/runtime`, sourcesPath: `${root}/sources.json`, configPath: `${root}/storage/state/daemon/config.json`, instanceId: '12345678-1234-1234-1234-123456789abc', project: 'ours-test', services: ['daemon', 'telegram', 'cowork', 'messenger'], port: 3050, coworkPort: 3052, messengerPort: 8420, uid: 1000, gid: 1000 };
 const policy = { packages: Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'codex', 'claude-code', 'fleet'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '1.0.0' }])) };
-const options = { scope: 'all', operation: 'install', mode: 'packages', stateDir: root, identityName: 'Test Human', integrations: ['codex'], port: 3050, coworkPort: 3052, messengerPort: 8420, interactive: false };
+const options = { scope: 'all', operation: 'install', mode: 'docker', stateDir: root, identityName: 'Test Human', integrations: ['codex'], port: 3050, coworkPort: 3052, messengerPort: 8420, interactive: false };
 function fixture(existing = false) {
   const events = [], lines = [];
   const files = new Map(existing ? [[`${root}/installation.json`, { ...record }], [record.sourcesPath, policy]] : []);
@@ -93,7 +93,7 @@ test('retained release reconstructs client selection without changing component 
 
 test('client-only repair retains its pinned source policy while explicit update selects the new release', async () => {
   const { effects, files } = fixture();
-  const profile = { endpoint: 'http://127.0.0.1:3050', expectedInstanceId: record.instanceId, credentialPath: '/private/token', installer: { sourcesPath: '/private/retained.json' } };
+  const profile = { serverUrl: 'http://127.0.0.1:3050', endpoint: 'http://127.0.0.1:3050/daemon', expectedInstanceId: record.instanceId, credentialPath: '/private/token', installer: { sourcesPath: '/private/retained.json' } };
   const retained = { packages: { '@ours.network/codex': { type: 'npm', version: '0.9.0' } } };
   files.set('/private/profile.json', profile); files.set('/private/retained.json', retained);
   effects.readText = () => 'credential'; effects.readManagedClientProfile = () => profile;

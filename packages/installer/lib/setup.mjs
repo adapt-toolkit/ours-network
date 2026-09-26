@@ -81,7 +81,7 @@ export async function prepareSetupPlan(options, effects) {
     if (!effects.readText(profile.credentialPath)?.trim()) throw new InstallUsageError('Client credential file is missing or empty');
     plan.profile = profile;
     const saved = effects.readManagedClientProfile();
-    if (saved && (saved.endpoint !== profile.endpoint || saved.expectedInstanceId !== profile.expectedInstanceId)) throw new InstallUsageError('Managed clients already select another server; existing connection was not changed');
+    if (saved && saved.expectedInstanceId !== profile.expectedInstanceId) throw new InstallUsageError('Managed clients already select another server; existing connection was not changed');
     if (saved && options.operation === 'install' && !options.sources) plan.sourcePolicy = readObject(effects, saved.installer.sourcesPath, 'Retained client source policy');
   }
   // Dry-run never spawns a resolver or acquires an installation lock.

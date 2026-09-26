@@ -98,7 +98,7 @@ function interactiveFixture({ existing = null, lines = {}, selections = {}, chos
 
 test('recommended wizard flow uses menus and multiselect, with only the Human name entered as text', async () => {
   const f = interactiveFixture(); const options = await collectSetupOptions(f.effects);
-  assert.equal(options.scope, 'all'); assert.equal(options.mode, 'packages');
+  assert.equal(options.scope, 'all'); assert.equal(options.mode, 'docker');
   assert.equal(options.stateDir, '/home/fixture/.ours-install'); assert.equal(options.identityName, 'Taylor');
   assert.deepEqual(options.integrations, ['codex', 'fleet']); assert.deepEqual(options.explicitPorts, []);
   assert.deepEqual(f.questions.filter(row => row[2] === 'text').map(row => row[0]), ['What name should others see? ']);
