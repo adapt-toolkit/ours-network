@@ -29,16 +29,56 @@ function validateRecord(record) {
 }
 
 export function createServerOnboarding(effects, { compose, localEnv, bin }) {
-  async function identityCommand(record, args) {
-    const result = record.mode === 'docker'
-      ? await compose(record, ['exec', '-T', 'daemon', 'node', '/opt/ours/node_modules/@ours.network/cli/dist/cli.js', ...args, '--config', '/var/lib/ours/config.json', '--state-dir', '/var/lib/ours', '--json'])
-      : await effects.run(bin(record, 'ours'), [...args, '--config', record.configPath, '--state-dir', installationPaths(record).daemon, '--json'], { env: localEnv(record) });
+  // CLI client commands only accept gateway profiles in current releases. Use
+  // the installed SDK against the selected local daemon and its private file.
+  const identityScript = `
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
+const selection = JSON.parse(process.argv[1]);
+const require = createRequire(selection.anchor);
+const { attachOursClient } = await import(pathToFileURL(require.resolve('@ours.network/sdk/client')).href);
+const client = await attachOursClient({ endpoint: selection.endpoint,
+  expectedInstanceId: selection.instanceId, credentialPath: selection.credentialPath,
+  sessionMode: 'external', leaseToken: randomUUID(), env: {} });
+try {
+  const result = selection.operation === 'list' ? await client.listIdentities()
+    : await client.createRootIdentity({ name: selection.name, bio: '',
+        exposeLocal: true, localAutoAccept: true, skipIfRootExists: true });
+  process.stdout.write(JSON.stringify(result));
+} catch (error) {
+  process.stdout.write(JSON.stringify({ onboardingError: error.code || 'OWNER_OPERATION_FAILED' }));
+} finally {
+  try { await client.releaseLease(); } finally { await client.close(); }
+}
+`;
+  async function identityCommand(record, operation, name) {
+    validateRecord(record);
+    const docker = record.mode === 'docker';
+    const selection = {
+      operation, ...(name === undefined ? {} : { name }),
+      endpoint: `http://127.0.0.1:${docker ? 3050 : record.port}`,
+      instanceId: record.instanceId,
+      credentialPath: docker ? '/var/lib/ours/daemon-token' : join(installationPaths(record).daemon, 'daemon-token'),
+      anchor: docker ? '/opt/ours/package.json' : join(record.workDir, 'package.json'),
+    };
+    const args = ['--input-type=module', '-e', identityScript, JSON.stringify(selection)];
+    const result = docker
+      ? await compose(record, ['exec', '-T', 'daemon', 'node', ...args])
+      : await effects.run(process.execPath, args, { env: localEnv(record), sensitive: true });
     if (result.code !== undefined && result.code !== 0) throw new Error('Owner identity operation failed');
-    try { return JSON.parse(result.stdout); }
+    let value;
+    try { value = JSON.parse(result.stdout); }
     catch { throw new Error('Owner identity operation returned malformed JSON'); }
+    if (value?.onboardingError) {
+      const error = new Error('Owner identity operation failed');
+      error.code = value.onboardingError;
+      throw error;
+    }
+    return value;
   }
   async function identities(record) {
-    const rows = await identityCommand(record, ['identity', 'list']);
+    const rows = await identityCommand(record, 'list');
     if (!Array.isArray(rows) || rows.some(row => !row || typeof row.name !== 'string'
         || (!['root', 'role'].includes(row.kind) && !['reconciling', 'awaiting-root', 'migration-failed', 'refresh-failed'].includes(row.status))
         || (row.kind && (typeof row.cid !== 'string' || !row.cid)))) throw new Error('Owner identity list is malformed');
@@ -60,10 +100,11 @@ export function createServerOnboarding(effects, { compose, localEnv, bin }) {
       if (prior.rows.some(row => row.name === name)) throw new Error('Requested Human identity name already exists; no identity was changed');
       effects.out?.(`Creating Human identity ${name}; retaining ${prior.rows.length} existing identities.`);
       try {
-        await identityCommand(record, ['identity', 'create-root', '--name', name, '--skip-if-root-exists', 'true']);
+        await identityCommand(record, 'create-root', name);
       } catch (error) {
-        // ROOT_EXISTS is currently a CLI error. A concurrent creator is safe only
+        // A concurrent creator is safe only
         // when the authoritative list now contains a root; other errors stay errors.
+        if (error.code !== 'ROOT_EXISTS') throw error;
         const after = await identities(record);
         if (after.root) return retained(after);
         throw error;
@@ -76,7 +117,7 @@ export function createServerOnboarding(effects, { compose, localEnv, bin }) {
     },
     async prepareLocalClient(record, integrations, fleetSettingsPath) {
       validateRecord(record);
-      if (!Array.isArray(integrations) || !integrations.length || new Set(integrations).size !== integrations.length
+      if (!Array.isArray(integrations) || new Set(integrations).size !== integrations.length
           || integrations.some(name => !['codex', 'claude-code', 'fleet'].includes(name))) throw new Error('Client integrations must select codex, claude-code and/or fleet');
       if (fleetSettingsPath !== undefined) {
         if (typeof fleetSettingsPath !== 'string' || !isAbsolute(fleetSettingsPath) || resolve(fleetSettingsPath) !== fleetSettingsPath) throw new Error('Fleet settings path must be absolute');

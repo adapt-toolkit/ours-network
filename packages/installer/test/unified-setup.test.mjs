@@ -32,7 +32,8 @@ function fixture(existing = false) {
 test('public executable invokes the unified setup entry', () => {
   const entry = readFileSync(new URL('../install.mjs', import.meta.url), 'utf8');
   assert.match(entry, /import \{ runSetup \} from '\.\/lib\/setup\.mjs'/);
-  assert.match(entry, /await runSetup\(process.argv.slice\(2\)/);
+  assert.match(entry, /const execute=workspace \? .* : runSetup/);
+  assert.match(entry, /await execute\(args, realEffects/);
 });
 
 test('incomplete CLI presets refuse before reads, locks or prompts', async () => {

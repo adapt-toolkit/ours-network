@@ -520,3 +520,33 @@ OURS_TEST_DOCKER=1 node --test test/gateway-docker.test.mjs
 PODMAN_COMPOSE_PROVIDER=/absolute/path/to/docker-compose \
   OURS_TEST_PODMAN=1 node --test test/gateway-docker.test.mjs
 ```
+
+## Account workspace enrollment (task build)
+
+The unmerged account onboarding feature requires matching reviewed installer,
+Fleet and Messenger task builds. Do not advertise it as available in `@latest`.
+Use an owned private directory and a 0600 downloaded payload:
+
+```sh
+node /absolute/task-ours-network/packages/installer/install.mjs \
+  --setup-workspace-file /absolute/private/workspace.payload \
+  --workspace-fleet-bin /absolute/task-ours-fleet/dist/cli.js \
+  --sources /absolute/private/task-sources.json
+```
+
+The wrapper defaults fresh hosts to the full Docker stack and retains existing
+Human roots through the installed SDK with exact instance/private credential
+selection. For an existing supported gateway add `--scope client --config` with
+its private profile. It clears competing inherited daemon selectors before Fleet
+initialization and enrollment; it never copies a browser device bearer to the
+account server. A private stdin payload is also accepted by `--setup-workspace -`.
+Encoding is not encryption; command arguments can enter history/process listings.
+Cloudflare management tokens are forbidden in these payloads.
+
+Docker and `cloudflared` are required for the fresh workflow. Supply a complete
+`--fleet-settings` JSON for noninteractive Fleet initialization, or answer its
+terminal prompts. Dry-run never initializes or enrolls Fleet. Read the matching
+ours-app `server/DEPLOYMENT.md` for exact task source-policy generation, external
+Google/Cloudflare prerequisites and account-server setup. On uncertain enrollment
+check account status before requesting a new payload; do not reset identities or
+replay a consumed invitation.

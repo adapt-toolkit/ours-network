@@ -90,7 +90,7 @@ function expandPaths(options, home) {
   return output;
 }
 
-export function parseSetupArgs(argv, { home } = {}) {
+export function parseSetupArgs(argv, { home, validate = true } = {}) {
   if (!Array.isArray(argv) || !argv.every(arg => typeof arg === 'string')) throw new Error('Arguments must be strings');
   const options = { interactive: false, explicitPorts: [] };
   const seen = new Set();
@@ -121,7 +121,7 @@ export function parseSetupArgs(argv, { home } = {}) {
   if (positional.length && scopes.includes(positional[0])) put('scope', positional.shift());
   if (positional.length && ['install', 'update'].includes(positional[0])) put('operation', positional.shift());
   if (positional.length) throw new Error(`Unexpected setup argument: ${positional.join(' ')}`);
-  return validateSetupOptions(expandPaths(options, home), { interactive: false });
+  return validate ? validateSetupOptions(expandPaths(options, home), { interactive: false }) : expandPaths(options, home);
 }
 
 export async function collectSetupOptions(effects) {
