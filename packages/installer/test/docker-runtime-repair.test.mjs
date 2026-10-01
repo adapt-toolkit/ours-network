@@ -57,6 +57,21 @@ function fixture(t, options = {}) {
   return { record, effects, calls, base, candidate, current: () => current };
 }
 
+test('private retained script copies require a persistent image rebuild marker', t => {
+  const f = fixture(t);
+  for (const directory of ['maintenance', 'runtime']) fs.mkdirSync(join(f.record.workDir, 'scripts', directory), { recursive: true, mode: 0o700 });
+  const module = join(f.record.workDir, 'scripts/maintenance/release-graph.mjs');
+  fs.writeFileSync(module, 'export const fixture = true;', { mode: 0o600 });
+  const dockerfile = join(f.record.workDir, 'Dockerfile');
+  fs.writeFileSync(dockerfile, 'FROM node:24\nCOPY scripts/runtime/entrypoint.sh /opt/ours/docker/entrypoint.sh\n');
+  assert.equal(refreshDockerPolicyCopy(f.record), true);
+  assert.match(fs.readFileSync(dockerfile, 'utf8'), /COPY --chmod=644 scripts/);
+  assert.equal(fs.statSync(module).mode & 0o777, 0o600);
+  assert.equal(refreshDockerPolicyCopy(f.record), true, 'interrupted rebuild remains required');
+  fs.unlinkSync(join(f.record.workDir, '.script-permissions-rebuild'));
+  assert.equal(refreshDockerPolicyCopy(f.record), false);
+});
+
 test('repair qualifies exact owner image without mounting state and preserves host privacy', async t => {
   const f = fixture(t);
   refreshDockerPolicyCopy(f.record);

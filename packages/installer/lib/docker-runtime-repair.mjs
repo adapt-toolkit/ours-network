@@ -1,6 +1,6 @@
 import { runContainer } from './container-engine.mjs';
 /** Qualify cached images before reuse; repair only the known root-owned 0600 policy. */
-import { lstatSync, readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync, openSync, closeSync, fstatSync, fchmodSync, constants } from 'node:fs';
+import { existsSync, readdirSync, lstatSync, readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync, openSync, closeSync, fstatSync, fchmodSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -12,6 +12,7 @@ const fail = message => { throw new Error(`Docker runtime verification refused: 
 const imageId = value => /^sha256:[0-9a-f]{64}$/.test(value ?? '');
 
 export function refreshDockerPolicyCopy(record) {
+  let rebuildScripts = false;
   if (record.workDir !== join(record.root, 'runtime')) fail('Unsafe retained Dockerfile: runtime directory differs from installation record');
   for (const directory of [record.root, record.workDir]) {
     const stat = lstatSync(directory);
@@ -36,7 +37,32 @@ export function refreshDockerPolicyCopy(record) {
     const current = lstatSync(path);
     if (current.dev !== stat.dev || current.ino !== stat.ino || current.nlink !== 1) fail('Unsafe retained Dockerfile: file changed during normalization');
     const oldLine = /^COPY sources\.json \/opt\/ours\/sources\.json$/m;
-    if (oldLine.test(text)) atomicWriteConfig(path, text.replace(oldLine, 'COPY --chmod=644 sources.json /opt/ours/sources.json'));
+    let updated = text.replace(oldLine, 'COPY --chmod=644 sources.json /opt/ours/sources.json');
+    // Only the shipped script COPY instructions are normalized. Existing image
+    // repair remains narrow; a private build context needs an actual rebuild.
+    const beforeScripts = updated;
+    const shipped = readFileSync(new URL('../assets/Dockerfile', import.meta.url), 'utf8');
+    const scriptCopies = new Map(shipped.split('\n').filter(line => line.startsWith('COPY --chmod=644 scripts/')).map(line => [line.replace(' --chmod=644', ''), line]));
+    updated = updated.split('\n').map(line => scriptCopies.get(line) || line).join('\n');
+    if (updated !== beforeScripts) {
+      for (const directory of ['scripts/maintenance', 'scripts/runtime']) {
+        const base = join(record.workDir, directory);
+        const dir = lstatSync(base);
+        if (!dir.isDirectory() || dir.uid !== process.getuid() || realpathSync(base) !== base) fail('Unsafe retained scripts directory');
+        for (const name of readdirSync(base)) {
+          if (!/\.(?:mjs|sh)$/.test(name)) continue;
+          const file = join(base, name), st = lstatSync(file);
+          if (!st.isFile() || st.nlink !== 1 || st.uid !== process.getuid() || realpathSync(file) !== file) fail('Unsafe retained script file');
+          if (!(st.mode & 0o004)) rebuildScripts = true;
+        }
+      }
+    }
+    // Store the need across an interrupted build. It is cleared only after the
+    // rebuilt image passes the same nonroot release/runtime qualification.
+    const marker = join(record.workDir, '.script-permissions-rebuild');
+    if (rebuildScripts) atomicWriteConfig(marker, 'required\n');
+    if (updated !== text) atomicWriteConfig(path, updated);
+    return rebuildScripts || existsSync(marker);
   } finally { closeSync(fd); }
 }
 
