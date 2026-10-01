@@ -21,6 +21,16 @@ try {
   execFileSync('tar', ['-xzf', join(distribution, packed.filename), '-C', distribution, '--no-same-owner']);
   const packedAssets = join(distribution, 'package/assets');
   fs.cpSync(packedAssets, root, { recursive: true });
+  // Reproduce materialization under bootstrap umask077: copied nonsecret
+  // scripts remain private on the host but must become readable in the image.
+  for (const dir of ['build', 'maintenance', 'runtime']) {
+    const base = join(root, 'scripts', dir);
+    fs.chmodSync(base, 0o700);
+    for (const name of fs.readdirSync(base)) {
+      const path = join(base, name);
+      if (fs.statSync(path).isFile()) fs.chmodSync(path, 0o600);
+    }
+  }
   const release = JSON.parse(fs.readFileSync('releases/nightly.json'));
   const policy = { release, packages: Object.fromEntries(Object.entries(release.packages).filter(([name]) => SERVER_PACKAGES.includes(name)).map(([name, value]) => [name, { type: 'npm', version: value.version }])) };
   const source = join(root, 'sources.json');
@@ -46,6 +56,7 @@ try {
       console.log('Runtime policy, scripts and release graph readable at UID', process.getuid());
     `]);
   }
+  assert.equal(fs.statSync(join(root, 'scripts/maintenance/release-graph.mjs')).mode & 0o777, 0o600);
   assert.equal(fs.statSync(source).mode & 0o777, 0o600, 'host policy remains private');
   // A prior installer left both an old Dockerfile and an unreadable existing image.
   const retained = join(root, 'retained'); fs.mkdirSync(retained, { mode: 0o700 });
@@ -65,7 +76,7 @@ try {
   catch (error) { assert.equal(error.status, 1); }
   const beforeContainer = JSON.parse(execFileSync('docker', ['inspect', failedContainer], { encoding: 'utf8' }))[0];
   assert.equal(beforeContainer.State.ExitCode, 1);
-  const record = { schema: 2, mode: 'docker', root: retained, workDir, sourcesPath, project, uid: 12345, gid: 12345 };
+  const record = { schema: 2, mode: 'docker', root: retained, workDir, sourcesPath, project, instanceId: randomUUID(), port: 3050, coworkPort: 3052, messengerPort: 3053, uid: 12345, gid: 12345 };
   const effects = realEffects({ env: process.env, out: console.log });
   await effects.prepareInstallation(record, { runtimeOnly: true });
   assert.equal(fs.statSync(join(workDir, 'Dockerfile')).mode & 0o777, 0o600);
@@ -79,6 +90,23 @@ try {
   assert.equal(metadata(retainedTag).Id, repaired.Id, 'second retry reuses qualified image');
   assert.equal(JSON.parse(execFileSync('docker', ['inspect', failedContainer], { encoding: 'utf8' }))[0].Image, broken.Id, 'qualification does not start or replace the actual daemon');
   assert.equal(fs.statSync(sourcesPath).mode & 0o777, 0o600);
+  // A cached image with unreadable scripts must rebuild from the retained
+  // selection, without deleting state or pretending policy-only repair worked.
+  const privateModule = join(workDir, 'scripts/maintenance/release-graph.mjs');
+  fs.chmodSync(privateModule, 0o600);
+  const retainedDockerfile = join(workDir, 'Dockerfile');
+  fs.writeFileSync(retainedDockerfile, fs.readFileSync(retainedDockerfile, 'utf8').replaceAll('COPY --chmod=644 scripts/', 'COPY scripts/'));
+  fs.writeFileSync(brokenFile, `FROM ${tag}\nCOPY --chmod=600 scripts/maintenance/release-graph.mjs /opt/ours/maintenance/release-graph.mjs\n`);
+  docker(['build', '-f', brokenFile, '-t', retainedTag, root]);
+  const scriptsBroken = metadata(retainedTag);
+  await effects.prepareInstallation(record, { runtimeOnly: true });
+  assert.notEqual(metadata(retainedTag).Id, scriptsBroken.Id);
+  assert.equal(fs.existsSync(join(workDir, '.script-permissions-rebuild')), false);
+  assert.equal(fs.statSync(privateModule).mode & 0o777, 0o600, 'host module remains private');
+  docker(['run', '--rm', '--read-only', '--network', 'none', '--cap-drop', 'ALL', '--user', '12345:12345', '--entrypoint', 'node', retainedTag, '--input-type=module', '-e', "import {verifyRuntimeRelease} from '/opt/ours/maintenance/release-graph.mjs'; if(!verifyRuntimeRelease('/opt/ours').verified) process.exit(1)"]);
+  const healthyScripts = metadata(retainedTag).Id;
+  await effects.prepareInstallation(record, { runtimeOnly: true });
+  assert.equal(metadata(retainedTag).Id, healthyScripts, 'retry reuses verified script rebuild');
   console.log('Verified installer repair of retained old assets/image after exit1, and idempotent retry.');
 
 } finally {

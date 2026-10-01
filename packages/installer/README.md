@@ -561,3 +561,9 @@ cookies/device IndexedDB must be linked anew on the new origin. See the app
 server/DEPLOYMENT.md switching procedure.
 
 Workspace setup automatically reuses the saved managed gateway profile (or explicit `--config`/`OURS_CONFIG`), including a host with a non-default server state directory. It does not reinstall server/client state, create a root, or initialize an existing Fleet configuration. It requires Fleet capability `workspace.enroll.preserve-profile-v1` and passes `--preserve-profile`; Fleet requires the matching Messenger capability before posting signed enrollment. Hosts running older Messenger must first update that host service through its supported installer lifecycle; this wrapper never guesses or replaces its server directory. After Owner releases Messenger/Fleet/installer, app bootstrap pins must be updated before removing the preview guard.
+
+### Private-context Docker script permissions
+
+Fresh image builds explicitly make non-secret maintenance/runtime scripts readable by the container user even when the host build context was copied under umask077. Host scripts, selected source policy and state retain their private permissions.
+
+For a pending installation using an older image, run the corrected installer against the same pending workspace. It recognizes older shipped script COPY instructions combined with private host script modes, updates those image COPY modes and rebuilds the daemon image from the retained source selection. It leaves host data and enrollment state intact and qualifies the rebuilt image before preparing services. A private retry marker retains the rebuild requirement after interruption; it is removed only after verification succeeds. This rebuild resolves third-party transitive dependencies using the existing testing-delivery rules; selected Ours versions and integrity remain release-checked. It is not a byte-identical image permission-layer repair.

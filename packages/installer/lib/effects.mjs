@@ -825,7 +825,7 @@ export function networkEffects(effects) {
       else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
       if (record.mode === 'docker') {
         if (engineName(record) === 'podman') atomicWriteConfig(join(record.workDir, 'compose.podman.json'), JSON.stringify({ services: Object.fromEntries(record.services.map(name => [name, { restart: 'unless-stopped' }])) }));
-        refreshDockerPolicyCopy(record);
+        const rebuildPrivateScripts = refreshDockerPolicyCopy(record);
         if (record.gateway) {
           atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
           atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
@@ -835,8 +835,9 @@ export function networkEffects(effects) {
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
         const image = await container(record, ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
-        if (image.code !== 0) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+        if (image.code !== 0 || rebuildPrivateScripts) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         await effects.qualifyDockerRuntime(record);
+        if (rebuildPrivateScripts) rmSync(join(record.workDir, '.script-permissions-rebuild'));
         if (record.gateway) {
           await effects.qualifyGatewayRuntime(record);
           await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
