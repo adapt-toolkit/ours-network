@@ -76,7 +76,7 @@ try {
   catch (error) { assert.equal(error.status, 1); }
   const beforeContainer = JSON.parse(execFileSync('docker', ['inspect', failedContainer], { encoding: 'utf8' }))[0];
   assert.equal(beforeContainer.State.ExitCode, 1);
-  const record = { schema: 2, mode: 'docker', root: retained, workDir, sourcesPath, project, uid: 12345, gid: 12345 };
+  const record = { schema: 2, mode: 'docker', root: retained, workDir, sourcesPath, project, instanceId: randomUUID(), port: 3050, coworkPort: 3052, messengerPort: 3053, uid: 12345, gid: 12345 };
   const effects = realEffects({ env: process.env, out: console.log });
   await effects.prepareInstallation(record, { runtimeOnly: true });
   assert.equal(fs.statSync(join(workDir, 'Dockerfile')).mode & 0o777, 0o600);
