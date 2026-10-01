@@ -48,6 +48,7 @@ for (const prefix of ['', '/nested/ours']) test(`gateway ${prefix || '/'} routes
     cpSync(join(root,'gateway.yaml'),join(root,'docker-compose.gateway.yaml'));
     const effects=realEffects({out:()=>{}});
     const retained={...record,schema:2,mode:'docker',containerEngine:'docker',root,workDir:root,services:['daemon','gateway']};
+    await assert.rejects(effects.verifyGateway(retained),/Gateway readiness failed.*(EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|CHECK_FAILED)/);
     await effects.serverLifecycle(retained,'start',['gateway']);
     await effects.verifyGateway(retained);
     assert.notEqual(compose(['ps','-q','gateway']).trim(),gatewayId);

@@ -782,21 +782,30 @@ export function networkEffects(effects) {
     async removeGatewayContainer(record) { await compose(record, ['rm', '-f', 'gateway']); },
     async verifyGateway(record) {
       const { prefix } = gatewayAddress(record);
-      const script = `const fs=require('node:fs');(async()=>{
+      const script = `const fs=require('node:fs');let stage='selection';(async()=>{
         const base=${JSON.stringify('http://gateway:8080' + prefix)};
         const get=async(path,options={})=>{const r=await fetch(base+path,{...options,redirect:'error',signal:AbortSignal.timeout(5000)});if(!r.ok)throw Error('Gateway readiness HTTP '+r.status);return r.json();};
         const selection=await get('/daemon/selection');
         if(selection.instanceId!==${JSON.stringify(record.instanceId)})throw Error('Gateway daemon instance mismatch');
+        stage='unauthenticated-management';
         const denied=await fetch(base+'/cowork/management/rpc',{method:'POST',redirect:'error',signal:AbortSignal.timeout(5000),headers:{'content-type':'application/json'},body:'{}'});
         await denied.body?.cancel();if(denied.status!==401)throw Error('Gateway management does not reject unauthenticated requests');
+        stage='credential';
         const token=fs.readFileSync('/var/lib/ours/daemon-token','utf8').trim();
         const headers={'x-ours-api-token':token,'content-type':'application/json'};
+        stage='authenticated-daemon';
         const identities=await get('/daemon/identities',{headers});
         if(!Array.isArray(identities.identities))throw Error('Gateway daemon API invalid');
+        stage='authenticated-management';
         const result=await get('/cowork/management/rpc',{method:'POST',headers,body:JSON.stringify({version:1,id:'installer-readiness',method:'room.list',params:{}})});
         if(result.version!==1||result.id!=='installer-readiness'||!Array.isArray(result.result)||result.error)throw Error('Gateway Cowork management unavailable');
-      })().catch(()=>{console.error('Authenticated gateway readiness failed');process.exitCode=1;});`;
-      await compose(record, ['exec', '-T', 'daemon', 'node', '-e', script], { sensitive: true });
+      })().catch(error=>{const code=error.cause?.code;process.stdout.write('gateway-readiness:'+stage+':'+(['EAI_AGAIN','ENOTFOUND','ECONNREFUSED','ETIMEDOUT'].includes(code)?code:'CHECK_FAILED'));process.exitCode=1;});`;
+      const result = await compose(record, ['exec', '-T', 'daemon', 'node', '-e', script], { sensitive: true, allowCodes: [1] });
+      if (result.code === 1) {
+        const match = /^gateway-readiness:(selection|unauthenticated-management|credential|authenticated-daemon|authenticated-management):(EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|CHECK_FAILED)$/.exec(result.stdout.trim());
+        const detail = match ? ` (${match[1]}, ${match[2]})` : '';
+        throw new Error(`Gateway readiness failed${detail}. Keep installation state intact; check the managed gateway startup and network connection, then retry setup.`);
+      }
     },
     async qualifyGatewayRuntime(record) {
       for (const [name, args, capability] of [
