@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, cpSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, cpSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gatewayCompose, gatewayNginx } from '../lib/gateway.mjs';
@@ -16,9 +17,11 @@ for (const prefix of ['', '/nested/ours']) test(`gateway ${prefix || '/'} routes
   const compose = args => docker(['compose','-p',project,'--project-directory',root,'-f',join(root,'base.yaml'),'-f',join(root,'gateway.yaml'),...args]);
   t.after(()=>{try {docker(['rm','-f',project+'-old-ip']);} catch {} });
   t.after(()=>{try {compose(['down','--timeout','3','--remove-orphans']);} finally {try {docker(['image','rm',`${project}:gateway`]);} finally {rmSync(root,{recursive:true,force:true});}}});
-  const fixture = `const http=require('http'); for(const port of [3050,3051,3052,8420]) http.createServer((q,s)=>{if(q.url==='/identities'&&q.headers['x-ours-api-token']!=='test-token'){s.writeHead(401);return s.end();}s.setHeader('content-type','application/json');s.end(JSON.stringify({path:q.url,port,token:q.headers['x-ours-api-token']}));}).on('upgrade',(q,s)=>{if(q.url!=='/ws')return s.destroy();const accept=require('crypto').createHash('sha1').update(q.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');s.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: '+accept+'\\r\\n\\r\\n');s.end();}).listen(port,'0.0.0.0');`;
+  const fixture = `const http=require('http'); for(const port of [3050,3051,3052,8420]) http.createServer((q,s)=>{if((q.url==='/identities'||q.url==='/management/rpc')&&q.headers['x-ours-api-token']!=='test-token'){s.writeHead(401);return s.end();}s.setHeader('content-type','application/json');const response=q.url==='/selection'?{instanceId:'${record.instanceId}'}:q.url==='/identities'?{identities:[]}:q.url==='/management/rpc'?{version:1,id:'installer-readiness',result:[]}:{path:q.url,port,token:q.headers['x-ours-api-token']};s.end(JSON.stringify(response));}).on('upgrade',(q,s)=>{if(q.url!=='/ws')return s.destroy();const accept=require('crypto').createHash('sha1').update(q.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');s.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: '+accept+'\\r\\n\\r\\n');s.end();}).listen(port,'0.0.0.0');`;
   writeFileSync(join(root,'server.cjs'),fixture);
-  writeFileSync(join(root,'base.yaml'),`services:\n  daemon:\n    image: node:24\n    command: [node, /fixture/server.cjs]\n    volumes: ["${root}:/fixture:ro,z"]\n    ports: ["3050"]\n    networks:\n      ours:\n        aliases: [cowork, messenger, telegram]\n  telegram:\n    image: node:24\n  cowork:\n    image: node:24\n    ports: ["3052"]\n  messenger:\n    image: node:24\n    ports: ["8420"]\nnetworks:\n  ours: {}\n`);
+  writeFileSync(join(root,'daemon-token'),'test-token',{mode:0o600});
+  writeFileSync(join(root,'retained-state'),'instance/root/source/storage fixture marker',{mode:0o600});
+  writeFileSync(join(root,'base.yaml'),`services:\n  daemon:\n    image: node:24\n    command: [node, /fixture/server.cjs]\n    volumes: ["${root}:/fixture:ro,z", "${root}/daemon-token:/var/lib/ours/daemon-token:ro,z"]\n    ports: ["3050"]\n    networks:\n      ours:\n        aliases: [cowork, messenger, telegram]\n  telegram:\n    image: node:24\n  cowork:\n    image: node:24\n    ports: ["3052"]\n  messenger:\n    image: node:24\n    ports: ["8420"]\nnetworks:\n  ours: {}\n`);
   writeFileSync(join(root,'gateway.yaml'),gatewayCompose(record));
   writeFileSync(join(root,'nginx.conf'),gatewayNginx(record));
   cpSync(new URL('../assets/Dockerfile.gateway',import.meta.url),join(root,'Dockerfile.gateway'));
@@ -44,9 +47,26 @@ for (const prefix of ['', '/nested/ours']) test(`gateway ${prefix || '/'} routes
     cpSync(join(root,'base.yaml'),join(root,'docker-compose.yaml'));
     cpSync(join(root,'gateway.yaml'),join(root,'docker-compose.gateway.yaml'));
     const effects=realEffects({out:()=>{}});
-    await effects.serverLifecycle({...record,schema:2,mode:'docker',containerEngine:'docker',root,workDir:root,services:['daemon','gateway']},'start',['gateway']);
+    const retained={...record,schema:2,mode:'docker',containerEngine:'docker',root,workDir:root,services:['daemon','gateway']};
+    await effects.serverLifecycle(retained,'start',['gateway']);
+    await effects.verifyGateway(retained);
     assert.notEqual(compose(['ps','-q','gateway']).trim(),gatewayId);
     assert.equal(compose(['ps','-q','daemon']).trim(),daemonId);
+    client();
+    // A failed published-port bind must be retried with the same retained state.
+    compose(['stop','gateway']);
+    const listener=createServer();
+    await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve);});
+    const port=listener.address().port;
+    const retry={...retained,port};
+    writeFileSync(join(root,'docker-compose.gateway.yaml'),gatewayCompose(retry));
+    try { await assert.rejects(effects.serverLifecycle(retry,'start',['gateway'])); }
+    finally { await new Promise(resolve=>listener.close(resolve)); }
+    await effects.serverLifecycle(retry,'start',['gateway']);
+    await effects.verifyGateway(retry);
+    assert.equal(compose(['ps','-q','daemon']).trim(),daemonId);
+    assert.equal(readFileSync(join(root,'daemon-token'),'utf8'),'test-token');
+    assert.equal(readFileSync(join(root,'retained-state'),'utf8'),'instance/root/source/storage fixture marker');
     client();
   }
   const id = compose(['ps','-q','daemon']).trim();
