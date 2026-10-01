@@ -1244,7 +1244,9 @@ export function networkEffects(effects) {
         }
         const start = async service => {
           effects.out(`Starting ${service}; waiting for readiness...`);
-          try { await compose(record, ['up', '-d', '--no-build', '--no-deps', '--wait', service]); }
+          // Gateway has no persistent state. Recreate its network endpoint on each
+          // managed start, including retries after an interrupted/failed bind.
+          try { await compose(record, ['up', '-d', '--no-build', '--no-deps', ...(service === 'gateway' ? ['--force-recreate'] : []), '--wait', service]); }
           catch (cause) { throw await dockerStartupError(record, service, cause); }
           effects.out(`${service} is ready.`);
         };

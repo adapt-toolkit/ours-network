@@ -21,6 +21,10 @@ jobs:
       - run: npm ci
       - run: npm run test:release
       - run: npm test
+      - name: Verify Docker gateway routes and disconnected-endpoint recovery
+        env:
+          OURS_TEST_DOCKER: "1"
+        run: node --test packages/installer/test/gateway-docker.test.mjs
       - name: Verify non-root Docker runtime permissions
         run: node scripts/verify-docker-runtime-permissions.mjs
       - name: Verify legacy Docker import and persistent management runtime
