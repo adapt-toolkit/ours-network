@@ -567,3 +567,12 @@ Workspace setup automatically reuses the saved managed gateway profile (or expli
 Fresh image builds explicitly make non-secret maintenance/runtime scripts readable by the container user even when the host build context was copied under umask077. Host scripts, selected source policy and state retain their private permissions.
 
 For a pending installation using an older image, run the corrected installer against the same pending workspace. It recognizes older shipped script COPY instructions combined with private host script modes, updates those image COPY modes and rebuilds the daemon image from the retained source selection. It leaves host data and enrollment state intact and qualifies the rebuilt image before preparing services. A private retry marker retains the rebuild requirement after interruption; it is removed only after verification succeeds. This rebuild resolves third-party transitive dependencies using the existing testing-delivery rules; selected Ours versions and integrity remain release-checked. It is not a byte-identical image permission-layer repair.
+
+Fresh server setup checks its loopback daemon, Cowork and Messenger ports before
+writing the installation configuration. Occupied implicit defaults advance to a
+free port, skipping reserved sibling ports; the selected values are saved in the
+installation record and used by native/container services, gateway and client
+profile generation. An explicitly requested occupied port fails with a diagnostic.
+Existing installation records keep their ports and identities. A listener acquired
+by another process after preflight still causes startup to fail safely; no foreign
+process is stopped and no retained installation is silently moved.
