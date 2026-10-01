@@ -38,7 +38,7 @@ test('fresh preflight persists selected ports into configuration, gateway and li
   assert.match(gatewayCompose(saved),new RegExp('published: "'+saved.port+'"'));
   const address=gatewayAddress(saved);
   assert.equal(address.base,'http://127.0.0.1:'+saved.port);
-  const profile=validateGatewayDiscovery({schema:1,instanceId:saved.instanceId,capabilities:['ours.gateway-v1','cowork.http-management-v1'],services:GATEWAY_SERVICES},address.base,join(root,'client-credential'));
+  const profile=validateGatewayDiscovery(address.base,{schema:1,instanceId:saved.instanceId,capabilities:['ours.gateway-v1','cowork.http-management-v1'],services:GATEWAY_SERVICES},join(root,'client-credential'));
   assert.equal(profile.endpoint,address.base+'/daemon');assert.equal(profile.expectedInstanceId,saved.instanceId);
   await effects.serverLifecycle(saved,'stop',['daemon']);
   assert.ok(calls.some(call=>call.options.env?.OURS_HOST_PORT===String(saved.port) && call.options.env.OURS_COWORK_PORT===String(saved.coworkPort) && call.options.env.OURS_MESSENGER_PORT===String(saved.messengerPort)));
