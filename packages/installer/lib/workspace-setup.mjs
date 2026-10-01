@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import {parseSetupArgs} from './setup-options.mjs';
 /** Base64 is transport, not encryption. Broad provider credentials are never accepted. */
@@ -31,22 +31,40 @@ export async function runWorkspaceSetup(args,effects,runSetup){
   // Check feature availability before changing an installation. Task acceptance uses
   // an exact task-built binary; @latest cannot contain an unmerged feature.
   const root=parsed.stateDir || join(effects.home,'.ours-network','workspace'),fleetSettings=values['--fleet-settings'];
-  const options=[...rest];if(!parsed.scope)options.push('--scope',parsed.config?'client':'all');if(!parsed.mode && !parsed.config)options.push('--mode','docker');if(!parsed.stateDir && !parsed.config)options.push('--state-dir',root);
-  if(!parsed.config)options.push('--identity-name',p.rootName);options.push('--integrations','none');
+  // The saved gateway profile selects the actual host, including non-default server state.
+  // Reuse it directly: server/client reinstall would also rewrite or downgrade retained setup.
+  const managed=effects.readManagedClientProfile?.();
+  const managedPath=join(effects.home,'.ours-client','profile.json');
+  const existingProfile=parsed.config || effects.env?.OURS_CONFIG || (managed?managedPath:undefined);
+  const existing=Boolean(existingProfile);
+  if(existing && parsed.scope && parsed.scope!=='client')throw Error('Existing workspace setup requires client scope; root identity was not changed');
+  if(!existing && (existsSync(join(root,'installation.json')) || existsSync(join(effects.home,'fleet.yaml'))))throw Error('Existing host requires its gateway client profile; no new root was created');
+  const options=[...rest];
+  if(!parsed.scope)options.push('--scope',existing?'client':'all');
+  if(existing && !parsed.config)options.push('--config',existingProfile);
+  if(!existing){if(!parsed.mode)options.push('--mode','docker');if(!parsed.stateDir)options.push('--state-dir',root);options.push('--identity-name',p.rootName);}
+  options.push('--integrations','none');
   parseSetupArgs(options,{home:effects.home});
-  await effects.run(fleetBin,['workspace-enroll','--help'],{sensitive:true});
-  await effects.run('cloudflared',['--version'],{sensitive:true});
-  const result=await runSetup(options,effects);if(result!==0)return result;
-  if(options.includes('--dry-run'))return 0;
-  const initArgs=['init',...(fleetSettings?['--settings',fleetSettings]:[])];
-  const selected=effects.readManagedClientProfile();if(!selected)throw Error('Workspace client profile was not installed');
-  const env={OURS_CONFIG:join(effects.home,'.ours-client','profile.json')};
-  // An explicit managed gateway profile must not compete with inherited daemon selectors.
+  if(existing){
+    const version=await effects.run(fleetBin,['version','--json'],{sensitive:true});
+    let info;try{info=JSON.parse(version.stdout);}catch{}
+    if(!version.ok || !info?.capabilities?.includes('workspace.enroll.preserve-profile-v1'))throw Error('Existing-host setup requires a profile-preserving Fleet release; nothing was changed');
+  }
+  const help=await effects.run(fleetBin,['workspace-enroll','--help'],{sensitive:true});if(!help.ok)throw Error('Fleet workspace enrollment is unavailable');
+  const tunnel=await effects.run('cloudflared',['--version'],{sensitive:true});if(!tunnel.ok)throw Error('Tunnel connector is unavailable');
+  if(options.includes('--dry-run')){if(!existing)return runSetup(options,effects);return 0;}
+  if(!existing){const result=await runSetup(options,effects);if(result!==0)return result;}
+  const selected=existingProfile || effects.readManagedClientProfile();if(!selected)throw Error('Workspace client profile was not installed');
+  const env={OURS_CONFIG:existingProfile || managedPath};
   for(const key of ['OURS_PORT','OURS_STATE_DIR','OURS_API_TOKEN','OURS_DAEMON_ID','OURS_DAEMON_URL','OURS_DAEMON_CREDENTIAL_PATH'])env[key]=undefined;
-  const initialized=fleetSettings?await effects.run(fleetBin,initArgs,{env}):await effects.runInteractive(fleetBin,initArgs,{env});if(!initialized.ok)throw Error('Fleet configuration incomplete');
+  const fleetHome=effects.env?.OURS_FLEET_HOME || effects.home,fleetConfig=join(fleetHome,'fleet.yaml');
+  if(!existing || !existsSync(fleetConfig)){
+    const initArgs=['init',...(fleetSettings?['--settings',fleetSettings]:[])];
+    const initialized=fleetSettings?await effects.run(fleetBin,initArgs,{env}):await effects.runInteractive(fleetBin,initArgs,{env});if(!initialized.ok)throw Error('Fleet configuration incomplete');
+  }
   mkdirSync(root,{recursive:true,mode:0o700});const temporary=mkdtempSync(join(root,'.workspace-payload-'));chmodSync(temporary,0o700);
   const payloadFile=join(temporary,'payload');writeFileSync(payloadFile,encoded,{mode:0o600,flag:'wx'});
-  try{await effects.run(fleetBin,['workspace-enroll','--file',payloadFile,...(migrateAppOrigin?['--migrate-app-origin']:[])],{env,stream:true,sensitive:true});}
+  try{const enrolled=await effects.run(fleetBin,['workspace-enroll','--file',payloadFile,...(existing?['--preserve-profile']:[]),...(migrateAppOrigin?['--migrate-app-origin']:[])],{env,stream:true,sensitive:true});if(!enrolled.ok)throw Error('Workspace enrollment incomplete; existing identity and profile were retained');}
   finally{rmSync(temporary,{recursive:true,force:true});}
   effects.out('Workspace proof submitted. Check verified binding/tunnel status in your account, then scan or paste the private device code.');return 0;
 }
