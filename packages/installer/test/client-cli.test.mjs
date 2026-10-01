@@ -91,3 +91,22 @@ for (const drift of [false, true]) test(`private host CLI ${drift ? 'rejects SDK
   } else await publishClientCli(effects,packagePath,{policy,isolated:true});
   assert.equal(realpathSync(join(home,'bin/ours')),before);
 });
+
+test('retained development CLI retries require its exact npm global target and version', async t => {
+  const home=mkdtempSync(join(tmpdir(),'ours-development-cli-'));
+  t.after(()=>rmSync(home,{recursive:true,force:true}));
+  const root=join(home,'.ours-client-install/selection'),cli=join(root,'node_modules/@ours.network/cli');
+  mkdirSync(cli,{recursive:true,mode:0o700});
+  mkdirSync(join(home,'.ours-client-install'),{mode:0o700,recursive:true});
+  mkdirSync(join(home,'bin'));
+  const npmRoot=join(home,'lib/node_modules');mkdirSync(join(npmRoot,'@ours.network'),{recursive:true});
+  writeFileSync(join(root,'sources.json'),JSON.stringify({packages:{'@ours.network/cli':{type:'npm',version:'2.8.1-nightly.12'}}}));
+  writeFileSync(join(cli,'package.json'),JSON.stringify({name:'@ours.network/cli',version:'2.8.1-nightly.12',bin:{ours:'dist/cli.js'}}));
+  mkdirSync(join(cli,'dist'));writeFileSync(join(cli,'dist/cli.js'),'#!/usr/bin/env node\n');
+  symlinkSync(cli,join(npmRoot,'@ours.network/cli'));symlinkSync(join(cli,'dist/cli.js'),join(home,'bin/ours'));
+  let installs=0;
+  const effects={home,out(){},run:async(_cmd,args)=>{if(args[0]==='prefix')return {stdout:home};if(args[0]==='root')return {stdout:npmRoot};installs++;return {stdout:''};}};
+  await publishClientCli(effects,cli);assert.equal(installs,1);
+  writeFileSync(join(cli,'package.json'),JSON.stringify({name:'@ours.network/cli',version:'different',bin:{ours:'dist/cli.js'}}));
+  await assert.rejects(publishClientCli(effects,cli),/Unrecognized private CLI entry/);assert.equal(installs,1);
+});

@@ -34,8 +34,18 @@ export async function publishClientCli(effects, packagePath, { policy = {}, isol
         const acquisitionRoot = dirname(dirname(dirname(packageRoot)));
         privateAcquisition(effects.home, acquisitionRoot);
         const retained = JSON.parse(readFileSync(join(acquisitionRoot, 'sources.json')));
-        if (releaseBinding(retained)?.scope !== 'host-cli') throw new Error('Unrecognized private CLI entry');
+        const binding = releaseBinding(retained);
+        if (binding && binding.scope !== 'host-cli') throw new Error('Unrecognized private CLI entry');
         verifyReleaseGraph(acquisitionRoot, retained);
+        if (!binding) {
+          // Development selections publish through npm's global package entry.
+          // Require that exact retained selection and global target on retry;
+          // integrity-bound private host CLI releases keep their stricter path.
+          const npmRoot = (await effects.run('npm', ['root', '--global'])).stdout.trim();
+          const selected = retained.packages?.['@ours.network/cli'];
+          const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json')));
+          if (!isAbsolute(npmRoot) || realpathSync(join(npmRoot, '@ours.network/cli')) !== packageRoot || selected?.type !== 'npm' || selected.version !== pkg.version) throw new Error('Unrecognized private CLI entry');
+        }
         const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json')));
         if (pkg.name !== '@ours.network/cli' || resolve(packageRoot, pkg.bin?.ours ?? '') !== resolved) throw new Error('Unrecognized private CLI target');
       } else {

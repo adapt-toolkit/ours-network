@@ -4,54 +4,54 @@
   "installerVersion": "1.2.0-nightly.3",
   "packages": {
     "@ours.network/sdk": {
-      "version": "3.8.1-nightly.14",
-      "integrity": "sha512-YUnFJ8hYFpLPMVLVDCWVx6m0EtMOpoEOdd9mXFwkl8zdTHr1OG0YOU8+5oJY6I95nhPa+sujSnwX5WJq9+BxRg=="
+      "version": "3.8.1-nightly.15",
+      "integrity": "sha512-ynKaKmKtINBqYk3kNovsgEO/3TiFY1CC9FgZzrOH+H6onnM3J//Q8cBb9sun8dl9mhB4mKZYgvneSiOejYwZUw=="
     },
     "@ours.network/cli": {
-      "version": "2.8.1-nightly.12",
-      "integrity": "sha512-ZeUImuHbdFNRSfYUETfBv+gTevOJ1+Sn+QY0JjpO0cXJpGC7hVnQ0tYmZRM6qxT8QXq3+Z/NUwfJxyyrf95BgQ=="
+      "version": "2.8.1-nightly.13",
+      "integrity": "sha512-1BeAG12vh4ruBOeJ54l60qWUhLzPLRNKnGtRiJpQmSXkamNQglrPQeXa9xW3taAM4Vg5uYgEhsz6+ieM+1TUSA=="
     },
     "@ours.network/tg-connector": {
-      "version": "1.0.1-nightly.8",
-      "integrity": "sha512-8p7XLWIhsMLbJOby1dL5WJdf66tQYUAY2UKp5Dl2Oh8cy2EGkfIiwjsWREph6bjtYihwSzCgNa1qXTNFZgV9pg=="
+      "version": "1.0.1-nightly.9",
+      "integrity": "sha512-wm0V8c97aIg7p26L9My36I3BE9Cy2Xc5W7WgHg6Vo+hmPvE+jXmen86yA4+DxIu9VYxoVSMtpBbu76485eCeNw=="
     },
     "@ours.network/cowork": {
-      "version": "1.3.3-nightly.20260926.ceab465",
-      "integrity": "sha512-MY0/BWHj1t7Cg7rUTUgyWt2ah86pzmgUCsGfpAv0mD+HLmpHXQ0dEl/b84V/PBHgmRwSg7c3lREoSFNWN/iLVw=="
+      "version": "1.3.3-nightly.20261001.6d49d3a",
+      "integrity": "sha512-tqoLOWc4O8CGwLdO1j6ukm6Vn57EE0zbuxKo4BWd0QVwu9ObKgHCEMOKPgW2mXHeESXSv9m7edcIrnK8I5gD+w=="
     },
     "@ours.network/messenger-server": {
-      "version": "1.0.31-nightly.8",
-      "integrity": "sha512-F0ucI09DnYCEnlB4u82T/J8cwEpkU0aRp7VXqaGj8vsmgGgDQIVISrFn86sffcgjbfZpdqCxuZEVlF7DeEDDTQ=="
+      "version": "1.0.31-nightly.12",
+      "integrity": "sha512-vp7RkIYnlPDySAbFcXP3vpeOvu0bHeHWjlxOtBbYlGjGa/B7TixXbZpLYwgvbiuD7pVIaHs1muIDzG8RjJTVeQ=="
     },
     "@ours.network/fleet": {
-      "version": "1.2.0-nightly.17",
-      "integrity": "sha512-gKpRXSsivncw83zGkwOh78yNuYUR5+3erjCOAYwitHrMsApYI06yxlmL+Em5mQsxdnLGlVBLtp4fgu8G7tOiHw=="
+      "version": "1.2.0-nightly.28",
+      "integrity": "sha512-6Ils463HA+ZY+JV6MIa9Cet8mxi6Ool3Xf2V8Sy/kSBzCZh3aV2S5jozh4dNINGZh72NxptIh2Z6AL5IoS0WKg=="
     },
     "@ours.network/mcp": {
-      "version": "1.2.0-nightly.9",
-      "integrity": "sha512-fL0KHuxzpvfSmKiNxugiJCdNRcfjuEaIVk1KbJfoB8gJAOBXZZVR8oQYHBz48XPlDhIQfJNJAC/6TwW1oN2F3A=="
+      "version": "1.2.0-nightly.10",
+      "integrity": "sha512-59sxJOcQagNRR+43Z5ScFlqFDBIlZSMQi8iz9mpxp5Jjl38B0dmCFsv5e+srbEYrV3xaOg9ZBsT17OUABFAseQ=="
     },
     "@ours.network/codex": {
-      "version": "1.2.0-nightly.9",
-      "integrity": "sha512-VFX9uRFqsON2kmczpGTpHw/r/Z1rgkK7DHWzWgzr4kW2utYvk/L5kvC4LbshS/3hGosa5C0GkGlNCqYtVRKiJQ=="
+      "version": "1.2.0-nightly.10",
+      "integrity": "sha512-7hV4R0w8tiQ/JKFU5MxtM7fihd33tzWDgT+Bn8cidasxI5zmTLqDEIv6om5LM/xk7UqcPw5gDN2kcJYiybnP9Q=="
     },
     "@ours.network/claude-code": {
-      "version": "1.2.0-nightly.9",
-      "integrity": "sha512-lPRYbhvYwB5PocR2iK6gKm+Xk1vIjCGRaN28Lqah9hV4lxtVtrFctbNyLXX0/+nsO9cmk7eswWlBBN+SpF/khw=="
+      "version": "1.2.0-nightly.10",
+      "integrity": "sha512-C3+H/vXespanVj9E1uQAWno9RFrI5KlK2SHSc7dnmRRuFVyRsoVcbvlpVI3nZ8snFaKVzbetebZr7vxd73AWSg=="
     },
     "@ours.network/daemon": {
-      "version": "3.8.1-nightly.6",
-      "integrity": "sha512-0U/bRAf/LvOrdYMUABQ0vU8gbd/4vblXuZQK/gfYoiCLEuYIlSJ91T/9VxbOs6I8CygZ2k4XW8UxLrlyzLQAMw=="
+      "version": "3.8.1-nightly.7",
+      "integrity": "sha512-dDFDm+xERplzu4yXKvLjKGNaIdr9u4ku5/4jiI4g8do3qOX9VS0tF1+O67uSu4jqkypg860UdZRdn9Zce72H/A=="
     }
   },
   "hostCli": {
     "@ours.network/sdk": {
-      "version": "3.8.1-nightly.14",
-      "integrity": "sha512-YUnFJ8hYFpLPMVLVDCWVx6m0EtMOpoEOdd9mXFwkl8zdTHr1OG0YOU8+5oJY6I95nhPa+sujSnwX5WJq9+BxRg=="
+      "version": "3.8.1-nightly.15",
+      "integrity": "sha512-ynKaKmKtINBqYk3kNovsgEO/3TiFY1CC9FgZzrOH+H6onnM3J//Q8cBb9sun8dl9mhB4mKZYgvneSiOejYwZUw=="
     },
     "@ours.network/cli": {
-      "version": "2.8.1-nightly.12",
-      "integrity": "sha512-ZeUImuHbdFNRSfYUETfBv+gTevOJ1+Sn+QY0JjpO0cXJpGC7hVnQ0tYmZRM6qxT8QXq3+Z/NUwfJxyyrf95BgQ=="
+      "version": "2.8.1-nightly.13",
+      "integrity": "sha512-1BeAG12vh4ruBOeJ54l60qWUhLzPLRNKnGtRiJpQmSXkamNQglrPQeXa9xW3taAM4Vg5uYgEhsz6+ieM+1TUSA=="
     }
   }
 }
