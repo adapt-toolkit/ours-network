@@ -43,11 +43,11 @@ export async function runWorkspaceSetup(args,effects,runSetup){
     const stat=lstatSync(marker);
     if(!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1 || stat.uid!==process.getuid?.() || (stat.mode&0o077)!==0 || stat.size>4096)throw Error('Workspace retry marker must be owned and private');
     pending=JSON.parse(readFileSync(marker,'utf8'));
-    if(pending.version!==1 || pending.accountId!==p.challenge.accountId || pending.workspaceId!==p.challenge.workspaceId || pending.appOrigin!==p.appOrigin)throw Error('Pending fresh installation belongs to another workspace; identity was not changed');
+    if(pending.version!==1 || pending.accountId!==p.challenge.accountId || pending.workspaceId!==p.challenge.workspaceId || pending.appOrigin!==p.appOrigin)throw Error('Pending fresh installation belongs to another workspace; identity was not changed. Resume the original workspace, or back up the host and remove only ~/.ours-client/workspace-setup-pending.json to treat it as existing (preserving its profile)');
   }
   const preserveProfile=existing && !pending;
   if(existing && parsed.scope && parsed.scope!=='client')throw Error('Existing workspace setup requires client scope; root identity was not changed');
-  if(!existing && (existsSync(join(root,'installation.json')) || existsSync(join(effects.home,'fleet.yaml'))))throw Error('Existing host requires its gateway client profile; no new root was created');
+  if(!existing && !pending && (existsSync(join(root,'installation.json')) || existsSync(join(effects.home,'fleet.yaml'))))throw Error('Existing host requires its gateway client profile; no new root was created');
   const options=[...rest];
   if(!parsed.scope)options.push('--scope',existing?'client':'all');
   if(existing && !parsed.config)options.push('--config',existingProfile);

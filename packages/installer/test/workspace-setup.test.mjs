@@ -50,3 +50,12 @@ test('fresh setup failure resumes same workspace without a second root and still
   assert.equal(roots,1);assert.equal(enrollment.length,2);assert.ok(enrollment.every(args=>!args.includes('--preserve-profile')),'same fresh workspace still fills Name/Surname');assert.equal(existsSync(marker),false);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
+
+test('matching fresh marker resumes a partial server installation before managed profile publication',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,mkdirSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const home=mkdtempSync(join(tmpdir(),'workspace-partial-'));let selected=null,resumes=0;
+ mkdirSync(join(home,'.ours-client'),{mode:0o700});writeFileSync(join(home,'.ours-client','workspace-setup-pending.json'),JSON.stringify({version:1,accountId:payload.challenge.accountId,workspaceId:payload.challenge.workspaceId,appOrigin:payload.appOrigin}),{mode:0o600});
+ const root=join(home,'.ours-network','workspace');mkdirSync(root,{recursive:true});writeFileSync(join(root,'installation.json'),'retained fixture record');
+ const effects={home,env:{},out(){},readManagedClientProfile:()=>selected,async run(){return {ok:true};},async runInteractive(){throw Error('settings required');}};
+ try{assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(payload),'--fleet-settings=/fixture/settings'],effects,async()=>{resumes++;selected={endpoint:'https://retained.invalid/daemon'};return 0;}),0);assert.equal(resumes,1);}finally{rmSync(home,{recursive:true,force:true});}
+});
