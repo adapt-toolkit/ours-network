@@ -21,7 +21,7 @@ for (const prefix of ['', '/nested/ours']) test(`gateway ${prefix || '/'} routes
   writeFileSync(join(root,'server.cjs'),fixture);
   writeFileSync(join(root,'daemon-token'),'test-token',{mode:0o600});
   writeFileSync(join(root,'retained-state'),'instance/root/source/storage fixture marker',{mode:0o600});
-  writeFileSync(join(root,'base.yaml'),`services:\n  daemon:\n    image: node:24\n    command: [node, /fixture/server.cjs]\n    volumes: ["${root}:/fixture:ro,z", "${root}/daemon-token:/var/lib/ours/daemon-token:ro,z"]\n    ports: ["3050"]\n    networks:\n      ours:\n        aliases: [cowork, messenger, telegram]\n  telegram:\n    image: node:24\n  cowork:\n    image: node:24\n    ports: ["3052"]\n  messenger:\n    image: node:24\n    ports: ["8420"]\nnetworks:\n  ours: {}\n`);
+  writeFileSync(join(root,'base.yaml'),`services:\n  daemon:\n    image: node:24\n    command: [node, /fixture/server.cjs]\n    volumes: ["${root}:/fixture:ro,z", "${root}/daemon-token:/var/lib/ours/daemon-token:ro,z"]\n    ports: ["3050"]\n    networks:\n      ours:\n        aliases: [cowork, messenger, telegram]\n  telegram:\n    image: node:24\n  cowork:\n    image: node:24\n    ports: ["3052"]\n  messenger:\n    image: node:24\n    ports: ["8420"]\nnetworks:\n  ours:\n    ipam:\n      config:\n        - subnet: 10.254.${prefix ? 78 : 77}.0/24\n`);
   writeFileSync(join(root,'gateway.yaml'),gatewayCompose(record));
   writeFileSync(join(root,'nginx.conf'),gatewayNginx(record));
   cpSync(new URL('../assets/Dockerfile.gateway',import.meta.url),join(root,'Dockerfile.gateway'));
