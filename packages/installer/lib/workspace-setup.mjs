@@ -6,7 +6,7 @@ export function decodeWorkspacePayload(encoded,now=Date.now()) {
   if(typeof encoded!=='string' || encoded.length>32768 || !/^[A-Za-z0-9_-]+$/.test(encoded.trim()))throw Error('Invalid private workspace payload');
   let p;try{p=JSON.parse(Buffer.from(encoded.trim(),'base64url'));}catch{throw Error('Invalid private workspace payload');}
   const allowed=['version','appOrigin','hostname','rootName','name','surname','connectorToken','invitation','serverCid','challenge'];
-  if(!p || Object.keys(p).some(k=>!allowed.includes(k)) || p.version!==1 || p.appOrigin!=='https://app.ours.network' || !/^[a-z0-9][a-z0-9-]{2,60}\.ours-tunnel\.com$/.test(p.hostname) || !/^[a-z0-9-]{2,30}@[a-z0-9-]{2,30}$/.test(p.rootName) || !/^[a-f0-9]{64}$/i.test(p.serverCid))throw Error('Invalid workspace payload boundary');
+  if(!p || Object.keys(p).some(k=>!allowed.includes(k)) || p.version!==1 || !['https://app.ours.network','https://app.ours-tunnel.com'].includes(p.appOrigin) || !/^[a-z0-9][a-z0-9-]{2,60}\.ours-tunnel\.com$/.test(p.hostname) || !/^[a-z0-9-]{2,30}@[a-z0-9-]{2,30}$/.test(p.rootName) || !/^[a-f0-9]{64}$/i.test(p.serverCid))throw Error('Invalid workspace payload boundary');
   for(const key of ['name','surname','connectorToken','invitation'])if(typeof p[key]!=='string' || !p[key].trim() || p[key].length>8192 || /[\x00-\x1f\x7f]/.test(p[key]))throw Error('Invalid private workspace payload');
   if(!p.challenge || !['nonce','accountId','workspaceId'].every(k=>/^[\w-]{43}$/.test(p.challenge[k])) || !Number.isFinite(p.challenge.expiresAt) || p.challenge.expiresAt<=now || p.challenge.expiresAt>now+16*60000)throw Error('Workspace challenge expired or invalid');
   return p;
@@ -18,7 +18,9 @@ export function extractWorkspaceArgs(args){
   return {values,rest};
 }
 export async function runWorkspaceSetup(args,effects,runSetup){
-  const {values,rest}=extractWorkspaceArgs(args);let encoded;
+  const migrateAppOrigin=args.includes('--workspace-migrate-app-origin');
+  if(args.filter(arg=>arg==='--workspace-migrate-app-origin').length>1)throw Error('Duplicate workspace migration flag');
+  const {values,rest}=extractWorkspaceArgs(args.filter(arg=>arg!=='--workspace-migrate-app-origin'));let encoded;
   if(values['--setup-workspace-file']){const path=resolve(values['--setup-workspace-file']),stat=lstatSync(path);if(!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1 || stat.uid!==process.getuid?.() || stat.size>32768 || (stat.mode&0o077)!==0)throw Error('Setup file must be owned and private (chmod 600)');encoded=readFileSync(path,'utf8').trim();}
   else if(values['--setup-workspace']==='-'){const chunks=[];let bytes=0;for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>32768)throw Error('Private payload too large');chunks.push(chunk);}encoded=Buffer.concat(chunks).toString().trim();}
   else encoded=values['--setup-workspace'];
@@ -44,7 +46,7 @@ export async function runWorkspaceSetup(args,effects,runSetup){
   const initialized=fleetSettings?await effects.run(fleetBin,initArgs,{env}):await effects.runInteractive(fleetBin,initArgs,{env});if(!initialized.ok)throw Error('Fleet configuration incomplete');
   mkdirSync(root,{recursive:true,mode:0o700});const temporary=mkdtempSync(join(root,'.workspace-payload-'));chmodSync(temporary,0o700);
   const payloadFile=join(temporary,'payload');writeFileSync(payloadFile,encoded,{mode:0o600,flag:'wx'});
-  try{await effects.run(fleetBin,['workspace-enroll','--file',payloadFile],{env,stream:true,sensitive:true});}
+  try{await effects.run(fleetBin,['workspace-enroll','--file',payloadFile,...(migrateAppOrigin?['--migrate-app-origin']:[])],{env,stream:true,sensitive:true});}
   finally{rmSync(temporary,{recursive:true,force:true});}
   effects.out('Workspace proof submitted. Check verified binding/tunnel status in your account, then scan or paste the private device code.');return 0;
 }

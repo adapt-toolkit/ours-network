@@ -550,3 +550,12 @@ ours-app `server/DEPLOYMENT.md` for exact task source-policy generation, externa
 Google/Cloudflare prerequisites and account-server setup. On uncertain enrollment
 check account status before requesting a new payload; do not reset identities or
 replay a consumed invitation.
+
+Workspace setup accepts exactly https://app.ours.network and the controlled test
+account origin https://app.ours-tunnel.com. To move an existing same workspace to
+the other origin, obtain a fresh payload from the moved account server and add
+`--workspace-migrate-app-origin`. Fleet verifies the signed binding receipt before
+changing local origin trust, preserves identities/config/device records, and
+restarts the runtime. An implicit origin change is rejected. Browser account
+cookies/device IndexedDB must be linked anew on the new origin. See the app
+server/DEPLOYMENT.md switching procedure.
