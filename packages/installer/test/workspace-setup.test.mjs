@@ -12,21 +12,51 @@ test('private workspace transport validates boundaries, expiry and rejects broad
  assert.throws(()=>extractWorkspaceArgs(['--setup-workspace','abc','--setup-workspace-file','file']));
 });
 
-test('existing-client workspace setup preserves selection and clears inherited daemon selectors', async()=>{
+test('automatic existing host preserves non-default gateway selection and Fleet config', async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
- const {mkdtempSync,readFileSync,existsSync,rmSync}=await import('node:fs');
+ const {mkdtempSync,readFileSync,writeFileSync,existsSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
- const home=mkdtempSync(join(tmpdir(),'workspace-existing-'));const calls=[];let setupOptions,payloadPath;
- const effects={home,env:{OURS_CONFIG:'/unrelated/profile',OURS_DAEMON_URL:'http://unrelated'},out(){},readManagedClientProfile:()=>({serverUrl:'https://existing.invalid'}),async run(bin,args,options){calls.push({bin,args,options});if(args[0]==='workspace-enroll' && args.includes('--file')){payloadPath=args[args.indexOf('--file')+1];assert.equal(readFileSync(payloadPath,'utf8'),encode(payload));}return {ok:true};},async runInteractive(){throw Error('settings should avoid interactive init');}};
+ const home=mkdtempSync(join(tmpdir(),'workspace-existing-'));const calls=[];let payloadPath;
+ const config=join(home,'fleet.yaml');writeFileSync(config,'retained models and agents');
+ const original=readFileSync(config),profile={endpoint:'https://existing.invalid/non-default/daemon'};
+ const effects={home,env:{OURS_DAEMON_URL:'http://unrelated'},out(){},readManagedClientProfile:()=>profile,async run(bin,args,options){calls.push({bin,args,options});if(args[0]==='workspace-enroll' && args.includes('--file')){payloadPath=args[args.indexOf('--file')+1];assert.equal(readFileSync(payloadPath,'utf8'),encode(payload));}return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.preserve-profile-v1']})};},async runInteractive(){throw Error('existing config must not be initialized');}};
  try{
-  assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(payload),'--scope=client','--config=/private/network-profile','--fleet-settings=/private/settings','--workspace-migrate-app-origin'],effects,async options=>{setupOptions=options;return 0;}),0);
-  assert.ok(setupOptions.includes('--scope=client'));assert.ok(!setupOptions.includes('--identity-name'));assert.deepEqual(setupOptions.slice(-2),['--integrations','none']);
-  const enrollment=calls.find(call=>call.args.includes('--file'));assert.equal(enrollment.options.env.OURS_CONFIG,join(home,'.ours-client','profile.json'));assert.equal(enrollment.options.env.OURS_DAEMON_URL,undefined);assert.equal(enrollment.options.sensitive,true);assert.ok(enrollment.args.includes('--migrate-app-origin'));assert.ok(!setupOptions.includes('--workspace-migrate-app-origin'));assert.equal(existsSync(payloadPath),false);
+  assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(payload),'--fleet-settings=/private/settings','--workspace-migrate-app-origin'],effects,async()=>{throw Error('existing host must not reinstall/create root');}),0);
+  assert.equal(calls.some(call=>call.args[0]==='init'),false);assert.deepEqual(readFileSync(config),original);
+  const enrollment=calls.find(call=>call.args.includes('--file'));assert.equal(enrollment.options.env.OURS_CONFIG,join(home,'.ours-client','profile.json'));assert.equal(enrollment.options.env.OURS_DAEMON_URL,undefined);assert.ok(enrollment.args.includes('--preserve-profile'));assert.ok(enrollment.args.includes('--migrate-app-origin'));assert.equal(existsSync(payloadPath),false);
  }finally{rmSync(home,{recursive:true,force:true});}
+});
+test('explicit existing profile is retained and older Fleet fails before any setup',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');let setup=0;const calls=[];
+ const effects={home:'/fixture',env:{OURS_CONFIG:'/non-default/profile.json'},readManagedClientProfile:()=>null,out(){},async run(bin,args){calls.push(args);return {ok:true,stdout:JSON.stringify({capabilities:[]})};}};
+ await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(payload)],effects,async()=>{setup++;return 0;}),/profile-preserving Fleet/);assert.equal(setup,0);assert.deepEqual(calls,[['version','--json']]);
 });
 test('workspace dry run performs no enrollment or Fleet init',async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const calls=[];
  const effects={home:'/fixture',out(){},async run(bin,args){calls.push(args);return {ok:true};}};
  assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(payload),'--dry-run'],effects,async options=>{assert.ok(options.includes('--identity-name'));return 0;}),0);
  assert.deepEqual(calls,[['workspace-enroll','--help'],['--version']]);
+});
+test('fresh setup failure resumes same workspace without a second root and still applies account name',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,writeFileSync,existsSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const home=mkdtempSync(join(tmpdir(),'workspace-retry-'));let selected=null,roots=0,attempts=0;const enrollment=[];
+ const effects={home,env:{},out(){},readManagedClientProfile:()=>selected,async run(bin,args){if(args[0]==='init'){writeFileSync(join(home,'fleet.yaml'),'retained fresh config');return {ok:true};}if(args.includes('--file')){enrollment.push(args);attempts++;return {ok:attempts>1};}return {ok:true};},async runInteractive(){throw Error('settings required');}};
+ const args=['--setup-workspace',encode(payload),'--fleet-settings=/fixture/settings'];
+ try{
+  await assert.rejects(runWorkspaceSetup(args,effects,async()=>{roots++;selected={endpoint:'https://retained.invalid/daemon'};return 0;}),/enrollment incomplete/);
+  const marker=join(home,'.ours-client','workspace-setup-pending.json');assert.equal(existsSync(marker),true);
+  await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode({...payload,challenge:{...payload.challenge,workspaceId:'z'.repeat(43)}})],effects,async()=>{throw Error('must not create root');}),/another workspace/);
+  assert.equal(await runWorkspaceSetup(args,effects,async()=>{roots++;return 0;}),0);
+  assert.equal(roots,1);assert.equal(enrollment.length,2);assert.ok(enrollment.every(args=>!args.includes('--preserve-profile')),'same fresh workspace still fills Name/Surname');assert.equal(existsSync(marker),false);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
+
+test('partial server setup failure resumes before client profile publication',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,mkdirSync,writeFileSync,existsSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const home=mkdtempSync(join(tmpdir(),'workspace-partial-'));let selected=null,resumes=0,roots=0;const enrollments=[];
+ const root=join(home,'.ours-network','workspace'),record=join(root,'installation.json');
+ const effects={home,env:{},out(){},readManagedClientProfile:()=>selected,async run(bin,args){if(args.includes('--file'))enrollments.push(args);return {ok:true};},async runInteractive(){throw Error('settings required');}};
+ const setup=async()=>{resumes++;if(!existsSync(record)){roots++;mkdirSync(root,{recursive:true});writeFileSync(record,'retained fixture record');return 1;}selected={endpoint:'https://retained.invalid/daemon'};return 0;};
+ const args=['--setup-workspace',encode(payload),'--fleet-settings=/fixture/settings'];
+ try{assert.equal(await runWorkspaceSetup(args,effects,setup),1);assert.equal(selected,null);assert.equal(await runWorkspaceSetup(args,effects,setup),0);assert.equal(resumes,2);assert.equal(roots,1);assert.equal(enrollments.length,1);assert.ok(!enrollments[0].includes('--preserve-profile'));}finally{rmSync(home,{recursive:true,force:true});}
 });

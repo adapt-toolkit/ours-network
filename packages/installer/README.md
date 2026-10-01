@@ -559,3 +559,5 @@ changing local origin trust, preserves identities/config/device records, and
 restarts the runtime. An implicit origin change is rejected. Browser account
 cookies/device IndexedDB must be linked anew on the new origin. See the app
 server/DEPLOYMENT.md switching procedure.
+
+Workspace setup automatically reuses the saved managed gateway profile (or explicit `--config`/`OURS_CONFIG`), including a host with a non-default server state directory. It does not reinstall server/client state, create a root, or initialize an existing Fleet configuration. It requires Fleet capability `workspace.enroll.preserve-profile-v1` and passes `--preserve-profile`; Fleet requires the matching Messenger capability before posting signed enrollment. Hosts running older Messenger must first update that host service through its supported installer lifecycle; this wrapper never guesses or replaces its server directory. After Owner releases Messenger/Fleet/installer, app bootstrap pins must be updated before removing the preview guard.
