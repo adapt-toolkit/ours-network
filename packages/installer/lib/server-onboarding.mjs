@@ -41,16 +41,27 @@ const { attachOursClient } = await import(pathToFileURL(require.resolve('@ours.n
 const client = await attachOursClient({ endpoint: selection.endpoint,
   expectedInstanceId: selection.instanceId, credentialPath: selection.credentialPath,
   sessionMode: 'external', leaseToken: randomUUID(), env: {} });
+// The lease this short-lived client takes is released exactly once. An operation is not reported as done
+// while that release is incomplete, and what failed first is what is reported.
+let output, released = false;
 try {
   const result = selection.operation === 'list' ? await client.listIdentities()
+    : selection.operation === 'create-role' ? { created: await client.createIdentity({ name: selection.name, bio: '',
+        exposeLocal: true, localAutoAccept: true }), current: await client.currentIdentity() }
+    : selection.operation === 'describe-role' ? (await client.chooseIdentity({ name: selection.name, force: false }),
+        { current: await client.currentIdentity() })
     : await client.createRootIdentity({ name: selection.name, bio: '',
         exposeLocal: true, localAutoAccept: true, skipIfRootExists: true });
-  process.stdout.write(JSON.stringify(result));
+  released = true;
+  const release = await client.releaseLease();
+  output = release?.failed > 0 ? { onboardingError: 'LEASE_RELEASE_INCOMPLETE' } : result;
 } catch (error) {
-  process.stdout.write(JSON.stringify({ onboardingError: error.code || 'OWNER_OPERATION_FAILED' }));
+  output = { onboardingError: error.code || 'OWNER_OPERATION_FAILED' };
+  if (!released) try { await client.releaseLease(); } catch {}
 } finally {
-  try { await client.releaseLease(); } finally { await client.close(); }
+  try { await client.close(); } catch {}
 }
+process.stdout.write(JSON.stringify(output));
 `;
   async function identityCommand(record, operation, name) {
     validateRecord(record);
@@ -114,6 +125,56 @@ try {
       if (after.root.name !== name) return retained(after);
       effects.out?.(`Human identity ${after.root.name} is ready.`);
       return { name: after.root.name, cid: after.root.cid, created: true };
+    },
+    /**
+     * The person's own identity under the Human root, which Messenger runs as. An identity of that name is
+     * used only when the daemon itself describes it as a permanent role of exactly the retained root;
+     * nothing else is renamed or adopted.
+     */
+    async serverEnsureMessengerIdentity(record, name) {
+      validateRecord(record);
+      validateIdentityName(name);
+      const listed = row => row?.kind === 'role' && row.temp === null && typeof row.cid === 'string';
+      const taken = () => new Error('Requested Messenger identity name is already used by another identity; no identity was changed');
+      const prior = await identities(record);
+      if (!prior.root) throw new Error('Messenger identity requires the Human identity; no identity was changed');
+      // The list has no parent column. What the daemon describes for the identity, bound for a moment, names its root.
+      const under = (current, row) => current?.name === name && current.temporary === false && current.isRoot === false
+        && current.described === true && typeof current.roleId === 'string' && current.roleId !== ''
+        && typeof current.cid === 'string' && current.cid === row.cid
+        && typeof current.rootCid === 'string' && current.rootCid.toLowerCase() === String(prior.root.cid).toLowerCase();
+      const adopt = async rows => {
+        const row = rows.rows.find(candidate => candidate.name === name);
+        if (rows.root?.cid !== prior.root.cid || !listed(row)) throw taken();
+        const { current } = await identityCommand(record, 'describe-role', name);
+        if (!under(current, row)) throw taken();
+        return row;
+      };
+      if (prior.rows.some(row => row.name === name)) {
+        const row = await adopt(prior);
+        effects.out?.(`Retained Messenger identity ${name}.`);
+        return { name, cid: row.cid, created: false };
+      }
+      effects.out?.(`Creating Messenger identity ${name} under ${prior.root.name}; retaining ${prior.rows.length} existing identities.`);
+      let result;
+      try {
+        result = await identityCommand(record, 'create-role', name);
+      } catch (error) {
+        // Only a name collision can mean a concurrent creator; any other failure is reported as it is.
+        if (error.code !== 'NAME_TAKEN') throw error;
+        // That creator is accepted only when the authoritative list now shows the name under the same root.
+        const after = await identities(record);
+        if (!after.rows.some(row => row.name === name)) throw error;
+        const row = await adopt(after);
+        return { name, cid: row.cid, created: false };
+      }
+      const after = await identities(record);
+      const row = after.rows.find(candidate => candidate.name === name);
+      if (result?.created?.hierarchy !== 'role' || result.created.underRoot !== prior.root.name || after.root?.cid !== prior.root.cid
+          || !listed(row) || result.created.info?.cid !== row.cid || !under(result.current, row))
+        throw new Error('Messenger identity creation completed without a usable identity under the Human identity');
+      effects.out?.(`Messenger identity ${name} is ready.`);
+      return { name, cid: row.cid, created: true };
     },
     async serverEnsureHumanProfile(record, human) {
       validateRecord(record);

@@ -75,6 +75,92 @@ test('name collision with a non-root identity fails without mutating it', async 
   const f = fixture(t, [[{ name: 'Human', cid: 'role-cid', kind: 'role' }]]);
   await assert.rejects(f.helper().serverEnsureIdentity(f.record, 'Human'), /already exists/i); assert.equal(f.calls.length, 1);
 });
+const own = { name: 'Ada Lovelace', cid: 'own-cid', kind: 'role', temp: null, session: null };
+// What the daemon describes for the identity while it is bound: a permanent role of the retained root.
+const described = (over = {}) => ({ current: { name: own.name, cid: own.cid, temporary: false, isRoot: false, described: true, roleId: 'role-1', rootCid: rootRow.cid.toUpperCase(), rootName: rootRow.name, ...over } });
+const createdAs = (over = {}) => ({ created: { info: { name: own.name, cid: own.cid }, hierarchy: 'role', underRoot: rootRow.name, ...over }, ...described() });
+test('an existing permanent identity of that name, described by the daemon under the retained root, is the Messenger identity', async t => {
+  const f = fixture(t, [[rootRow, own, { name: 'Role', cid: 'role-cid', kind: 'role', temp: null }], described()]);
+  assert.deepEqual(await f.helper().serverEnsureMessengerIdentity(f.record, own.name), { name: own.name, cid: own.cid, created: false });
+  assert.deepEqual(f.calls.map(call => JSON.parse(call.args.at(-1)).operation), ['list', 'describe-role']);
+  assert.match(f.calls[1].args[2], /chooseIdentity\(\{ name: selection\.name, force: false \}\)/); assert.match(f.calls[1].args[2], /releaseLease/);
+});
+for (const [label, over] of [['another root', { rootCid: 'other-root' }], ['no described root', { rootCid: '' }], ['not described', { described: false }], ['no role', { roleId: '' }],
+  ['a temporary identity', { temporary: true }], ['the root itself', { isRoot: true }], ['another identity', { cid: 'someone-else' }], ['another name', { name: 'Someone Else' }]])
+  test('an existing identity of that name that the daemon describes as ' + label + ' is refused', async t => {
+    const f = fixture(t, [[rootRow, own], described(over)]);
+    await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /already used by another identity/); assert.equal(f.calls.length, 2);
+  });
+test('a missing Messenger identity is created as a role under the retained root, described and reread', async t => {
+  const f = fixture(t, [[rootRow], createdAs(), [rootRow, own]]);
+  assert.deepEqual(await f.helper().serverEnsureMessengerIdentity(f.record, own.name), { name: own.name, cid: own.cid, created: true });
+  const selection = JSON.parse(f.calls[1].args.at(-1));
+  assert.equal(selection.operation, 'create-role'); assert.equal(selection.name, own.name);
+  assert.match(f.calls[1].args[2], /createIdentity\(/); assert.match(f.calls[1].args[2], /currentIdentity\(\)/); assert.match(f.calls[1].args[2], /releaseLease/);
+  assert.equal(f.calls[1].options.sensitive, true); assert.equal(f.calls.length, 3);
+});
+for (const [label, taken] of [['the root', { ...rootRow, name: own.name }], ['a temporary identity', { ...own, temp: { state: 'other-live', ownerPid: 1 } }], ['a quarantined identity', { name: own.name, status: 'awaiting-root' }], ['an identity without a stated lifetime', { name: own.name, cid: own.cid, kind: 'role' }]])
+  test('a name held by ' + label + ' is refused without binding, creating or changing anything', async t => {
+    const f = fixture(t, [[...(taken.kind === 'root' ? [] : [rootRow]), taken]]);
+    await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /already used by another identity/); assert.equal(f.calls.length, 1);
+  });
+test('no Messenger identity is created on a host without a Human identity', async t => {
+  const f = fixture(t, [[]]);
+  await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /requires the Human identity/); assert.equal(f.calls.length, 1);
+});
+for (const [label, created, after] of [
+  ['became a root', createdAs({ hierarchy: 'root', underRoot: null }), [rootRow, own]],
+  ['was delegated under another root', createdAs({ underRoot: 'Someone Else' }), [rootRow, own]],
+  ['is another identity than the one reread', createdAs({ info: { name: own.name, cid: 'another-cid' } }), [rootRow, own]],
+  ['is described under another root', { ...createdAs(), ...described({ rootCid: 'other-root' }) }, [rootRow, own]],
+  ['left the root changed', createdAs(), [{ ...rootRow, cid: 'other-root' }, own]],
+  ['is not listed afterwards', createdAs(), [rootRow]],
+]) test('a creation that ' + label + ' is not accepted', async t => {
+  const f = fixture(t, [[rootRow], created, after]);
+  await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /without a usable identity/);
+});
+for (const [label, after, description, expected] of [
+  ['a winner the daemon describes under the same root is used', [rootRow, own], described(), { name: own.name, cid: own.cid, created: false }],
+  ['a winner described under another root is refused', [rootRow, own], described({ rootCid: 'other-root' }), /already used by another identity/],
+  ['a temporary winner is refused', [rootRow, { ...own, temp: { state: 'other-live', ownerPid: 1 } }], undefined, /already used by another identity/],
+  ['a winner beside a changed root is refused', [{ ...rootRow, cid: 'other-root' }, own], undefined, /already used by another identity/],
+  ['no winner keeps the original failure', [rootRow], undefined, error => error.code === 'NAME_TAKEN'],
+]) test('concurrent creation of the Messenger identity: ' + label, async t => {
+  const f = fixture(t); let n = 0;
+  f.effects.run = async () => { n++; if (n === 2) throw Object.assign(Error('create failed'), { code: 'NAME_TAKEN' }); return { stdout: JSON.stringify(n === 1 ? [rootRow] : n === 3 ? after : description) }; };
+  const result = f.helper().serverEnsureMessengerIdentity(f.record, own.name);
+  if (expected instanceof RegExp || typeof expected === 'function') await assert.rejects(result, expected); else assert.deepEqual(await result, expected);
+  assert.equal(n, description ? 4 : 3);
+});
+for (const code of ['IDENTITY_IN_USE', 'PROVISION_FAILED', 'LEASE_RELEASE_INCOMPLETE', 'OWNER_OPERATION_FAILED'])
+  test('a creation failure that is not a name collision is reported and never adopts a visible identity: ' + code, async t => {
+    const f = fixture(t, [[rootRow], { onboardingError: code }, [rootRow, own], described()]);
+    await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), error => error.code === code);
+    assert.equal(f.calls.length, 2, 'nothing is listed or bound after the failure');
+  });
+test('an incomplete lease release after describing an existing identity is a failure, not a selection', async t => {
+  const f = fixture(t, [[rootRow, own], { onboardingError: 'LEASE_RELEASE_INCOMPLETE' }]);
+  await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), error => error.code === 'LEASE_RELEASE_INCOMPLETE');
+});
+test('the identity script releases its lease once, reports an incomplete release, and keeps the first failure', async t => {
+  const f = fixture(t, [[rootRow]]); await f.helper().serverListIdentities(f.record);
+  const script = f.calls[0].args[2];
+  // Run the script's own lease handling against stand-in clients; only the client import is replaced.
+  const body = script.slice(script.indexOf('let output, released = false;')).replace('process.stdout.write(JSON.stringify(output));', 'return output;');
+  const run = (client, selection) => new (Object.getPrototypeOf(async function () {}).constructor)('client', 'selection', body)(client, selection);
+  const client = over => { const calls = []; return { calls, listIdentities: async () => { calls.push('list'); return [rootRow]; }, releaseLease: async () => { calls.push('release'); return { released: 1, failed: 0 }; }, close: async () => { calls.push('close'); }, ...over(calls) }; };
+  let c = client(() => ({}));
+  assert.deepEqual(await run(c, { operation: 'list' }), [rootRow]); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+  c = client(calls => ({ releaseLease: async () => { calls.push('release'); return { released: 0, failed: 1 }; } }));
+  assert.deepEqual(await run(c, { operation: 'list' }), { onboardingError: 'LEASE_RELEASE_INCOMPLETE' }); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+  c = client(calls => ({ releaseLease: async () => { calls.push('release'); throw Object.assign(Error('refused'), { code: 'RELEASE_REFUSED' }); } }));
+  assert.deepEqual(await run(c, { operation: 'list' }), { onboardingError: 'RELEASE_REFUSED' }); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+  c = client(calls => ({ listIdentities: async () => { calls.push('list'); throw Object.assign(Error('down'), { code: 'DAEMON_DOWN' }); }, releaseLease: async () => { calls.push('release'); throw Error('refused'); } }));
+  assert.deepEqual(await run(c, { operation: 'list' }), { onboardingError: 'DAEMON_DOWN' }); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+});
+for (const name of ['', '../Ada', 'a'.repeat(65)]) test('invalid Messenger identity name fails before owner effects: ' + JSON.stringify(name), async t => {
+  const f = fixture(t); await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, name), /identity name/i); assert.equal(f.calls.length, 0);
+});
 test('client handoff atomically publishes private profile and a separately issued credential', async t => {
   const f = fixture(t), settings = join(f.root, 'fleet.json'); writeFileSync(settings, '{}');
   const result = await f.helper().prepareLocalClient(f.record, ['codex', 'fleet'], settings);

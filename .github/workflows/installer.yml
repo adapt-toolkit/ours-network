@@ -19,10 +19,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Run the App install command against real Docker and published images
-        run: node scripts/verify-human-setup-e2e.mjs
       - run: npm run test:release
       - run: npm test
+      - name: Run the App install command against real Docker and published images
+        run: node scripts/verify-human-setup-e2e.mjs
       - name: Verify Docker gateway routes and disconnected-endpoint recovery
         env:
           OURS_TEST_DOCKER: "1"

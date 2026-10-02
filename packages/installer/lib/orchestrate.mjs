@@ -1342,7 +1342,8 @@ async function executeServerCommand(args, effects) {
     throw new Error(`Server build activation is incomplete; repeat server ${record.buildTransition.operation} before other mutations`);
   }
   const showInstallProgress = args.operation === 'install' && !(existing && (record.schema === 1 || record.layoutConversion));
-  const installStageCount = (existing ? 7 : 9) + (args.identityName ? 2 : 0);
+  const installStageCount = (existing ? 7 : 9) + (args.identityName ? 2 : 0)
+    + (args.identityName && args.name && args.surname && (!existing || [undefined, null, args.identityName, `${args.name} ${args.surname}`].includes(record.messengerIdentity)) ? 1 : 0);
   let completedInstallStages = 0;
   const installStage = async (label, explanation, action) => {
     if (!showInstallProgress) return action();
@@ -1395,7 +1396,17 @@ async function executeServerCommand(args, effects) {
     if (args.identityName) {
       await installStage('Daemon startup', 'Start the daemon and restore its retained identities.', () => effects.serverLifecycle(record, 'start', ['daemon']));
       const identity = await installStage('Human identity', 'Keep the existing Human identity, or create it on a fresh daemon.', () => effects.serverEnsureIdentity(record, args.identityName));
-      record.messengerIdentity = identity.name;
+      // Messenger runs as the person's own identity under the Human identity when Name and Surname are known.
+      // An installation whose Messenger already runs as some other identity under it keeps that identity.
+      const person = args.name && args.surname ? `${args.name} ${args.surname}` : undefined;
+      const selected = existing ? record.messengerIdentity : undefined;
+      if (person && (!selected || selected === identity.name || selected === person)) {
+        const own = await installStage('Messenger identity', 'Keep or create your own identity under the Human identity; Messenger runs as it.', () => effects.serverEnsureMessengerIdentity(record, person));
+        record.messengerIdentity = own.name;
+      } else if (selected && selected !== identity.name
+          && (await effects.serverListIdentities(record)).some(row => row.name === selected && row.kind === 'role' && row.temp === null)) {
+        record.messengerIdentity = selected;
+      } else record.messengerIdentity = identity.name;
       effects.writeJson(recordPath, JSON.stringify(record, null, 2) + '\n');
       await installStage('Application startup', 'Start the selected applications and check readiness.', () => effects.serverLifecycle(record, 'start', record.services.filter(name => name !== 'daemon')));
     } else {

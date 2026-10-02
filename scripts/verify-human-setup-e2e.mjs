@@ -50,12 +50,17 @@ try {
   assert.deepEqual({ name: stored.humanProfile?.name, surname: stored.humanProfile?.surname }, { name: 'Ada', surname: 'Lovelace' });
   assert.match(String(stored.cid), /^[0-9A-Fa-f]{64}$/);
   assert.match(first, /Human identity ci@ci-host is ready\./, 'fresh root is <username>@<hostname>');
+  // Messenger does not run as that root: it runs as the person's own identity, created under it.
+  assert.match(first, /Messenger identity Ada Lovelace is ready\./);
+  assert.equal(record.messengerIdentity, 'Ada Lovelace'); assert.equal(stored.name, 'Ada Lovelace', 'Messenger is bound to the person\'s own identity');
   const again = install('Repeated installation');
   assert.match(again, /Retained Messenger Name and Surname\./, 'repeat keeps the stored profile, proving the first write reached Messenger');
   assert.doesNotMatch(again, /Messenger Name and Surname initialized\./);
   assert.equal(readRecord().instanceId, record.instanceId, 'repeat retains the installation');
   const retained = messengerIdentity(readRecord());
   assert.equal(retained.cid, stored.cid, 'repeat retains the same identity');
+  assert.match(again, /Retained Messenger identity Ada Lovelace\./); assert.doesNotMatch(again, /Creating Messenger identity/);
+  assert.equal(readRecord().messengerIdentity, 'Ada Lovelace'); assert.equal(retained.name, 'Ada Lovelace');
   assert.deepEqual(retained.humanProfile, stored.humanProfile, 'repeat retains the stored profile');
   execFileSync(join(prefix, 'bin', 'ours-fleet'), ['setup-tunnel', '--help'], { env, stdio: 'inherit' });
   // The runner has no cloudflared: the installed Fleet must refuse before any workspace proof and say nothing was bound.
