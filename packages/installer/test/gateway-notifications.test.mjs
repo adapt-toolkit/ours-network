@@ -83,7 +83,8 @@ test('client import publishes the bound producer credential beside the profile c
   assert.throws(() => effects.importClientProfile({ ...input, notificationsProducerPath: producer({ expectedInstanceId: '99999999-2222-3333-4444-555555555555' }) }), /does not match the selected server/);
   assert.equal(existsSync(join(home, '.ours-client', 'profile.json')), false);
   const path = producer({});
-  effects.importClientProfile({ ...input, notificationsProducerPath: path });
+  assert.equal(effects.importClientProfile({ ...input, notificationsProducerPath: path }).notificationsProducerChanged, true);
+  assert.equal(effects.importClientProfile({ ...input, notificationsProducerPath: path }).notificationsProducerChanged, false);
   const published = join(home, '.ours-client', 'notifications-producer.json');
   assert.equal(readFileSync(published, 'utf8'), readFileSync(path, 'utf8'));
   assert.equal(statSync(published).mode & 0o777, 0o600);

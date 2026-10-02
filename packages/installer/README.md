@@ -403,9 +403,19 @@ differing configuration is refused rather than rewritten. Back it up with the
 rest of the server state. A local client setup binds the Fleet producer token
 to this server in `~/.ours-client/notifications-producer.json`; Fleet then sends
 agent completions through `<serverUrl>/notifications/`. Remote clients and
-native installations do not produce notifications. An existing installation
-gains notifications on its next `server update`; a retained source policy
-without the package keeps working without them.
+native installations do not produce notifications. The gateway discovery
+document is unchanged, so existing clients keep accepting the server. A
+retained source policy without the package keeps working without notifications.
+
+An existing complete installation gains them with its normal update, which
+prepares the credentials after activating the new runtime and hands the Fleet
+producer credential to the local client, then a web-only Fleet restart (agents
+keep running):
+
+```sh
+ours-install all update --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json --compatible
+ours-fleet web restart
+```
 
 ### Authenticated external entry
 

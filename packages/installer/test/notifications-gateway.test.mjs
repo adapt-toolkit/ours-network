@@ -73,3 +73,38 @@ test('authenticates presence upgrades the same way', async t => {
   assert.equal(f.seen[0].headers.authorization, `Bearer ${USER}`);
   assert.equal(f.seen[0].headers.origin, undefined);
 });
+
+test('shutdown with an open presence connection closes the service and finishes promptly', async () => {
+  const sockets = new Set();
+  let serviceClosed = false;
+  const inner = createServer();
+  // Like the real service: upgraded presence sockets stay open until the service closes them.
+  inner.on('upgrade', (_req, socket) => { sockets.add(socket); socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n'); });
+  const service = { server: inner, async close() { serviceClosed = true; for (const socket of sockets) socket.destroy(); } };
+  const adapter = createNotificationsAdapter({ service, userToken: USER, verifyServerCredential: async () => true });
+  adapter.server.listen(0, '127.0.0.1'); await once(adapter.server, 'listening');
+  const client = await new Promise((resolve, reject) => {
+    const req = request(`http://127.0.0.1:${adapter.server.address().port}/api/v1/presence`, { headers: { connection: 'Upgrade', upgrade: 'websocket', 'x-ours-api-token': SERVER } });
+    req.on('upgrade', (_res, socket) => resolve(socket)); req.on('error', reject); req.end();
+  });
+  const closed = adapter.close().then(() => 'closed');
+  const outcome = await Promise.race([closed, new Promise(resolve => setTimeout(() => resolve('timeout'), 2000))]);
+  client.destroy();
+  assert.equal(outcome, 'closed');
+  assert.equal(serviceClosed, true);
+});
+
+test('shutdown destroys an upgraded connection the service did not close', async () => {
+  const inner = createServer();
+  inner.on('upgrade', (_req, socket) => socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n'));
+  const adapter = createNotificationsAdapter({ service: { server: inner, async close() {} }, userToken: USER, verifyServerCredential: async () => true });
+  adapter.server.listen(0, '127.0.0.1'); await once(adapter.server, 'listening');
+  const client = await new Promise((resolve, reject) => {
+    const req = request(`http://127.0.0.1:${adapter.server.address().port}/api/v1/presence`, { headers: { connection: 'Upgrade', upgrade: 'websocket', 'x-ours-api-token': SERVER } });
+    req.on('upgrade', (_res, socket) => resolve(socket)); req.on('error', reject); req.end();
+  });
+  const ended = once(client, 'close');
+  const outcome = await Promise.race([adapter.close().then(() => 'closed'), new Promise(resolve => setTimeout(() => resolve('timeout'), 2000))]);
+  assert.equal(outcome, 'closed');
+  await ended;
+});

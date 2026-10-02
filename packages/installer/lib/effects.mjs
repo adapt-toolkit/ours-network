@@ -1328,9 +1328,10 @@ export function networkEffects(effects) {
       }
       ensurePrivateDirectory(root);
       // Written before the profile it belongs to is published or changed.
+      let notificationsProducerChanged = false;
       if (producer !== null) {
         const producerPath = join(root, 'notifications-producer.json');
-        if (!existsSync(producerPath) || readFileSync(producerPath, 'utf8') !== producer) atomicWriteConfig(producerPath, producer);
+        if (!existsSync(producerPath) || readFileSync(producerPath, 'utf8') !== producer) { atomicWriteConfig(producerPath, producer); notificationsProducerChanged = true; }
       }
       if (current && !refresh) {
         assertPrivateRegularFile(credentialPath, 'managed credential');
@@ -1338,7 +1339,7 @@ export function networkEffects(effects) {
         const saved = { ...current, ...profile, credentialPath };
         if (current.endpoint !== saved.endpoint || current.serverUrl !== saved.serverUrl)
           atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
-        return { configPath, profile: validateGatewayClientProfile(saved), settings: current.installer };
+        return { configPath, profile: validateGatewayClientProfile(saved), settings: current.installer, notificationsProducerChanged };
       }
       const settings = { sourcesPath: join(root, 'sources.json'), integrations, ...(disableFleetAgentsSetup ? { disableFleetAgentsSetup: true } : {}) };
       if (fleetSettings) settings.fleetSettingsPath = join(root, 'fleet-settings.json');
@@ -1348,7 +1349,7 @@ export function networkEffects(effects) {
       atomicWriteConfig(credentialPath, credential);
       const saved = { ...profile, credentialPath, installer: settings };
       atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
-      return { configPath, profile: validateHostProfile(saved), settings };
+      return { configPath, profile: validateHostProfile(saved), settings, notificationsProducerChanged };
     },
     async qualifyInstalledGatewayClient(profile) {
       if (!profile.installer?.integrations?.includes('fleet')) return;

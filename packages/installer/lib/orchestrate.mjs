@@ -1535,6 +1535,9 @@ export async function runClientCommand(command, effects) {
       for (const name of incomplete) explainClientFailure(effects, name, summary.find(row => row.key === name));
       clientRetry(effects, imported, integrations);
     } else effects.out(ok(`Client setup complete. New clients discover ${imported.configPath}; no OURS_CONFIG export is required.`));
+    // Fleet's web service reads its producer credential when it starts; agents keep running across a web restart.
+    if (imported.notificationsProducerChanged && integrations.includes('fleet'))
+      effects.out(info('Notifications are ready for Fleet. Run `ours-fleet web restart` so a running Fleet web console starts producing them.'));
     if (!incomplete.length) effects.out(progress(4, 4, 'Client setup complete', 'All selected integrations are configured.'));
     return incomplete.length ? EXIT_REFUSED : EXIT_OK;
   } catch (error) {

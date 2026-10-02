@@ -42,11 +42,21 @@ export function createNotificationsAdapter({ service, userToken, verifyServerCre
     if (!await authorize(req)) { res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"error":"authentication required"}'); return; }
     service.server.emit('request', req, res);
   });
+  // Upgraded connections leave the HTTP server's connection tracking, so shutdown ends them itself.
+  const upgraded = new Set();
   server.on('upgrade', async (req, socket, head) => {
+    upgraded.add(socket); socket.once('close', () => upgraded.delete(socket));
     if (!await authorize(req)) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return; }
     service.server.emit('upgrade', req, socket, head);
   });
-  return { server, async close() { server.closeAllConnections(); await new Promise(resolve => server.close(() => resolve())); await service.close(); } };
+  return { server, async close() {
+    // Stop accepting first; the service then ends its presence sockets and saves state.
+    const listening = new Promise(resolve => server.close(() => resolve()));
+    server.closeAllConnections();
+    await service.close();
+    for (const socket of upgraded) socket.destroy();
+    await listening;
+  } };
 }
 
 /** The installer-generated private configuration also names the owner token this adapter injects. */

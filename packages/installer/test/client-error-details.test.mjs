@@ -104,3 +104,20 @@ for (const prepared of [true, false]) {
     }
   });
 }
+
+test('a prepared local profile hands its notification producer credential to the client import', async () => {
+  const prepared = '/private/ours/client/issued-1/profile.json', producer = '/private/ours/client/issued-1/notifications-producer.json';
+  const base = fixture(), saved = base.effects.readManagedClientProfile();
+  const f = { path: base.path, effects: fx({ harnesses: [{ name: 'codex', status: 'ok', command: 'codex' }],
+    json: { [base.path]: saved, [prepared]: saved, [saved.installer.sourcesPath]: { packages: {} } } }) };
+  f.effects.acquireClientPackages = base.effects.acquireClientPackages;
+  f.effects.prepareClientMarketplace = base.effects.prepareClientMarketplace;
+  const exists = f.effects.exists;
+  f.effects.exists = path => path === producer || exists(path);
+  const original = f.effects.importClientProfile, seen = [];
+  f.effects.importClientProfile = options => { seen.push(options.notificationsProducerPath); return original(options); };
+  await runClientCommand({ operation: 'install', config: prepared }, f.effects);
+  // The saved default profile carries no producer beside it; only a prepared handoff does.
+  await runClientCommand({ operation: 'install' }, f.effects);
+  assert.deepEqual(seen, [producer, undefined]);
+});
