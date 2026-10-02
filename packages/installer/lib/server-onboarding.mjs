@@ -5,6 +5,8 @@ import { join, resolve, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { installationPaths } from './plan.mjs';
 import { validateHostProfile } from './target.mjs';
+/** Read by Fleet beside the profile credential; bound to one server installation. */
+export const NOTIFICATIONS_PRODUCER_FILE = 'notifications-producer.json';
 
 export function validateIdentityName(name) {
   if (typeof name !== 'string' || [...name].length < 1 || [...name].length > 64 || name !== name.normalize('NFC')
@@ -241,6 +243,14 @@ else { await request('identity/profile', selection.human); process.stdout.write(
           installer: { integrations: [...integrations], ...(fleetSettingsPath !== undefined ? { fleetSettingsPath } : {}) },
         };
         writeFileSync(join(stage, 'profile.json'), JSON.stringify(profile, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+        // Fleet on this host produces agent notifications through the server gateway.
+        // A runtime without the notification service prepares no producer credential.
+        const issued = record.gateway ? await compose(record, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'cat', 'access', '/credentials/fleet-notifications/producer'], { sensitive: true, allowCodes: [1] }) : null;
+        if (issued && (issued.code ?? 0) === 0) {
+          const token = String(issued.stdout ?? '');
+          if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) throw new Error('Notification producer credential is invalid; repeat server install');
+          writeFileSync(join(stage, NOTIFICATIONS_PRODUCER_FILE), JSON.stringify({ schema: 1, serverUrl, expectedInstanceId: record.instanceId, token }) + '\n', { flag: 'wx', mode: 0o600 });
+        }
         // Publish the complete pair in one rename. Managed-default activation and
         // package/source selection remain the normal client installer's job.
         renameSync(stage, published);

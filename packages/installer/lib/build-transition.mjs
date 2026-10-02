@@ -52,6 +52,8 @@ export async function serverBuildTransition(record, args, effects) {
     save(transition);
   }
   await stage('Verify retained state and identities', () => effects.validateServerBuildState(record));
+  // Repeatable: an updated runtime may need volume state it introduced, such as notification credentials.
+  if (record.gateway) await stage('Prepare stored state for the updated runtime', () => effects.prepareServerVolumes(record));
   await stage('Restore previously running services and check readiness', () => effects.serverLifecycle(record, 'start', runningServices));
   if (record.gateway && ['daemon', 'cowork', 'gateway'].every(name => runningServices.includes(name))) await stage('Verify authenticated gateway management', () => effects.verifyGateway(record));
   const completed = { ...record, sourcePolicyHash: candidate.sourcePolicyHash };

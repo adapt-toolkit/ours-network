@@ -855,7 +855,7 @@ export function networkEffects(effects) {
           await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         }
         if (runtimeOnly) return;
-        await compose(record, ['run', '--rm', '--no-deps', '-T', 'prepare', 'prepare']);
+        await effects.prepareServerVolumes(record);
       } else {
         if (!existsSync(join(record.workDir, '.packages-ready'))) {
           const sourceRoot = join(record.root, `build-${randomUUID()}`);
@@ -880,6 +880,10 @@ export function networkEffects(effects) {
         const cowork = join(installationPaths(record).cowork, 'config.json');
         if (!existsSync(cowork)) writePrivateNew(cowork, JSON.stringify({ version: 1, stateDir: installationPaths(record).cowork, rest: { enabled: true, host: '127.0.0.1', port: record.coworkPort } }));
       }
+    },
+    async prepareServerVolumes(record) {
+      if (record.mode !== 'docker') return;
+      await compose(record, ['run', '--rm', '--no-deps', '-T', 'prepare', 'prepare']);
     },
     async prepareServerBuild(record, args) {
       validateInstallation(record, record.root);
@@ -1297,7 +1301,7 @@ export function networkEffects(effects) {
       if (discovery.ok) return validateGatewayDiscovery(base, await discovery.json(), resolve(credentialPath));
       throw new Error(`Gateway discovery answered HTTP ${discovery.status}; enable the gateway. Direct daemon fallback is not supported.`);
     },
-    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, disableFleetAgentsSetup = false, refresh = false }) {
+    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, disableFleetAgentsSetup = false, refresh = false, notificationsProducerPath }) {
       profile = validateGatewayClientProfile(profile);
       const root = join(home, '.ours-client');
       const configPath = join(root, 'profile.json');
@@ -1314,7 +1318,20 @@ export function networkEffects(effects) {
         : readFileSync(sourcesPath);
       const fleetSettings = (!current || refresh) && fleetSettingsPath ? readFileSync(fleetSettingsPath) : null;
       if (fleetSettings) JSON.parse(fleetSettings.toString());
+      let producer = null;
+      if (notificationsProducerPath) {
+        assertPrivateRegularFile(notificationsProducerPath, 'notification producer credential');
+        producer = readFileSync(notificationsProducerPath, 'utf8');
+        let bound; try { bound = JSON.parse(producer); } catch { bound = null; }
+        if (bound?.schema !== 1 || bound.serverUrl !== profile.serverUrl || bound.expectedInstanceId !== profile.expectedInstanceId || !/^[A-Za-z0-9_-]{32,256}$/.test(bound.token ?? ''))
+          throw new Error('Notification producer credential does not match the selected server');
+      }
       ensurePrivateDirectory(root);
+      // Written before the profile it belongs to is published or changed.
+      if (producer !== null) {
+        const producerPath = join(root, 'notifications-producer.json');
+        if (!existsSync(producerPath) || readFileSync(producerPath, 'utf8') !== producer) atomicWriteConfig(producerPath, producer);
+      }
       if (current && !refresh) {
         assertPrivateRegularFile(credentialPath, 'managed credential');
         if (readFileSync(credentialPath, 'utf8') !== credential) atomicWriteConfig(credentialPath, credential);

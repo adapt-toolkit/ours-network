@@ -112,5 +112,5 @@ try {
   }
  }
 
- console.log('Verified nine official archive identities/SHA512 and complete nested ours version/integrity selection. Runtime qualification remains separate.');
+ console.log('Verified ten official archive identities/SHA512 and complete nested ours version/integrity selection. Runtime qualification remains separate.');
 } finally {rmSync(dir,{recursive:true,force:true});}

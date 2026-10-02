@@ -1,6 +1,6 @@
 # Versioned product composition
 
-Each installer version has one exact, channel-matching nine-component npm set.
+Each installer version has one exact, channel-matching ten-component npm set.
 `stable.json` and `nightly.json` are release inputs, not mutable endpoints fetched
 by an installed product. Packing embeds the selected manifest and exact source
 policy inside the installer archive. Changes to a component set require a new
@@ -12,7 +12,7 @@ a stable release is prepared. Each package entry contains an exact `version` and
 registry `integrity` (SHA-512); dist-tags and ranges are not release inputs.
 
 To prepare a new component set, select published same-channel versions and
-integrities in the manifest. PR CI downloads and verifies all nine archives,
+integrities in the manifest. PR CI downloads and verifies all ten archives,
 checks actual installed ours dependency graphs, and inspects the packed installer.
 The version bump preserves these component selections.
 

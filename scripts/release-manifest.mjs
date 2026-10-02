@@ -1,4 +1,4 @@
-export const PACKAGE_NAMES = ['sdk','cli','tg-connector','cowork','messenger-server','fleet','mcp','codex','claude-code'].map(n=>`@ours.network/${n}`);
+export const PACKAGE_NAMES = ['sdk','cli','tg-connector','cowork','messenger-server','notifications','fleet','mcp','codex','claude-code'].map(n=>`@ours.network/${n}`);
 const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 // Counter nightlies and Cowork date/commit nightlies are both exact releases.
 const nightly = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-nightly\.(0|[1-9]\d*)(?:\.[0-9a-f]{7,40})?$/;

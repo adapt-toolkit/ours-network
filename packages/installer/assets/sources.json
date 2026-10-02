@@ -24,6 +24,10 @@
         "version": "1.0.31-nightly.14",
         "integrity": "sha512-0lMoIadihMQqN0sdW20DF4a94Nc6bx0lnaCckSnn5VqOmvqELNdG3kRZ1Heh9VwkPEu6qNM27AR7tWpTbzvJCg=="
       },
+      "@ours.network/notifications": {
+        "version": "0.3.1-nightly.1",
+        "integrity": "sha512-rIkrtixoHqBfgCKDDCEYFl4W2Zzh0hOw3axX2+GppQ9gYkujKrk9M2KLGoYhu8RwwTMRl497jgMcTBe7UAHCgA=="
+      },
       "@ours.network/fleet": {
         "version": "1.2.0-nightly.38",
         "integrity": "sha512-glCDY/WfILgTJfG7G3ao5iEtCyWtyPOzl/o+D1EVphUuKQYZIW7Xk8sxyT2/D8FADRqvJSBbebWseWbgmlU6Ow=="
@@ -76,6 +80,10 @@
     "@ours.network/messenger-server": {
       "type": "npm",
       "version": "1.0.31-nightly.14"
+    },
+    "@ours.network/notifications": {
+      "type": "npm",
+      "version": "0.3.1-nightly.1"
     },
     "@ours.network/fleet": {
       "type": "npm",

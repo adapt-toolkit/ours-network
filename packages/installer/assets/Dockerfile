@@ -27,7 +27,7 @@ COPY --chmod=644 scripts/runtime/diagnostics.mjs /opt/ours/docker/diagnostics.mj
 COPY --chmod=644 scripts/runtime/legacy-import.mjs /opt/ours/docker/legacy-import.mjs
 COPY --chmod=644 scripts/runtime/entrypoint.sh /opt/ours/docker/entrypoint.sh
 COPY --chmod=644 scripts/runtime/healthcheck.mjs /opt/ours/docker/healthcheck.mjs
-COPY --chmod=644 scripts/runtime/start-telegram.sh scripts/runtime/health-telegram.sh scripts/runtime/start-cowork.sh scripts/runtime/health-cowork.sh scripts/runtime/start-messenger.sh scripts/runtime/health-messenger.mjs /opt/ours/docker/
+COPY --chmod=644 scripts/runtime/start-telegram.sh scripts/runtime/health-telegram.sh scripts/runtime/start-cowork.sh scripts/runtime/health-cowork.sh scripts/runtime/start-messenger.sh scripts/runtime/health-messenger.mjs scripts/runtime/notifications-gateway.mjs scripts/runtime/supervise.mjs /opt/ours/docker/
 RUN chmod 755 /opt/ours/maintenance /opt/ours/docker
 FROM node:24 AS maintenance
 LABEL network.ours.build-context="1"
