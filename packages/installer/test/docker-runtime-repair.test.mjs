@@ -41,6 +41,7 @@ function fixture(t, options = {}) {
       const result = { ...report, mode: image === repairedId ? 0o644 : options.unsafeMode ? 0o666 : 0o600 };
       if (options.policyMismatch && rootProbe) result.policyHash = 'different';
       if (options.recordsChanged && image === repairedId) result.records = { ...report.records, 'package-lock.json': 'changed' };
+      Object.assign(result, options.reportOverride);
       return { code: 0, stdout: JSON.stringify(result) };
     }
     if (args[0] === 'build') {
@@ -56,6 +57,30 @@ function fixture(t, options = {}) {
   } };
   return { record, effects, calls, base, candidate, current: () => current };
 }
+
+for (const [field, value, detail] of [
+  ['mode', 0o600, 'mode=0600; expectedMode=0644; policyMatch=true'],
+  ['policyHash', 'private-policy-body-must-not-appear', 'mode=0644; expectedMode=0644; policyMatch=false'],
+  ['uid', 12345, 'mode=0644; expectedMode=0644; policyMatch=true'],
+  ['regular', false, 'mode=0644; expectedMode=0644; policyMatch=true'],
+  ['links', 2, 'mode=0644; expectedMode=0644; policyMatch=true'],
+]) {
+  test(`ordinary image refusal identifies ${field} without disclosing policy or mutating the image`, async t => {
+    const f = fixture(t, { healthy: true, reportOverride: { [field]: value } });
+    await assert.rejects(qualifyDockerRuntime(f.record, f.effects), error => {
+      assert(error.message.includes(`stage=ordinary; engine=docker; mismatched=${field}; ${detail}`));
+      assert(!error.message.includes('private-policy-body-must-not-appear'));
+      return true;
+    });
+    assert(!f.calls.some(call => ['build', 'tag'].includes(call.args[0]) || call.args[1] === 'tag'));
+  });
+}
+
+test('privileged refusal identifies a policy mismatch without attempting repair', async t => {
+  const f = fixture(t, { policyMismatch: true });
+  await assert.rejects(qualifyDockerRuntime(f.record, f.effects), /stage=privileged; engine=docker; mismatched=policyHash; mode=0600; expectedMode=0600; policyMatch=false/);
+  assert(!f.calls.some(call => call.args[0] === 'build' || call.args[1] === 'tag'));
+});
 
 test('private retained script copies require a persistent image rebuild marker', t => {
   const f = fixture(t);
