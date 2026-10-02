@@ -576,3 +576,5 @@ profile generation. An explicitly requested occupied port fails with a diagnosti
 Existing installation records keep their ports and identities. A listener acquired
 by another process after preflight still causes startup to fail safely; no foreign
 process is stopped and no retained installation is silently moved.
+
+Workspace setup pins Fleet `1.2.0-nightly.31` with its recorded registry integrity. This release includes the packaged `/fleet` browser entry and persists the available Fleet loopback port used by the workspace tunnel. Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
