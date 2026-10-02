@@ -55,3 +55,11 @@ test('top-level causes retain useful context and redact credential forms',()=>{
   assert(!text.includes(secret));assert(!text.includes(payload));assert(!text.includes('b'.repeat(43)));
   assert.match(redactDiagnostic('https://user:private@host.test/path',{}),/https:\/\/\[redacted\]@host.test/);
 });
+
+
+test('interactive launch errors retain original cause and terminal failure context',async()=>{
+  const effects=realEffects({env:{},out:()=>{}});
+  await assert.rejects(effects.runInteractive('/missing-ours-fleet-diagnostic-fixture',[]),error=>{
+    assert.equal(error.cause.code,'ENOENT');assert.match(error.message,/System error: ENOENT/);return true;
+  });
+});

@@ -442,7 +442,8 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
       delete childEnv.OURS_INSTALLER_LOCK_FD;
       if (installationLockFd !== null) childEnv.OURS_INSTALLER_LOCK_FD = '3';
       const r = spawnSync(cmd, args, { stdio: ['inherit', 'inherit', 'inherit', ...(installationLockFd === null ? [] : [installationLockFd])], env: childEnv });
-      return { ok: !r.error && r.status === 0, code: r.status ?? -1 };
+      if (r.error || r.status !== 0) throw commandFailure(cmd, args, r, { env: childEnv });
+      return { ok: true, code: r.status };
     },
     installedVersion: (pkg) => installedVersionOf(pkg, npmBin),
     packageDependencies: (spec) => packageDependenciesOf(spec, npmBin),

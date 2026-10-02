@@ -11,6 +11,7 @@ import { isCancel } from './prompt.mjs';
 import { USAGE } from './usage.mjs';
 import { validateIdentityName } from './server-onboarding.mjs';
 import { validateFleetSettings } from './fleet-settings.mjs';
+import { installerFailure } from './diagnostics.mjs';
 
 const maintenance = new Set(['status', 'start', 'stop', 'restart', 'rebuild', 'gateway-enable', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
 
@@ -153,7 +154,7 @@ export async function runSetup(argv, effects) {
     return await executeSetupPlan(plan, effects);
   } catch (error) {
     if (isCancel(error)) { effects.out(warn('Installation cancelled.')); return 130; }
-    effects.out(warn(`ours-install: ${error.message}`));
+    effects.out(warn(`ours-install: ${installerFailure(error, effects.env)}`));
     return 2;
   }
 }
