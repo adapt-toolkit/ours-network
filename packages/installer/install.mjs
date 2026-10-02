@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 
 import { realEffects } from './lib/effects.mjs';
+import { installerFailure } from './lib/diagnostics.mjs';
 import { runWorkspaceSetup } from './lib/workspace-setup.mjs';
 import { runSetup } from './lib/setup.mjs';
 import { closeSync, makeWriter, openTty } from './lib/ui.mjs';
@@ -22,7 +23,7 @@ try {
   }));
   process.exitCode = code;
 } catch (error) {
-  process.stderr.write(`ours-install: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`ours-install: ${installerFailure(error)}\n`);
   process.exitCode = 1;
 } finally {
   if (ttyFd != null) {

@@ -1,4 +1,5 @@
 import { readBuildRecords, initializeBuildMarker } from '../maintenance/build-context.mjs';
+import { redactDiagnostic } from './diagnostics.mjs';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
@@ -12,6 +13,7 @@ const DELIVERY_FILES = [
   '/credentials/messenger/daemon-token',
 ];
 const fail = (message) => { throw new Error(message); };
+let diagnosticStage = 'validation';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function privatePath(path, directory, exact = directory ? 0o700 : 0o600) {
@@ -128,10 +130,13 @@ function prepare() {
 
 function finishDaemonSetup() {
   const state = '/var/lib/ours';
+  diagnosticStage = 'daemon-provenance';
   initializeBuildMarker(`${state}/.ours-provenance`, readBuildRecords('/opt/ours'));
+  diagnosticStage = 'mcp-directory';
   privatePath('/var/lib/ours-mcp', true);
   const mcpProfile = { endpoint: 'http://127.0.0.1:3050', expectedInstanceId: process.env.OURS_DAEMON_ID, credentialPath: `${state}/daemon-token` };
   const mcpPath = '/var/lib/ours-mcp/profile.json';
+  diagnosticStage = 'mcp-profile';
   if (!existingPrivate(mcpPath, false)) atomicJson(mcpPath, mcpProfile);
   else if (JSON.stringify(jsonObject(mcpPath)) !== JSON.stringify(mcpProfile)) fail('Existing MCP profile differs from the selected daemon');
 }
@@ -155,10 +160,19 @@ async function telegramInput() {
 }
 
 function cliJson(args) {
+  diagnosticStage = 'official-cli';
   const result = spawnSync(process.execPath, [existsSync('/opt/ours/node_modules/@ours.network/daemon/dist/cli.js') ? '/opt/ours/node_modules/@ours.network/daemon/dist/cli.js' : '/opt/ours/node_modules/@ours.network/cli/dist/cli.js', ...args], {
     encoding: 'utf8', timeout: 60_000, maxBuffer: 1024 * 1024,
   });
-  if (result.status !== 0) fail('Official OURS CLI operation failed');
+  if (result.error || result.status !== 0) {
+    // --json writes failures on stderr. Successful credential stdout is never
+    // forwarded, even if a later operation exits unsuccessfully.
+    let reason = 'CLI supplied no structured error reason';
+    for (const line of String(result.stderr ?? '').split('\n').reverse()) {
+      try { const value = JSON.parse(line); if (typeof value?.error?.message === 'string') { reason = value.error.message; break; } } catch {}
+    }
+    fail(`Official OURS CLI operation failed (${args[1]}; exit=${result.status ?? 'none'}; signal=${result.signal ?? 'none'}; system=${result.error?.code ?? 'none'}): ${reason}`);
+  }
   try { return JSON.parse(result.stdout); }
   catch { fail('Official OURS CLI returned malformed JSON'); }
 }
@@ -192,6 +206,10 @@ try {
   else if (['access-init', 'access-issue', 'access-replace'].includes(operation)) access(operation, process.argv[3]);
   else fail('usage: client-setup.mjs prepare | telegram-input | access-init | access-issue [OUTPUT] | access-replace');
 } catch (error) {
-  console.error(`OURS client setup refused: ${error.message}`);
+  // Structured stderr retains the failing stage across sensitive Compose
+  // capture. The installer redacts secrets before exposing this envelope.
+  const message = redactDiagnostic(error.message);
+  console.error(JSON.stringify({ oursInstallerError: { stage: diagnosticStage, message } }));
+  console.error(`OURS client setup refused: ${message}`);
   process.exit(1);
 }
