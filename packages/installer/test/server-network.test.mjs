@@ -401,6 +401,9 @@ test('actual packaged Docker prepare keeps daemon fresh for owning HMAC init', {
     cpSync('/storage/state/daemon/config.json', '/var/lib/ours/config.json'); chownSync('/var/lib/ours/config.json', 1000, 1000);
     writeFileSync('/var/lib/ours/state_data.bin', 'existing-state', { mode: 0o600 }); chownSync('/var/lib/ours/state_data.bin', 1000, 1000);
     const refused = spawnSync(process.execPath, [helper, 'access-init'], { env, uid: 1000, gid: 1000, encoding: 'utf8' });
+    const diagnostic = refused.stderr.split('\n').map(line => { try { return JSON.parse(line).oursInstallerError; } catch { return null; } }).find(Boolean);
+    assert.equal(diagnostic.stage, 'official-cli');
+    assert.match(diagnostic.message, /Existing daemon state requires explicit --migrate/);
     assert.equal(refused.status, 1, 'existing state must not trigger implicit migration');
     assert.equal(existsSync('/var/lib/ours/api-master.key'), false, 'refused migration does not initialize authority');
     rmSync('/var/lib/ours/state_data.bin');

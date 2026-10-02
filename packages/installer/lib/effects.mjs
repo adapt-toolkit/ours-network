@@ -15,6 +15,7 @@ import { engineName, bindPodman, runContainer, nativeBuildCommands } from './con
 // unit file or the service manager directly.
 
 import { publishClientCli } from './client-cli.mjs';
+import { commandFailure } from './diagnostics.mjs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
@@ -422,13 +423,12 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
         env: childEnv,
       });
       if (r.error) {
-        const error = new Error(`${executable} could not start (${r.error.code ?? 'launch error'})`, { cause: r.error });
+        const error = commandFailure(executable, args, r, { sensitive, cwd, env: childEnv });
         error.code = r.error.code;
         throw error;
       }
       if (r.status !== 0 && !allowCodes.includes(r.status)) {
-        const detail = sensitive ? '' : (r.stderr || r.stdout || '').trim().split('\n').slice(-3).join('; ');
-        throw new Error(`${executable} ${args.join(' ')} exited ${r.status}${detail ? `: ${detail}` : ''}`);
+        throw commandFailure(executable, args, r, { sensitive, cwd, env: childEnv });
       }
       return { ok: true, code: r.status, stdout: r.stdout ?? '' };
     },
@@ -1040,7 +1040,15 @@ export function networkEffects(effects) {
     },
     async serverAccess(record, operation, { output, migrate = false } = {}) {
       if (record.mode === 'docker') {
-        if (!output) return compose(record, ['run', '--rm', '--no-deps', '-T', 'access', operation], { sensitive: true, env: { OURS_ACCESS_MIGRATE: migrate ? '1' : '0' } });
+        // Retained images contain the old helper that discarded CLI errors.
+        // Execute the shipped installer helper against the SAME selected image
+        // and Compose volume/user/environment contract, without retag/rebuild.
+        const diagnosticsUrl = `data:text/javascript;base64,${readFileSync(join(INSTALLER_ASSETS, 'scripts/runtime/diagnostics.mjs')).toString('base64')}`;
+        const helper = `process.argv.splice(1, 0, '/opt/ours/docker/client-setup.mjs');\n` + readFileSync(join(INSTALLER_ASSETS, 'scripts/runtime/client-setup.mjs'), 'utf8')
+          .replace("'../maintenance/build-context.mjs'", "'/opt/ours/maintenance/build-context.mjs'")
+          .replace("'./diagnostics.mjs'", JSON.stringify(diagnosticsUrl));
+        const accessArgs = (...args) => ['--entrypoint', 'node', 'access', '--input-type=module', '-e', helper, '--', ...args];
+        if (!output) return compose(record, ['run', '--rm', '--no-deps', '-T', ...accessArgs(operation)], { sensitive: true, env: { OURS_ACCESS_MIGRATE: migrate ? '1' : '0' } });
         privateDirectory(dirname(output));
         if (existsSync(output)) throw new Error('Credential output already exists');
         const name = `${record.project}-issue-${randomUUID()}`;
@@ -1048,7 +1056,7 @@ export function networkEffects(effects) {
         const staging = join(dirname(output), `.ours-issued-${randomUUID()}`);
         ensurePrivateDirectory(staging);
         try {
-          await compose(record, ['run', '--name', name, '--no-deps', '-T', 'access', 'access-issue', issuedPath], { sensitive: true });
+          await compose(record, ['run', '--name', name, '--no-deps', '-T', ...accessArgs('access-issue', issuedPath)], { sensitive: true });
           const file = join(staging, 'credential');
           await container(record, ['cp', `${name}:${issuedPath}`, file], { sensitive: true });
           assertPrivateRegularFile(file, 'issued credential');
