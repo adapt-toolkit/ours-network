@@ -158,3 +158,16 @@ test('Messenger profile handoff preserves retained root and profile bytes throug
   assert.deepEqual(calls,['GET /api/identity']);assert.equal(readFileSync(profilePath,'utf8'),original);
   assert.equal(f.calls.length,0,'no daemon root identity operation, credential issuance or Compose mutation');
 });
+
+test('Messenger profile handoff uses the gateway origin for a Docker gateway installation', async t => {
+  const f=fixture(t);Object.assign(f.record,{mode:'docker',gateway:{version:1},port:3057,messengerPort:8421});
+  const selections=[];
+  f.deps.compose=async (selected,args)=>{assert.deepEqual(args.slice(0,4),['exec','-T','messenger','node']);selections.push(JSON.parse(args.at(-1)));return {code:0,stdout:'Messenger Name and Surname initialized.'};};
+  await f.helper().serverEnsureHumanProfile(f.record,{name:'Ada',surname:'Lovelace'});
+  assert.equal(selections.length,1);
+  assert.equal(selections[0].origin,'http://127.0.0.1:3057','mutations carry the origin Messenger is configured with');
+  assert.equal(selections[0].base,'http://127.0.0.1:8420','requests stay on the container-local Messenger port');
+  f.record.gateway={version:1,serverUrl:'https://ours.example.test/team'};
+  await f.helper().serverEnsureHumanProfile(f.record,{name:'Ada',surname:'Lovelace'});
+  assert.equal(selections[1].origin,'https://ours.example.test');
+});

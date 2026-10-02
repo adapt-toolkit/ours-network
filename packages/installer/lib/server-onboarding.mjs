@@ -136,7 +136,8 @@ else { await request('identity/profile', selection.human); process.stdout.write(
 `;
       const docker = record.mode === 'docker';
       const selection = { base: `http://127.0.0.1:${docker ? 8420 : record.messengerPort}`,
-        origin: `http://127.0.0.1:${record.messengerPort}`,
+        // Behind the gateway Messenger accepts mutations only from the gateway origin.
+        origin: record.gateway ? gatewayAddress(record).origin : `http://127.0.0.1:${record.messengerPort}`,
         credentialPath: docker ? '/credentials/messenger/daemon-token' : installationPaths(record).credentials.messenger,
         human: { name: human.name, surname: human.surname } };
       const args = ['--input-type=module', '-e', script, JSON.stringify(selection)];
