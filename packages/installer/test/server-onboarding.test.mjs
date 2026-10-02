@@ -133,3 +133,26 @@ test('permission and lifecycle failures never trigger root reread or retry', asy
     assert.equal(f.calls.length,2);
   }
 });
+
+test('Messenger profile handoff preserves retained root and profile bytes through the executed helper', async t => {
+  const { createServer } = await import('node:http');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const f=fixture(t),cid='a'.repeat(64),original=JSON.stringify({name:'Existing',surname:'Human'}),profilePath=join(f.root,'profile.json');
+  writeFileSync(profilePath,original,{mode:0o600});
+  const credential=join(f.root,'credentials','messenger-token');
+  const { mkdirSync }=await import('node:fs');mkdirSync(join(f.root,'credentials'),{mode:0o700});writeFileSync(credential,'fixture-token',{mode:0o600});
+  const calls=[];
+  const server=createServer((req,res)=>{
+    calls.push(req.method+' '+req.url);assert.equal(req.headers['x-ours-api-token'],'fixture-token');
+    assert.equal(req.method,'GET','existing profile must never be rewritten');assert.equal(req.url,'/api/identity');
+    res.setHeader('Content-Type','application/json');res.end(JSON.stringify({cid,name:'Existing Root',humanProfile:JSON.parse(readFileSync(profilePath,'utf8'))}));
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  f.record.messengerPort=server.address().port;
+  f.effects.run=async (command,args,options)=>{const result=await exec(command,args,{env:{...process.env,...options.env}});return {code:0,stdout:result.stdout};};
+  await f.helper().serverEnsureHumanProfile(f.record,{name:'Requested',surname:'Replacement'});
+  assert.deepEqual(calls,['GET /api/identity']);assert.equal(readFileSync(profilePath,'utf8'),original);
+  assert.equal(f.calls.length,0,'no daemon root identity operation, credential issuance or Compose mutation');
+});
