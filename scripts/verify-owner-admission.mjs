@@ -47,41 +47,48 @@ export async function verifyOwnerAdmission({ env, prefix, root, expectedCid }) {
     fs.writeFileSync(join(home, 'fleet.yaml'), `api_version: ours.network/fleet/v2\n\nrooms:\n  owner:\n    provider: messenger-server\n    expected_cid: ${owner}\n    public_invite_file: ${invite}\n    role: Owner\n  defaults:\n    attach_owner: true\n    close_when_task_done: true\n`, { mode: 0o600 });
     return home;
   };
+  /** Runs the installed Fleet. Its raw output can carry invitation data, so only `brief` is ever printed. */
   const fleet = (home, args) => {
     const result = spawnSync(join(prefix, 'bin', 'ours-fleet'), args, { env: { ...env, OURS_FLEET_HOME: home }, encoding: 'utf8', timeout: 180000 });
     let json; try { json = JSON.parse(result.stdout); } catch { /* reported by the caller */ }
-    return { status: result.status, json, text: (result.stdout + result.stderr).split(invitation).join('<invitation>') };
+    const said = (result.stdout + result.stderr).split(invitation).join('<invitation>').replace(/[A-Za-z0-9+/_=-]{24,}/g, '<long value>').replace(/\s+/g, ' ').trim().slice(0, 300);
+    return { status: result.status, signal: result.signal, json, brief: `exit ${result.status}${result.signal ? ' ' + result.signal : ''}: ${said}` };
   };
-  const members = (home, id) => { const listed = fleet(home, ['room', 'members', id, '--json']); assert.equal(listed.status, 0, `room members failed: ${listed.text}`); return listed.json; };
-  const seatOf = (member, cid) => [member.identity_cid, member.cid, member.seat_cid, member.identity].some(value => same(value, cid));
-  const active = member => [member.seat_state, member.state, member.status].includes('active');
+  /** What the evidence shows of a room and of a seat: identifiers, roles and states only. */
+  const roomFacts = room => ({ room_id: room?.room_id, state: room?.state, provisioning_detail: room?.provisioning_detail ?? room?.orchestration?.provisioning_detail, room_identity_cid: room?.room_identity_cid ?? room?.orchestration?.room_identity_cid, owner_seat_cid: room?.owner_seat_cid ?? room?.orchestration?.owner_seat_cid });
+  const seatFacts = member => ({ identity_cid: member.identity_cid, role: member.role, seat_state: member.seat_state });
+  const members = (home, id) => { const listed = fleet(home, ['room', 'members', id, '--json']); assert.equal(listed.status, 0, `room members failed (${listed.brief})`); return listed.json; };
+  const listed = (home, name) => { const all = fleet(home, ['room', 'list', '--state', 'all', '--json']); assert.equal(all.status, 0, `room list failed (${all.brief})`); return all.json.rooms.filter(room => room.room_name === name); };
 
   // Written in mixed case, as a person editing the file might: the same identity must still be admitted.
   const mixed = [...child].map((char, index) => index % 2 ? char : char.toUpperCase()).join('');
   assert.ok(mixed !== child && mixed !== child.toUpperCase(), 'the expected identity is written in mixed case');
   const home = fleetHome('fleet-owner', mixed), name = `owner-gate-${randomBytes(4).toString('hex')}`;
   const created = fleet(home, ['room', 'create', '--name', name, '--goal', 'Owner admission check', '--json']);
-  console.log('Room created with the Messenger identity as expected Owner:', created.text);
-  assert.equal(created.status, 0, 'the installed Fleet creates a room');
-  const room = created.json.room, roomId = room.room_id ?? room.id;
+  assert.equal(created.status, 0, `the installed Fleet creates a room (${created.brief})`);
+  const room = created.json.room, roomId = room.room_id;
+  console.log('Room created with the Messenger identity as expected Owner:', JSON.stringify(roomFacts(room)));
+  assert.equal(typeof roomId, 'string');
   assert.ok(same(room.owner_seat_cid, child), 'the Owner seat is the Messenger identity');
   assert.ok(!same(room.owner_seat_cid, humanRoot), 'the Owner seat is not the Human root');
   assert.match(String(room.room_identity_cid), CID);
+  const seated = member => same(member.identity_cid, child) && member.seat_state === 'active';
   let seats;
   for (let attempt = 0; attempt < 90; attempt++) {
     seats = members(home, roomId);
-    if (seats.members.some(member => seatOf(member, child) && active(member))) break;
+    if (seats.members.some(seated)) break;
     await wait(1000);
   }
-  console.log('Room members:', JSON.stringify(seats));
-  const owners = seats.members.filter(member => member.role === 'Owner' && active(member));
+  console.log('Room members:', JSON.stringify(seats.members.map(seatFacts)));
+  const owners = seats.members.filter(member => member.role === 'Owner' && member.seat_state === 'active');
   assert.equal(owners.length, 1, 'exactly one active Owner');
-  assert.ok(seatOf(owners[0], child), 'the active Owner is the Messenger identity');
-  assert.ok(!seats.members.some(member => seatOf(member, humanRoot)), 'the Human root holds no seat');
+  assert.ok(same(owners[0].identity_cid, child), 'the active Owner is the Messenger identity');
+  assert.ok(!seats.members.some(member => same(member.identity_cid, humanRoot)), 'the Human root holds no seat');
   assert.ok(same(seats.owner_seat_cid, child));
-  const shown = fleet(home, ['room', 'list', '--state', 'all', '--json']);
-  console.log('Rooms:', shown.text);
-  assert.equal(shown.status, 0); assert.ok(JSON.stringify(shown.json).includes('"active"'), 'the room is active once its Owner is seated');
+  const [stored, ...duplicates] = listed(home, name);
+  console.log('Room as listed:', JSON.stringify(roomFacts(stored)));
+  assert.equal(duplicates.length, 0); assert.equal(stored?.room_id, roomId);
+  assert.equal(stored.state, 'active', 'the room is active once its Owner is seated');
 
   // The person's Messenger now holds the room as a contact, under the room's own name.
   let contact;
@@ -92,12 +99,20 @@ export async function verifyOwnerAdmission({ env, prefix, root, expectedCid }) {
   assert.ok(contact, 'the room appears among the Messenger contacts of the admitted identity');
   assert.equal(contact.name, `ours-cowork:${name}`);
 
-  // The check is real: with the Human root written as Owner, the same invitation is not admitted.
-  const other = fleetHome('fleet-root-owner', humanRoot);
-  const refused = fleet(other, ['room', 'create', '--name', `owner-gate-root-${randomBytes(4).toString('hex')}`, '--goal', 'Owner admission check', '--json']);
-  console.log('Room created with the Human root as expected Owner:', refused.text);
-  const refusedRoom = refused.json?.room;
-  assert.ok(refused.status !== 0 || refusedRoom?.state !== 'active', 'a room expecting the Human root does not become active through the Messenger invitation');
-  assert.ok(!refusedRoom || !same(refusedRoom.owner_seat_cid, humanRoot) || refusedRoom.state !== 'active');
+  // The check is real: with the Human root written as Owner, the same invitation is refused for that reason,
+  // and the room Fleet keeps for it has no Owner and never becomes active.
+  const other = fleetHome('fleet-root-owner', humanRoot), otherName = `owner-gate-root-${randomBytes(4).toString('hex')}`;
+  const refused = fleet(other, ['room', 'create', '--name', otherName, '--goal', 'Owner admission check', '--json']);
+  assert.equal(refused.signal, null, `the refused creation ran to its end (${refused.brief})`);
+  assert.notEqual(refused.status, 0, 'a room expecting the Human root is not created through the Messenger invitation');
+  const [kept, ...others] = listed(other, otherName);
+  console.log('Room kept after expecting the Human root as Owner:', JSON.stringify(roomFacts(kept)));
+  assert.equal(others.length, 0); assert.ok(kept, 'Fleet keeps the room it could not give an Owner');
+  assert.equal(roomFacts(kept).provisioning_detail, 'owner_cid_mismatch', 'the refusal is the Owner identity mismatch');
+  assert.notEqual(kept.state, 'active');
+  const refusedSeats = members(other, kept.room_id).members;
+  console.log('Its members:', JSON.stringify(refusedSeats.map(seatFacts)));
+  assert.ok(!refusedSeats.some(member => member.seat_state === 'active' && member.role === 'Owner'), 'that room has no active Owner');
+  assert.ok(!refusedSeats.some(member => same(member.identity_cid, humanRoot)), 'the Human root is not seated there either');
   return { child, humanRoot, room: roomId };
 }

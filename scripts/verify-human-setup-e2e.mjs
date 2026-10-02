@@ -70,6 +70,8 @@ try {
   assert.notEqual(check.status, 0, 'prerequisite check fails on a host without the tunnel prerequisites');
   assert.match(check.stdout + check.stderr, /Nothing was changed and this host was not bound\./);
   const admitted = await verifyOwnerAdmission({ env, prefix, root, expectedCid: retained.cid });
+  // The admitted identity is still the installation's choice afterwards.
+  assert.equal(messengerIdentity(readRecord()).cid, retained.cid);
   console.log('Owner admission:', JSON.stringify(admitted));
   failed = false;
   console.log('HUMAN_SETUP_E2E_PASS: packed installer, real Docker gateway stack, Messenger stores the requested Name and Surname, identity and profile retained on repeat, installed Fleet offers setup-tunnel and its prerequisite check refuses an unprepared host, a room created by the installed Fleet seats that Messenger identity (not the Human root) as its only active Owner. No tunnel, device link, task or browser exercised.');
