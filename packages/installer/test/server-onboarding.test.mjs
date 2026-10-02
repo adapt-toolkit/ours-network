@@ -132,6 +132,32 @@ for (const [label, after, description, expected] of [
   if (expected instanceof RegExp || typeof expected === 'function') await assert.rejects(result, expected); else assert.deepEqual(await result, expected);
   assert.equal(n, description ? 4 : 3);
 });
+for (const code of ['IDENTITY_IN_USE', 'PROVISION_FAILED', 'LEASE_RELEASE_INCOMPLETE', 'OWNER_OPERATION_FAILED'])
+  test('a creation failure that is not a name collision is reported and never adopts a visible identity: ' + code, async t => {
+    const f = fixture(t, [[rootRow], { onboardingError: code }, [rootRow, own], described()]);
+    await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), error => error.code === code);
+    assert.equal(f.calls.length, 2, 'nothing is listed or bound after the failure');
+  });
+test('an incomplete lease release after describing an existing identity is a failure, not a selection', async t => {
+  const f = fixture(t, [[rootRow, own], { onboardingError: 'LEASE_RELEASE_INCOMPLETE' }]);
+  await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), error => error.code === 'LEASE_RELEASE_INCOMPLETE');
+});
+test('the identity script releases its lease once, reports an incomplete release, and keeps the first failure', async t => {
+  const f = fixture(t, [[rootRow]]); await f.helper().serverListIdentities(f.record);
+  const script = f.calls[0].args[2];
+  // Run the script's own lease handling against stand-in clients; only the client import is replaced.
+  const body = script.slice(script.indexOf('let output, released = false;')).replace('process.stdout.write(JSON.stringify(output));', 'return output;');
+  const run = (client, selection) => new (Object.getPrototypeOf(async function () {}).constructor)('client', 'selection', body)(client, selection);
+  const client = over => { const calls = []; return { calls, listIdentities: async () => { calls.push('list'); return [rootRow]; }, releaseLease: async () => { calls.push('release'); return { released: 1, failed: 0 }; }, close: async () => { calls.push('close'); }, ...over(calls) }; };
+  let c = client(() => ({}));
+  assert.deepEqual(await run(c, { operation: 'list' }), [rootRow]); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+  c = client(calls => ({ releaseLease: async () => { calls.push('release'); return { released: 0, failed: 1 }; } }));
+  assert.deepEqual(await run(c, { operation: 'list' }), { onboardingError: 'LEASE_RELEASE_INCOMPLETE' }); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+  c = client(calls => ({ releaseLease: async () => { calls.push('release'); throw Object.assign(Error('refused'), { code: 'RELEASE_REFUSED' }); } }));
+  assert.deepEqual(await run(c, { operation: 'list' }), { onboardingError: 'RELEASE_REFUSED' }); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+  c = client(calls => ({ listIdentities: async () => { calls.push('list'); throw Object.assign(Error('down'), { code: 'DAEMON_DOWN' }); }, releaseLease: async () => { calls.push('release'); throw Error('refused'); } }));
+  assert.deepEqual(await run(c, { operation: 'list' }), { onboardingError: 'DAEMON_DOWN' }); assert.deepEqual(c.calls, ['list', 'release', 'close']);
+});
 for (const name of ['', '../Ada', 'a'.repeat(65)]) test('invalid Messenger identity name fails before owner effects: ' + JSON.stringify(name), async t => {
   const f = fixture(t); await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, name), /identity name/i); assert.equal(f.calls.length, 0);
 });

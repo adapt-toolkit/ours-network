@@ -41,6 +41,9 @@ const { attachOursClient } = await import(pathToFileURL(require.resolve('@ours.n
 const client = await attachOursClient({ endpoint: selection.endpoint,
   expectedInstanceId: selection.instanceId, credentialPath: selection.credentialPath,
   sessionMode: 'external', leaseToken: randomUUID(), env: {} });
+// The lease this short-lived client takes is released exactly once. An operation is not reported as done
+// while that release is incomplete, and what failed first is what is reported.
+let output, released = false;
 try {
   const result = selection.operation === 'list' ? await client.listIdentities()
     : selection.operation === 'create-role' ? { created: await client.createIdentity({ name: selection.name, bio: '',
@@ -49,12 +52,16 @@ try {
         { current: await client.currentIdentity() })
     : await client.createRootIdentity({ name: selection.name, bio: '',
         exposeLocal: true, localAutoAccept: true, skipIfRootExists: true });
-  process.stdout.write(JSON.stringify(result));
+  released = true;
+  const release = await client.releaseLease();
+  output = release?.failed > 0 ? { onboardingError: 'LEASE_RELEASE_INCOMPLETE' } : result;
 } catch (error) {
-  process.stdout.write(JSON.stringify({ onboardingError: error.code || 'OWNER_OPERATION_FAILED' }));
+  output = { onboardingError: error.code || 'OWNER_OPERATION_FAILED' };
+  if (!released) try { await client.releaseLease(); } catch {}
 } finally {
-  try { await client.releaseLease(); } finally { await client.close(); }
+  try { await client.close(); } catch {}
 }
+process.stdout.write(JSON.stringify(output));
 `;
   async function identityCommand(record, operation, name) {
     validateRecord(record);
@@ -153,7 +160,9 @@ try {
       try {
         result = await identityCommand(record, 'create-role', name);
       } catch (error) {
-        // A concurrent creator is safe only when the authoritative list now shows that name under the same root.
+        // Only a name collision can mean a concurrent creator; any other failure is reported as it is.
+        if (error.code !== 'NAME_TAKEN') throw error;
+        // That creator is accepted only when the authoritative list now shows the name under the same root.
         const after = await identities(record);
         if (!after.rows.some(row => row.name === name)) throw error;
         const row = await adopt(after);
