@@ -169,7 +169,7 @@ else { await request('identity/profile', selection.human); process.stdout.write(
         if (!current) {
           effects.out?.('Issuing a separate local client credential with the retained server authority.');
           try { await effects.serverAccess(record, 'access-issue', { output: credential }); }
-          catch { throw new Error('Client credential issuance failed; existing profiles were retained'); }
+          catch (cause) { throw new Error('Client credential issuance failed; existing profiles were retained', { cause }); }
         }
         const retainedCredential = current?.credentialPath ?? credential;
         const stat = privatePath(retainedCredential);

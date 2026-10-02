@@ -107,9 +107,34 @@ try {
   const healthyScripts = metadata(retainedTag).Id;
   await effects.prepareInstallation(record, { runtimeOnly: true });
   assert.equal(metadata(retainedTag).Id, healthyScripts, 'retry reuses verified script rebuild');
+  // Qualify real effects.serverAccess argv/imports against a cached image with
+  // a legacy helper. Only the current inline helper can expose the CLI refusal.
+  await effects.prepareInstallation(record);
+  const legacyHelper = join(root, 'legacy-client-setup.mjs');
+  fs.writeFileSync(legacyHelper, "throw new Error('legacy helper must not execute');\n");
+  fs.writeFileSync(brokenFile, `FROM ${retainedTag}\nCOPY --chmod=644 legacy-client-setup.mjs /opt/ours/docker/client-setup.mjs\n`);
+  docker(['build', '-f', brokenFile, '-t', retainedTag, root]);
+  const diagnosticImage = metadata(retainedTag).Id;
+  const storage = `${project}_server-storage`;
+  docker(['run', '--rm', '--network', 'none', '--cap-drop', 'ALL', '--user', '12345:12345',
+    '--mount', `type=volume,src=${storage},dst=/storage,volume-nocopy`, '--entrypoint', 'node', retainedTag,
+    '-e', "require('fs').writeFileSync('/storage/state/daemon/state_data.bin','retained-state-marker',{mode:0o600})"]);
+  await assert.rejects(effects.serverAccess(record, 'access-init'), error => {
+    assert.match(error.message, /Stage: official-cli/);
+    assert.match(error.message, /Existing daemon state requires explicit --migrate/);
+    assert.match(error.message, /Exit code: 1/);
+    assert.doesNotMatch(error.message, /legacy helper must not execute/);
+    return true;
+  });
+  assert.equal(metadata(retainedTag).Id, diagnosticImage, 'diagnostics never rebuild or retag the retained image');
+  docker(['run', '--rm', '--read-only', '--network', 'none', '--cap-drop', 'ALL', '--user', '12345:12345',
+    '--mount', `type=volume,src=${storage},dst=/storage,readonly,volume-nocopy`, '--entrypoint', 'node', retainedTag,
+    '-e', "const fs=require('fs'),a=require('assert/strict');a.equal(fs.readFileSync('/storage/state/daemon/state_data.bin','utf8'),'retained-state-marker');a.equal(fs.existsSync('/storage/state/daemon/api-master.key'),false)"]);
+  console.log('Verified real Compose inline helper and retained CLI refusal without state/authority replacement.');
   console.log('Verified installer repair of retained old assets/image after exit1, and idempotent retry.');
 
 } finally {
+  for (const suffix of ['server-storage', 'owner-locks']) { try { execFileSync('docker', ['volume', 'rm', `${project}_${suffix}`], { stdio: 'ignore' }); } catch {} }
   try { execFileSync('docker', ['rm', failedContainer], { stdio: 'ignore' }); } catch {}
   try { execFileSync('docker', ['image', 'rm', retainedTag], { stdio: 'ignore' }); } catch {}
   try { execFileSync('docker', ['image', 'rm', tag], { stdio: 'ignore' }); } catch { /* build may have failed */ }

@@ -1,4 +1,4 @@
-import { runContainer } from './container-engine.mjs';
+import { engineName, runContainer } from './container-engine.mjs';
 /** Qualify cached images before reuse; repair only the known root-owned 0600 policy. */
 import { existsSync, readdirSync, lstatSync, readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync, openSync, closeSync, fstatSync, fchmodSync, constants } from 'node:fs';
 import { join } from 'node:path';
@@ -112,16 +112,24 @@ export async function qualifyDockerRuntime(record, effects) {
     }
   };
   const policy = readFileSync(record.sourcesPath), expectedHash = digest(policy);
-  const check = (report, mode) => {
-    if (!report || report.mode !== mode || report.uid !== 0 || report.gid !== 0 || !report.regular || report.links !== 1 || report.policyHash !== expectedHash) fail('image policy differs from retained selection or expected permissions');
+  const check = (report, mode, stage) => {
+    const expected = { mode, uid: 0, gid: 0, regular: true, links: 1, policyHash: expectedHash };
+    const mismatched = Object.keys(expected).filter(key => report?.[key] !== expected[key]);
+    if (mismatched.length) {
+      // Only fixed field names, a bounded numeric mode and a comparison boolean
+      // enter diagnostics. Never disclose policy content, hashes or probe output.
+      const observedMode = Number.isInteger(report?.mode) && report.mode >= 0 && report.mode <= 0o7777
+        ? report.mode.toString(8).padStart(4, '0') : 'invalid';
+      fail(`image policy verification failed (stage=${stage}; engine=${engineName(record)}; mismatched=${mismatched.join(',')}; mode=${observedMode}; expectedMode=${mode.toString(8).padStart(4, '0')}; policyMatch=${report?.policyHash === expectedHash})`);
+    }
   };
   const original = await inspect(tag);
   const ordinary = await probe(original.Id, `${uid}:${gid}`);
-  if (ordinary.code === 0) { check(ordinary.report, 0o644); return; }
+  if (ordinary.code === 0) { check(ordinary.report, 0o644, 'ordinary'); return; }
   if (ordinary.code !== 74) fail('cached image is unusable; automatic repair only supports the known source-policy permission defect');
   const privileged = await probe(original.Id, '0:0');
   if (privileged.code !== 0) fail('original release graph could not be verified');
-  check(privileged.report, 0o600);
+  check(privileged.report, 0o600, 'privileged');
   effects.out?.('Repairing cached Docker image permissions; keeping the selected packages and stored data.');
   const directory = mkdtempSync(join(record.root, '.image-permissions-'));
   const name = `ours-permission-repair-${randomUUID()}`, baseTag = `${name}:base`, candidateTag = `${name}:candidate`;
@@ -138,7 +146,7 @@ export async function qualifyDockerRuntime(record, effects) {
         || candidate.RootFS.Layers.length !== original.RootFS.Layers.length + 1) fail('repair changed image execution settings or ancestry');
     const verified = await probe(candidate.Id, `${uid}:${gid}`);
     if (verified.code !== 0) fail('repaired image did not pass runtime verification');
-    check(verified.report, 0o644);
+    check(verified.report, 0o644, 'repaired');
     if (!isDeepStrictEqual(verified.report.records, privileged.report.records)) fail('repair changed build provenance');
     if ((await inspect(tag)).Id !== original.Id) fail('selected image changed during repair; retry setup');
     await runContainer(effects, record, ['image', 'tag', candidate.Id, tag]);

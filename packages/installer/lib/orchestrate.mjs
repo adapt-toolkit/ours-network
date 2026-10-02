@@ -45,6 +45,7 @@ import {
   validateChannelVersion,
 } from './marketplace.mjs';
 import { USAGE } from './usage.mjs';
+import { installerFailure } from './diagnostics.mjs';
 import { ok, info, warn, heading, banner, box, c, progress } from './ui.mjs';
 
 export const EXIT_OK = 0;
@@ -89,12 +90,7 @@ async function perform(effects, dryRun, label, thunk) {
 const reason = (error) => (error instanceof Error ? error.message : String(error));
 
 function clientDiagnostic(error) {
-  return reason(error)
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
-    .replace(/((?:api[_-]?key|api[_-]?token|access[_-]?token|refresh[_-]?token|token|password|secret|authorization|credential)\s*["']?\s*[:=]\s*["']?)[^\s"',;]+/gi, '$1[redacted]')
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
-    .replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 700);
+  return installerFailure(error);
 }
 
 function clientRetry(effects, imported, integrations) {

@@ -23,6 +23,7 @@ COPY --chmod=644 scripts/runtime/runtime-common.mjs /opt/ours/docker/runtime-com
 COPY --chmod=644 scripts/runtime/check-client.mjs /opt/ours/docker/check-client.mjs
 COPY --chmod=644 scripts/runtime/check-start.mjs /opt/ours/docker/check-start.mjs
 COPY --chmod=644 scripts/runtime/client-setup.mjs /opt/ours/docker/client-setup.mjs
+COPY --chmod=644 scripts/runtime/diagnostics.mjs /opt/ours/docker/diagnostics.mjs
 COPY --chmod=644 scripts/runtime/legacy-import.mjs /opt/ours/docker/legacy-import.mjs
 COPY --chmod=644 scripts/runtime/entrypoint.sh /opt/ours/docker/entrypoint.sh
 COPY --chmod=644 scripts/runtime/healthcheck.mjs /opt/ours/docker/healthcheck.mjs
