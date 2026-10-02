@@ -228,6 +228,14 @@ test('complete permanent presets support unattended Fleet CLI installation witho
  assert.throws(()=>parse(['--mode=docker','--state-dir=/private/ours','--username=alex','--name=Alex','--surname=Taylor','--integrations=fleet','--disable-fleet-agents-setup','--fleet-settings=/private/settings']),/conflicts/);
 });
 
+test('full setup offers only runtimes that can finish; native stays for server-only and retained native installations',async()=>{
+ const runtimes=f=>f.questions.find(row=>row[0]==='How should the server run?')[3].map(choice=>choice.value);
+ const full=interactiveFixture();await collectSetupOptions(full.effects);
+ assert.deepEqual(runtimes(full),['docker','podman']);
+ const server=interactiveFixture({selections:{'What would you like to set up?':'server'}});await collectSetupOptions(server.effects);
+ assert.deepEqual(runtimes(server),['packages','docker','podman']);
+});
+
 test('Podman selection uses the container plan and retained engine',async()=>{
  const f=interactiveFixture({selections:{'How should the server run?':'podman'}});
  const options=await collectSetupOptions(f.effects);assert.equal(options.mode,'docker');assert.equal(options.containerEngine,'podman');
