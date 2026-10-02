@@ -114,6 +114,9 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
     const result = await server({ ...plan, role: 'server', operation: plan.operation, sourcePolicy: plan.sourcePolicy }, effects);
     if (result !== 0) return result;
     const record = validateInstallation(effects.readJson(join(plan.stateDir, 'installation.json')), plan.stateDir);
+    if (plan.name && plan.surname && plan.operation === 'install') {
+      await effects.serverEnsureHumanProfile(record, { name: plan.name, surname: plan.surname });
+    }
     if (plan.operation === 'update') {
       effects.out(progress(0, 1, 'Retained identities', 'Verify the Human identity after state restoration; existing names and keys are retained.'));
       const running = await effects.serverLifecycle(record, 'status', ['daemon']);
@@ -132,11 +135,12 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
   if (plan.scope !== 'server') {
     const result = await client({ role: 'client', operation: 'install', config: clientConfig,
       integrations: plan.integrations, fleetSettingsPath: plan.fleetSettingsPath, sourcePolicy: clientPolicy,
-      preset: true, nonInteractive: !plan.interactive }, effects);
+      disableFleetAgentsSetup: plan.disableFleetAgentsSetup, preset: true, nonInteractive: !plan.interactive }, effects);
     if (result !== 0) return result;
   }
+  if (plan.disableFleetAgentsSetup && plan.integrations?.includes('fleet')) effects.out(info('Fleet is installed. Run ours-fleet setup-tunnel with the private expiring App setup file, then ours-fleet link-device. Configure agents and models in the App after linking.'));
   effects.out(ok(`Requested ${plan.operation} completed. Existing identities were retained.`));
-  if (plan.integrations?.includes('fleet')) effects.out(info('Fleet is configured but stopped. Review its settings, then run ours-fleet doctor, ours-fleet config and ours-fleet up.'));
+  if (plan.integrations?.includes('fleet') && !plan.disableFleetAgentsSetup) effects.out(info('Fleet is configured but stopped. Review its settings, then run ours-fleet doctor, ours-fleet config and ours-fleet up.'));
   return 0;
 }
 
@@ -148,7 +152,15 @@ export async function runSetup(argv, effects) {
     if (argv[0] === 'server' && maintenance.has(argv[1])) return await runServerCommand(parseNetworkArgs(argv), effects);
     if (!argv.length && effects.env?.OURS_ASSUME_YES) throw new InstallUsageError('OURS_ASSUME_YES cannot fill an interactive setup plan. Supply complete CLI presets for unattended installation.');
     if (!argv.length) { effects.out(banner()); effects.out(heading('Interactive setup')); }
-    const options = argv.length ? parseSetupArgs(argv, { home: effects.home }) : await collectSetupOptions(effects);
+    let options;
+    if (argv.length) {
+      const presets = parseSetupArgs(argv, { home: effects.home, validate: false });
+      try { options = validateSetupOptions(presets, { interactive: false }); }
+      catch (error) {
+        if (!effects.interactive || effects.env?.OURS_ASSUME_YES || !/^Missing (required setup options|human profile option):/.test(error.message)) throw error;
+        options = await collectSetupOptions(effects, presets);
+      }
+    } else options = await collectSetupOptions(effects);
     const plan = await prepareSetupPlan(options, effects);
     return await executeSetupPlan(plan, effects);
   } catch (error) {

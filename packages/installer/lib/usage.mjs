@@ -1,10 +1,14 @@
 // Public setup and maintenance commands.
-export const USAGE = `ours-install — interactive setup or complete CLI presets.
+export const USAGE = `ours-install — interactive setup with optional CLI presets.
 
   ours-install
     Opens the console form. Choose all (server + clients), server, or client;
     runtime, installation directory, identity, integrations and Fleet settings.
     Docker provides the full-stack gateway; native mode is server-only. Windows uses WSL.
+
+  Install now, configure Fleet agents in the App after linking:
+    ours-install --username alex --name Alex --surname Taylor --disable-fleet-agents-setup
+    Remaining installation choices are prompted on a terminal. No enrollment credentials or expiry.
 
   Full stack, with every required answer preset (no prompts):
     ours-install --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json
@@ -24,9 +28,14 @@ export const USAGE = `ours-install — interactive setup or complete CLI presets
   --mode docker|native      packages is also accepted for native mode
   --container-engine docker|podman  server container backend (default Docker); retained for maintenance
   --state-dir PATH          installation root; required for all/server
+  --username USERNAME       local username; no global uniqueness check
+  --name NAME               Messenger given name
+  --surname SURNAME         Messenger family name
+  --hostname NAME           optional host/workspace name; defaults to this machine
+  --disable-fleet-agents-setup  install Fleet CLI without its roles/model wizard
   --identity-name NAME      desired Human name for a fresh server; existing root is retained
   --integrations LIST       codex,claude-code,fleet; use none to skip clients explicitly
-  --fleet-settings PATH     JSON settings for Fleet; mandatory for CLI presets selecting Fleet
+  --fleet-settings PATH     JSON settings for Fleet; required unless Fleet agents setup is disabled
   --config PATH             complete connection profile for client-only setup
   --sources PATH            explicit full development source policy override
   --port N                  public gateway port for Docker (default 3050; e.g. 4050)
@@ -41,8 +50,8 @@ export const USAGE = `ours-install — interactive setup or complete CLI presets
   --help, -h                show help
   --version, -V             print installer version
 
-CLI presets must be complete and never open the interactive form or a Fleet wizard.
-Missing answers are reported before installation. Both input modes run the same
+Partial CLI presets on a terminal ask for the remaining choices. Without a terminal,
+or with OURS_ASSUME_YES, supply complete CLI presets; missing answers fail before installation. Both input modes run the same
 installer with preparation, identity restoration, update and readiness progress.
 Fleet is configured but left stopped for operator review.
 

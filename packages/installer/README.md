@@ -1,3 +1,17 @@
+## Install first, connect the App afterwards
+
+```sh
+ours-install --username alex --name Alex --surname Taylor --disable-fleet-agents-setup
+```
+
+This permanent command contains no tunnel credentials or enrollment expiry. On a terminal it asks for the remaining installation choices, including Docker, Podman or native packages. The username is local and has no global uniqueness check. A fresh root is named `<username>@<hostname>`; the optional `--hostname` defaults to the machine name. Messenger stores Name and Surname through its supported profile API. Retried setup retains root identities and existing Messenger profiles.
+
+`--disable-fleet-agents-setup` installs the Fleet CLI and saves the choice without opening its agent/model wizard or rewriting existing Fleet configuration. Configure agents in the App after device linking. Complete presets still work unattended; partial presets require a terminal and cannot use `OURS_ASSUME_YES`.
+
+The separate `ours-fleet setup-tunnel --file /private/setup-payload` step requires the matching Fleet follow-up release. Its private App payload remains scoped, signed-root-bound and expiring. Then run `ours-fleet link-device` and paste its private single-use code into the App. Do not put the expiring tunnel payload in the permanent installer command.
+
+Native packages currently provide server-only installation; full Fleet/App onboarding requires the supported gateway (Docker or Podman). The installer refuses unsupported native full-stack setup before changing anything. This PR does not add a native gateway or release unpublished Fleet commands.
+
 See [one-connection setup, localhost:4050 and systemd migration](GATEWAY_SETUP.md) for the gateway-only client workflow.
 
 # @ours.network/install — one installer for the whole stack
