@@ -84,7 +84,9 @@ test('full installation starts daemon, retains identity, starts consumers, then 
 const person = { localUsername: 'ada', name: 'Ada', surname: 'Lovelace', hostname: 'home', identityName: 'ada@home' };
 const selectedMessenger = async (setup, extra = {}) => {
   const { effects, events, files } = setup;
-  assert.equal(await executeSetupPlan({ ...options, ...extra, sourcePolicy: policy }, effects, { server: runServerCommand, client: async () => 0 }), 0);
+  // A retained installation keeps its recorded runtime mode; this fixture's record runs natively, server only.
+  const retained = files.has(`${root}/installation.json`) ? { mode: record.mode, scope: 'server', integrations: undefined } : {};
+  assert.equal(await executeSetupPlan({ ...options, ...retained, ...extra, sourcePolicy: policy }, effects, { server: runServerCommand, client: async () => 0 }), 0);
   return { events, selected: files.get(`${root}/installation.json`).messengerIdentity };
 };
 test('with Name and Surname, Messenger runs as the person\'s own identity created after the root and before Messenger starts', async () => {
