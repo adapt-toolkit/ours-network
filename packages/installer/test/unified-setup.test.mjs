@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { defaultHostname } from '../lib/setup-options.mjs';
 import { runSetup, prepareSetupPlan, executeSetupPlan, completeReleasePolicy } from '../lib/setup.mjs';
 import { runServerCommand } from '../lib/orchestrate.mjs';
 
@@ -24,6 +25,7 @@ function fixture(existing = false) {
     serverAccess: async (_record, operation) => { events.push(operation); }, recordInstallationBuild: async () => { events.push('record'); },
     serverLifecycle: async (_record, operation, services) => { events.push([operation, services]); },
     serverEnsureIdentity: async (_record, name) => { events.push(['identity', name]); return { name, cid: 'A'.repeat(64), created: false }; },
+    serverEnsureHumanProfile: async (_record, profile) => { events.push(['human-profile', profile]); },
     prepareLocalClient: async () => { events.push('handoff'); return { configPath: '/private/client/profile.json' }; },
   };
   return { effects, events, lines, files };
@@ -141,6 +143,8 @@ test('interactive answers and equivalent CLI presets execute the same server wor
   manual.effects.username = () => 'Test Human';
   manual.effects.askLine = async (question, fallback) => {
     if (/folder/i.test(question)) return root;
+    if (question === 'Name: ') return 'Test';
+    if (question === 'Surname: ') return 'Human';
     return fallback;
   };
   manual.effects.select = async (_question, choices, fallback) => {
@@ -152,7 +156,7 @@ test('interactive answers and equivalent CLI presets execute the same server wor
   manual.effects.ask = async () => true;
   assert.equal(await runSetup([], manual.effects), 0);
   const preset = fixture();
-  assert.equal(await runSetup(['server', '--mode', 'native', '--state-dir', root, '--identity-name', 'Test Human'], preset.effects), 0);
+  assert.equal(await runSetup(['server', '--mode', 'native', '--state-dir', root, '--username', 'test-human', '--name', 'Test', '--surname', 'Human', '--hostname', defaultHostname()], preset.effects), 0);
   assert.deepEqual(preset.events, manual.events);
   const stageNames = lines => lines.filter(line => /%/.test(line));
   assert.deepEqual(stageNames(preset.lines), stageNames(manual.lines));

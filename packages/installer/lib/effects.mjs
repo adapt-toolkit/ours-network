@@ -1288,7 +1288,7 @@ export function networkEffects(effects) {
       if (discovery.ok) return validateGatewayDiscovery(base, await discovery.json(), resolve(credentialPath));
       throw new Error(`Gateway discovery answered HTTP ${discovery.status}; enable the gateway. Direct daemon fallback is not supported.`);
     },
-    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh = false }) {
+    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, disableFleetAgentsSetup = false, refresh = false }) {
       profile = validateGatewayClientProfile(profile);
       const root = join(home, '.ours-client');
       const configPath = join(root, 'profile.json');
@@ -1314,7 +1314,7 @@ export function networkEffects(effects) {
           atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
         return { configPath, profile: validateGatewayClientProfile(saved), settings: current.installer };
       }
-      const settings = { sourcesPath: join(root, 'sources.json'), integrations };
+      const settings = { sourcesPath: join(root, 'sources.json'), integrations, ...(disableFleetAgentsSetup ? { disableFleetAgentsSetup: true } : {}) };
       if (fleetSettings) settings.fleetSettingsPath = join(root, 'fleet-settings.json');
       // Publish the profile last: clients cannot select incomplete imported inputs.
       atomicWriteConfig(settings.sourcesPath, sources);

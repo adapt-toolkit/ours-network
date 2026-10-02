@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSetupArgs, collectSetupOptions, validateSetupOptions, recommendedMode } from '../lib/setup-options.mjs';
+import { parseSetupArgs, collectSetupOptions, validateSetupOptions, recommendedMode, defaultHostname } from '../lib/setup-options.mjs';
 
 const server = ['--mode', 'native', '--state-dir', '/private/ours', '--identity-name', 'Taylor'];
 const parse = argv => parseSetupArgs(argv, { home: '/home/fixture' });
@@ -86,7 +86,7 @@ function interactiveFixture({ existing = null, lines = {}, selections = {}, chos
       questions.push([question, fallback, 'multiselect', choices]); events.push(['multiselect', question]);
       return chosenIntegrations ?? fallback;
     },
-    askLine: async (question, fallback) => { questions.push([question, fallback, 'text']); events.push(['text', question]); return Object.hasOwn(lines, question) ? lines[question] : fallback; },
+    askLine: async (question, fallback) => { questions.push([question, fallback, 'text']); events.push(['text', question]); return Object.hasOwn(lines, question) ? lines[question] : question === 'Name: ' ? 'Taylor' : question === 'Surname: ' ? 'Example' : fallback; },
     ask: async (question, fallback) => {
       assert.equal(events.at(-1)?.[0], 'out', `${question} needs an explanation before confirmation`);
       questions.push([question, fallback, 'confirmation']); events.push(['confirmation', question]);
@@ -96,12 +96,12 @@ function interactiveFixture({ existing = null, lines = {}, selections = {}, chos
   return { effects, questions, output };
 }
 
-test('recommended wizard flow uses menus and multiselect, with only the Human name entered as text', async () => {
+test('recommended wizard flow uses menus and multiselect, collects local username, human profile and optional host name', async () => {
   const f = interactiveFixture(); const options = await collectSetupOptions(f.effects);
   assert.equal(options.scope, 'all'); assert.equal(options.mode, 'docker');
-  assert.equal(options.stateDir, '/home/fixture/.ours-install'); assert.equal(options.identityName, 'Taylor');
+  assert.equal(options.stateDir, '/home/fixture/.ours-install'); assert.equal(options.identityName, `taylor@${defaultHostname()}`);
   assert.deepEqual(options.integrations, ['codex', 'fleet']); assert.deepEqual(options.explicitPorts, []);
-  assert.deepEqual(f.questions.filter(row => row[2] === 'text').map(row => row[0]), ['What name should others see? ']);
+  assert.deepEqual(f.questions.filter(row => row[2] === 'text').map(row => row[0]), ['Local username: ', 'Name: ', 'Surname: ', 'Host / machine name (optional): ']);
   assert.equal(f.questions.filter(row => row[2] === 'multiselect').length, 1);
   assert.equal(options.fleetSettingsPath, undefined);
   assert(f.output.some(line => line.includes('Stores the server programs and data')));
@@ -208,4 +208,49 @@ test('default legacy config without stateDir offers migration and retains its Hu
   assert.equal(options.identityName, 'Retained Human');
   assert(f.output.some(line => line.includes('Found an existing ours installation at /home/fixture/.ours.')));
   assert(!f.questions.some(row => row[0] === 'What name should others see? '));
+});
+
+
+test('permanent partial command presets survive remaining prompts and skip Fleet model questions',async()=>{
+ const f=interactiveFixture();
+ const presets=parseSetupArgs(['--username','alex','--name','Alex','--surname','Taylor','--disable-fleet-agents-setup'],{home:f.effects.home,validate:false});
+ const options=await collectSetupOptions(f.effects,presets);
+ assert.equal(options.identityName,`alex@${defaultHostname()}`);assert.equal(options.disableFleetAgentsSetup,true);
+ assert.deepEqual([options.name,options.surname],['Alex','Taylor']);
+ assert(!f.questions.some(row=>['Local username: ','Name: ','Surname: ','How should Fleet be configured?'].includes(row[0])));
+ assert(f.questions.some(row=>row[0]==='How should the server run?'));
+});
+
+test('complete permanent presets support unattended Fleet CLI installation without settings',()=>{
+ const options=parse(['--mode=docker','--state-dir=/private/ours','--username=alex','--name=Alex','--surname=Taylor','--hostname=work','--integrations=fleet','--disable-fleet-agents-setup']);
+ assert.equal(options.identityName,'alex@work');assert.equal(options.fleetSettingsPath,undefined);
+ assert.throws(()=>parse(['--mode=docker','--state-dir=/private/ours','--username=alex','--name=Alex','--surname=Taylor','--integrations=fleet']),/--fleet-settings/);
+ assert.throws(()=>parse(['--mode=docker','--state-dir=/private/ours','--username=alex','--name=Alex','--surname=Taylor','--integrations=fleet','--disable-fleet-agents-setup','--fleet-settings=/private/settings']),/conflicts/);
+});
+
+test('Podman selection uses the container plan and retained engine',async()=>{
+ const f=interactiveFixture({selections:{'How should the server run?':'podman'}});
+ const options=await collectSetupOptions(f.effects);assert.equal(options.mode,'docker');assert.equal(options.containerEngine,'podman');
+});
+
+
+test('partial username collects missing profile inputs on a retained installation',async()=>{
+ const f=interactiveFixture({existing:{mode:'docker',messengerIdentity:'Different Existing Root'},answers:{'Proceed with this update and keep a recovery backup?':true}});
+ const options=await collectSetupOptions(f.effects,{localUsername:'alex',disableFleetAgentsSetup:true});
+ assert.equal(options.name,'Taylor');assert.equal(options.surname,'Example');
+ assert(f.questions.some(row=>row[0]==='Name: '));assert(f.questions.some(row=>row[0]==='Surname: '));
+});
+
+for(const pending of [false,true])test(`permanent profile presets retain different ${pending?'pending':'detected'} migration root`,async()=>{
+ const f=interactiveFixture({legacy:pending?null:{stateDir:'/private/old'},existing:pending?{mode:'docker',legacyMigrationSource:'/private/old/config.json'}:null,journal:pending?{phase:'copied'}:null,answers:{[migrationConsent]:true}});
+ const options=await collectSetupOptions(f.effects,{localUsername:'alex',name:'Alex',surname:'Taylor',disableFleetAgentsSetup:true});
+ assert.equal(options.identityName,'Retained Human');assert(options.migrateFrom);assert.equal(options.name,'Alex');
+});
+
+
+for(const key of ['name','surname'])for(const migration of [false,true])test(`${key}-only presets collect remaining human fields on ${migration?'migration':'retained'} path`,async()=>{
+ const f=interactiveFixture({existing:migration?null:{mode:'docker',messengerIdentity:'Existing Root'},legacy:migration?{stateDir:'/private/old'}:null,answers:{[migrationConsent]:true,'Proceed with this update and keep a recovery backup?':true}});
+ const options=await collectSetupOptions(f.effects,{[key]:'Supplied',disableFleetAgentsSetup:true});
+ assert.equal(options[key],'Supplied');assert.equal(options.localUsername,'Taylor'.toLowerCase());assert(options.name);assert(options.surname);
+ if(migration)assert.equal(options.identityName,'Retained Human');
 });

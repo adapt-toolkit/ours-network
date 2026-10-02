@@ -99,11 +99,12 @@ function clientDiagnostic(error) {
 
 function clientRetry(effects, imported, integrations) {
   effects.out(info(`Saved server connection: ${imported.configPath}.`));
-  if (integrations.includes('fleet') && !imported.settings.fleetSettingsPath) {
+  if (integrations.includes('fleet') && !imported.settings.disableFleetAgentsSetup && !imported.settings.fleetSettingsPath) {
     effects.out(info('Saved profile and settings retained. Run ours-install, choose Connect to an existing server, and reuse the saved profile to finish the interactive Fleet configuration.'));
     return;
   }
   const args = ['client', 'install', '--config', imported.configPath, '--integrations', integrations.join(',') || 'none', '--sources', imported.settings.sourcesPath];
+  if (imported.settings.disableFleetAgentsSetup) args.push('--disable-fleet-agents-setup');
   if (imported.settings.fleetSettingsPath) args.push('--fleet-settings', imported.settings.fleetSettingsPath);
   const command = `ours-install client install ${args.slice(2).map((value, i) => i % 2 === 0 ? value : shellQuote(value)).join(' ')}`;
   effects.out(info(`Saved profile and settings retained; re-run ${command}`));
@@ -1011,6 +1012,11 @@ export async function runFleetPhase(args, effects, { target, isDefaultStateDir }
     return { key: 'fleet', label: plan.label, state: 'skipped' };
   }
   const install = args.acquiredFleet ? { ok: true } : await attempt(effects, args.dryRun, plan.install.join(' '), () => effects.run(plan.install[0], plan.install.slice(1)));
+  if (args.disableFleetAgentsSetup) {
+    if (!install.ok) return { key: 'fleet', label: plan.label, state: 'failed', note: 'Fleet installation failed' };
+    effects.out(ok('Fleet CLI installed; agent and model setup deferred to the App. Existing Fleet configuration was retained.'));
+    return { key: 'fleet', label: plan.label, state: 'installed', note: 'agents setup deferred' };
+  }
   // Fleet owns its v2 manifest, roles, models and permissions. With no prepared
   // settings, its wizard keeps the user's terminal while this invocation carries
   // the selected daemon; --settings makes the same call strictly noninteractive.
@@ -1474,7 +1480,8 @@ export async function runClientCommand(command, effects) {
   }
   if (!Array.isArray(integrations) || integrations.some(name => !['codex', 'claude-code', 'fleet'].includes(name)) || new Set(integrations).size !== integrations.length) throw new InstallUsageError('installer.integrations must be an array of codex, claude-code and/or fleet; use an empty array for CLI only');
   let fleetSettingsPath = command.preset ? command.fleetSettingsPath : settings?.fleetSettingsPath;
-  if (command.nonInteractive && integrations.includes('fleet') && !fleetSettingsPath) throw new InstallUsageError('Fleet in CLI mode requires --fleet-settings; no interactive wizard will be opened');
+  const disableFleetAgentsSetup = command.disableFleetAgentsSetup ?? settings?.disableFleetAgentsSetup ?? false;
+  if (command.nonInteractive && !disableFleetAgentsSetup && integrations.includes('fleet') && !fleetSettingsPath) throw new InstallUsageError('Fleet in CLI mode requires --fleet-settings; no interactive wizard will be opened');
   if (fleetSettingsPath !== undefined && (typeof fleetSettingsPath !== 'string' || !fleetSettingsPath))
     throw new InstallUsageError('installer.fleetSettingsPath must be a non-empty path when supplied');
   if (fleetSettingsPath) fleetSettingsPath = resolve(settingsBase, fleetSettingsPath);
@@ -1492,7 +1499,7 @@ export async function runClientCommand(command, effects) {
   }
   effects.out(progress(0, 4, 'Client configuration', 'Prepare the selected integrations and private connection profile.'));
   if (profile.serverUrl && integrations.includes('fleet')) await effects.qualifyGatewayClient({ profile, sourcesPath, sources: resolvedSources, integrations, refresh: !!command.preset });
-  const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, refresh: !!command.preset });
+  const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, disableFleetAgentsSetup, refresh: !!command.preset });
   let phase = 'Validate saved server connection';
   try {
     await effects.verifyHostProfile(imported.configPath);
@@ -1500,7 +1507,7 @@ export async function runClientCommand(command, effects) {
     phase = 'Acquire client packages';
     const exactSuite = await effects.acquireClientPackages(imported.configPath, imported.settings.sourcesPath, integrations, { refresh: !!command.preset });
     const args = { assumeYes: true, dryRun: false, channel: 'latest', clientIntegrations: integrations,
-      acquiredFleet: exactSuite.fleetBin, fleetSettingsPath: imported.settings.fleetSettingsPath };
+      acquiredFleet: exactSuite.fleetBin, fleetSettingsPath: imported.settings.fleetSettingsPath, disableFleetAgentsSetup: imported.settings.disableFleetAgentsSetup };
     const target = { mode: 'host-profile', managed: true, configPath: imported.configPath, profile: imported.profile, endpoint: imported.profile.endpoint };
     effects.out(progress(2, 4, 'Client integrations', 'Register the selected agent integrations.'));
     phase = 'Register client integrations';

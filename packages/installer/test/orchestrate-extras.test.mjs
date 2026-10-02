@@ -524,3 +524,14 @@ test('the pair reaches init for the DEFAULT state directory too, as nightly does
   assert.equal(e.recorder.ranEnv[i].OURS_PORT, '3060');
   assert.equal(e.recorder.ranEnv[i].OURS_STATE_DIR, TG);
 });
+
+
+test('deferring Fleet agents installs CLI without init, prompts or config writes',async()=>{
+ const calls=[];
+ const row=await runFleetPhase({...ARGS,disableFleetAgentsSetup:true}, {
+  home:'/home/fixture',out:()=>{},run:async(...args)=>{calls.push(args);return {ok:true};},
+  runInteractive:()=>assert.fail('must not open wizard'),readText:()=>assert.fail('no config prerequisite'),
+ },{target:AT_DEFAULT,isDefaultStateDir:true});
+ assert.equal(row.state,'installed');assert.equal(calls.length,1);assert.equal(calls[0][0],'npm');
+ assert(!calls.some(call=>call[1].includes('init')));
+});

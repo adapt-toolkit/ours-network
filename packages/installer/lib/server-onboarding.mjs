@@ -115,6 +115,36 @@ try {
       effects.out?.(`Human identity ${after.root.name} is ready.`);
       return { name: after.root.name, cid: after.root.cid, created: true };
     },
+    async serverEnsureHumanProfile(record, human) {
+      validateRecord(record);
+      for (const key of ['name', 'surname']) if (typeof human[key] !== 'string' || !human[key].trim() || human[key].length > 100 || /[\x00-\x1f\x7f]/.test(human[key])) throw new Error('Invalid Messenger human profile');
+      // Messenger owns the profile lifecycle. Never rename the daemon root or
+      // overwrite a profile already present on a retained installation.
+      const script = `
+import { readFileSync } from 'node:fs';
+const selection = JSON.parse(process.argv[1]);
+const token = readFileSync(selection.credentialPath, 'utf8').trim();
+const base = selection.base;
+async function request(path, value) {
+ const response = await fetch(base + '/api/' + path, { method: value === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'X-Ours-Api-Token': token, ...(value === undefined ? {} : { 'Content-Type': 'application/json', Origin: selection.origin, 'X-Ours-Messenger-CSRF': '1' }) }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });
+ if (!response.ok) { await response.body?.cancel(); throw new Error('Messenger human profile operation failed (HTTP ' + response.status + ')'); }
+ return response.json();
+}
+const identity = await request('identity');
+if (identity.humanProfile) process.stdout.write('Retained Messenger Name and Surname.');
+else { await request('identity/profile', selection.human); process.stdout.write('Messenger Name and Surname initialized.'); }
+`;
+      const docker = record.mode === 'docker';
+      const selection = { base: `http://127.0.0.1:${docker ? 8420 : record.messengerPort}`,
+        origin: `http://127.0.0.1:${record.messengerPort}`,
+        credentialPath: docker ? '/credentials/messenger/daemon-token' : installationPaths(record).credentials.messenger,
+        human: { name: human.name, surname: human.surname } };
+      const args = ['--input-type=module', '-e', script, JSON.stringify(selection)];
+      const result = docker ? await compose(record, ['exec', '-T', 'messenger', 'node', ...args])
+        : await effects.run(process.execPath, args, { env: localEnv(record), sensitive: true });
+      if (result.code !== undefined && result.code !== 0) throw new Error('Messenger human profile initialization failed');
+      effects.out?.(result.stdout);
+    },
     async prepareLocalClient(record, integrations, fleetSettingsPath) {
       validateRecord(record);
       if (!Array.isArray(integrations) || new Set(integrations).size !== integrations.length
