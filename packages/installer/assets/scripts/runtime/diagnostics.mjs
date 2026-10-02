@@ -57,7 +57,7 @@ export function commandFailure(command, args, result, { sensitive = false, cwd, 
     if (!stderr && !stdout) details.push('No captured command output. Streaming commands print their output above.');
   }
   details.push('Keep installation data intact. Include this error and the preceding installation stage when requesting help.');
-  return new Error(bounded(redactDiagnostic(details.join('\n'), env)));
+  return new Error(bounded(redactDiagnostic(details.join('\n'), env)), result.error ? { cause: result.error } : undefined);
 }
 
 export function installerFailure(error, env = process.env) {
