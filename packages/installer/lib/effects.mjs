@@ -1,3 +1,4 @@
+import { selectServerPorts } from './server-ports.mjs';
 import { qualifyPodman } from './podman-preflight.mjs';
 import { engineName, bindPodman, runContainer, nativeBuildCommands } from './container-engine.mjs';
 // ours-install v3 — the real side effects.
@@ -677,7 +678,8 @@ export function networkEffects(effects) {
       const project = `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
       return { schema: 2, root, mode, ...(containerEngine ? { containerEngine } : {}), instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES, ...(mode === 'docker' ? ['gateway'] : [])], ...(mode === 'docker' ? { gateway: { version: 1 } } : {}), port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
     },
-    async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName } = {}) {
+    async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName, explicitPorts } = {}) {
+      if (!existing && operation === 'install' && Number.isInteger(record.port)) selectServerPorts(record, portTakenSync, explicitPorts, effects.out);
       if (existing) {
         privateDirectory(record.root);
         assertPrivateRegularFile(join(record.root, 'installation.json'), 'selection');
