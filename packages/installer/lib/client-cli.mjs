@@ -88,7 +88,7 @@ export async function publishClientCli(effects, packagePath, { policy = {}, isol
     if (sdk.name !== '@ours.network/sdk' || sdk.version !== policy.release.packages['@ours.network/sdk'].version) throw new Error('Private CLI SDK differs from selection');
     mkdirSync(dirname(entry), { recursive: true });
     const binDir = lstatSync(dirname(entry));
-    if (!binDir.isDirectory() || binDir.uid !== process.getuid() || (binDir.mode & 0o022)) throw new Error('CLI bin directory must be owned and not writable by others');
+    if (!binDir.isDirectory() || binDir.uid !== process.getuid() || (binDir.mode & 0o022)) throw new Error(`CLI bin directory ${dirname(entry)} must be owned by you and not writable by group or others; run chmod go-w on it, or point npm's global prefix at a directory you own`);
     const current = stat(entry);
     if (before ? !current || current.dev !== before.dev || current.ino !== before.ino : current) throw new Error('CLI entry changed during publication');
     const staged = entry + '.' + randomUUID();
