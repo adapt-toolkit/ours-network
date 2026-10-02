@@ -219,8 +219,11 @@ export async function collectSetupOptions(effects, presets = {}) {
   }
   if (options.scope !== 'client') {
     const recommendation = recommendedMode({ ...effects.platform, arch: effects.platform?.arch ?? process.arch });
-    // Native runs the server only: local clients need the container gateway. Offer it
-    // where it can finish, and for an installation that already uses it.
+    // Native runs the server only: local clients need the container gateway. A retained
+    // native installation keeps its mode, so a full setup of it cannot finish.
+    // (An unfinished migration is resumed in its recorded mode and is validated with the plan.)
+    if (options.scope === 'all' && existing?.mode === 'packages' && !options.migrateFrom)
+      throw new Error('This installation runs natively, which supports the server only. Choose the server-only setup to maintain it (ours-install server); local clients need an installation that runs in Docker or Podman. Nothing was changed.');
     const nativeOffered = options.scope === 'server' || existing?.mode === 'packages';
     effects.out(nativeOffered
       ? `${recommendation.reason} Native runs directly on this computer; Docker runs in containers and needs Docker installed and running. An existing installation must keep its current mode.`
