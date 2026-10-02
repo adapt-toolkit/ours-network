@@ -45,7 +45,7 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
     // Name and Surname together name the person's own identity, which Messenger runs as.
     const person = `${options.name} ${options.surname}`;
     if ([...person].length > 64 || person !== person.normalize('NFC') || /[\\/\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(person))
-      throw new Error('Name and Surname together must contain at most 63 NFC characters without slashes or control characters');
+      throw new Error('Name and Surname together must contain at most 64 NFC characters, including the space between them, without slashes or control characters');
     options.hostname = options.hostname?.trim() || defaultHostname();
     if (!/^[a-z0-9][a-z0-9-]{0,29}$/.test(options.hostname)) throw new Error('Hostname must contain 1–30 lowercase letters, digits or hyphens');
     const identity = `${options.localUsername}@${options.hostname}`;

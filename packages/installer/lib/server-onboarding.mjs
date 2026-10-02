@@ -43,8 +43,10 @@ const client = await attachOursClient({ endpoint: selection.endpoint,
   sessionMode: 'external', leaseToken: randomUUID(), env: {} });
 try {
   const result = selection.operation === 'list' ? await client.listIdentities()
-    : selection.operation === 'create-role' ? await client.createIdentity({ name: selection.name, bio: '',
-        exposeLocal: true, localAutoAccept: true })
+    : selection.operation === 'create-role' ? { created: await client.createIdentity({ name: selection.name, bio: '',
+        exposeLocal: true, localAutoAccept: true }), current: await client.currentIdentity() }
+    : selection.operation === 'describe-role' ? (await client.chooseIdentity({ name: selection.name, force: false }),
+        { current: await client.currentIdentity() })
     : await client.createRootIdentity({ name: selection.name, bio: '',
         exposeLocal: true, localAutoAccept: true, skipIfRootExists: true });
   process.stdout.write(JSON.stringify(result));
@@ -119,36 +121,49 @@ try {
     },
     /**
      * The person's own identity under the Human root, which Messenger runs as. An identity of that name is
-     * used only when it is already a permanent identity under the root; nothing else is renamed or adopted.
+     * used only when the daemon itself describes it as a permanent role of exactly the retained root;
+     * nothing else is renamed or adopted.
      */
     async serverEnsureMessengerIdentity(record, name) {
       validateRecord(record);
       validateIdentityName(name);
-      const usable = row => row?.kind === 'role' && row.temp == null;
+      const listed = row => row?.kind === 'role' && row.temp === null && typeof row.cid === 'string';
       const taken = () => new Error('Requested Messenger identity name is already used by another identity; no identity was changed');
       const prior = await identities(record);
       if (!prior.root) throw new Error('Messenger identity requires the Human identity; no identity was changed');
-      const existing = prior.rows.find(row => row.name === name);
-      if (existing) {
-        if (!usable(existing)) throw taken();
+      // The list has no parent column. What the daemon describes for the identity, bound for a moment, names its root.
+      const under = (current, row) => current?.name === name && current.temporary === false && current.isRoot === false
+        && current.described === true && typeof current.roleId === 'string' && current.roleId !== ''
+        && typeof current.cid === 'string' && current.cid === row.cid
+        && typeof current.rootCid === 'string' && current.rootCid.toLowerCase() === String(prior.root.cid).toLowerCase();
+      const adopt = async rows => {
+        const row = rows.rows.find(candidate => candidate.name === name);
+        if (rows.root?.cid !== prior.root.cid || !listed(row)) throw taken();
+        const { current } = await identityCommand(record, 'describe-role', name);
+        if (!under(current, row)) throw taken();
+        return row;
+      };
+      if (prior.rows.some(row => row.name === name)) {
+        const row = await adopt(prior);
         effects.out?.(`Retained Messenger identity ${name}.`);
-        return { name, cid: existing.cid, created: false };
+        return { name, cid: row.cid, created: false };
       }
       effects.out?.(`Creating Messenger identity ${name} under ${prior.root.name}; retaining ${prior.rows.length} existing identities.`);
-      let created;
+      let result;
       try {
-        created = await identityCommand(record, 'create-role', name);
+        result = await identityCommand(record, 'create-role', name);
       } catch (error) {
-        // A concurrent creator is safe only when the authoritative list now shows a usable identity of that name.
-        const raced = (await identities(record)).rows.find(row => row.name === name);
-        if (!raced) throw error;
-        if (!usable(raced)) throw taken();
-        return { name, cid: raced.cid, created: false };
+        // A concurrent creator is safe only when the authoritative list now shows that name under the same root.
+        const after = await identities(record);
+        if (!after.rows.some(row => row.name === name)) throw error;
+        const row = await adopt(after);
+        return { name, cid: row.cid, created: false };
       }
-      if (created?.hierarchy !== 'role') throw new Error('Messenger identity creation did not delegate it under the Human identity');
       const after = await identities(record);
       const row = after.rows.find(candidate => candidate.name === name);
-      if (after.root?.cid !== prior.root.cid || !usable(row)) throw new Error('Messenger identity creation completed without a usable identity under the Human identity');
+      if (result?.created?.hierarchy !== 'role' || result.created.underRoot !== prior.root.name || after.root?.cid !== prior.root.cid
+          || !listed(row) || result.created.info?.cid !== row.cid || !under(result.current, row))
+        throw new Error('Messenger identity creation completed without a usable identity under the Human identity');
       effects.out?.(`Messenger identity ${name} is ready.`);
       return { name, cid: row.cid, created: true };
     },

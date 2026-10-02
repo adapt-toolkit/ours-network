@@ -1404,7 +1404,7 @@ async function executeServerCommand(args, effects) {
         const own = await installStage('Messenger identity', 'Keep or create your own identity under the Human identity; Messenger runs as it.', () => effects.serverEnsureMessengerIdentity(record, person));
         record.messengerIdentity = own.name;
       } else if (selected && selected !== identity.name
-          && (await effects.serverListIdentities(record)).some(row => row.name === selected && row.kind === 'role' && row.temp == null)) {
+          && (await effects.serverListIdentities(record)).some(row => row.name === selected && row.kind === 'role' && row.temp === null)) {
         record.messengerIdentity = selected;
       } else record.messengerIdentity = identity.name;
       effects.writeJson(recordPath, JSON.stringify(record, null, 2) + '\n');
