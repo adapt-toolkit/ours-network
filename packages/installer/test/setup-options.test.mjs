@@ -246,3 +246,11 @@ for(const pending of [false,true])test(`permanent profile presets retain differe
  const options=await collectSetupOptions(f.effects,{localUsername:'alex',name:'Alex',surname:'Taylor',disableFleetAgentsSetup:true});
  assert.equal(options.identityName,'Retained Human');assert(options.migrateFrom);assert.equal(options.name,'Alex');
 });
+
+
+for(const key of ['name','surname'])for(const migration of [false,true])test(`${key}-only presets collect remaining human fields on ${migration?'migration':'retained'} path`,async()=>{
+ const f=interactiveFixture({existing:migration?null:{mode:'docker',messengerIdentity:'Existing Root'},legacy:migration?{stateDir:'/private/old'}:null,answers:{[migrationConsent]:true,'Proceed with this update and keep a recovery backup?':true}});
+ const options=await collectSetupOptions(f.effects,{[key]:'Supplied',disableFleetAgentsSetup:true});
+ assert.equal(options[key],'Supplied');assert.equal(options.localUsername,'Taylor'.toLowerCase());assert(options.name);assert(options.surname);
+ if(migration)assert.equal(options.identityName,'Retained Human');
+});

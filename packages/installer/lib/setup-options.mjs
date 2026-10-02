@@ -229,7 +229,7 @@ export async function collectSetupOptions(effects, presets = {}) {
       if (existing?.messengerIdentity) {
         effects.out(`Existing Human identity ${existing.messengerIdentity} and Messenger profile will be retained.`);
         // Supplied profile inputs never rename a retained root.
-        if (!options.localUsername) options.identityName ??= existing.messengerIdentity;
+        if (!['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) options.identityName ??= existing.messengerIdentity;
       } else if (options.identityName === undefined || options.localUsername !== undefined) {
         effects.out('Choose a local username (no global uniqueness check). Name and Surname appear in Messenger; the optional host name identifies this workspace.');
         options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
@@ -238,10 +238,11 @@ export async function collectSetupOptions(effects, presets = {}) {
         options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
       }
     }
-    if (options.localUsername !== undefined) {
+    if (['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) {
       // Partial profile presets still collect missing fields on retained and
       // migration paths; these inputs never replace their authoritative root.
       effects.out('Name and Surname initialize a missing Messenger profile; an existing profile is retained.');
+      options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
       options.name ??= await effects.askLine('Name: ', '');
       options.surname ??= await effects.askLine('Surname: ', '');
       options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
