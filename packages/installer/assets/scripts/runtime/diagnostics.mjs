@@ -1,14 +1,14 @@
 /** Retain actionable failure details without emitting credential output. */
 export function redactDiagnostic(value, env = process.env) {
-  let text = String(value ?? '');
+  let text = String(value ?? '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
   for (const [key, secret] of Object.entries(env)) {
-    if (/(?:token|password|secret|api.?key|private.?key|invitation|enrollment|authorization)/i.test(key) && typeof secret === 'string' && secret)
+    if (/(?:token|password|secret|api.?key|private.?key|invitation|enrollment|authorization|credential|access.?token|refresh.?token)/i.test(key) && typeof secret === 'string' && secret)
       text = text.split(secret).join('[redacted]');
   }
   return text
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, '[redacted private key]')
     .replace(/(Bearer\s+)[^\s"',;]+/gi, '$1[redacted]')
-    .replace(/((?:["']?(?:api[-_]?token|token|password|secret|api[-_]?key|private[-_]?key|invitation|enrollment|authorization)["']?)\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;}]+)/gi, '$1[redacted]')
+    .replace(/((?:["']?(?:api[-_]?token|token|password|secret|api[-_]?key|private[-_]?key|invitation|enrollment|authorization|credential|access.?token|refresh.?token)["']?)\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;}]+)/gi, '$1[redacted]')
     .replace(/(--(?:setup-workspace|password|token|secret|api-key|private-key|invitation|enrollment)(?:=|\s+))\S+/gi, '$1[redacted]')
     .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/g, '$1[redacted]@')
     .replace(/\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[redacted credential]')

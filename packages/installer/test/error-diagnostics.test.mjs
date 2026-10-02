@@ -63,3 +63,10 @@ test('interactive launch errors retain original cause and terminal failure conte
     assert.equal(error.cause.code,'ENOENT');assert.match(error.message,/System error: ENOENT/);return true;
   });
 });
+
+
+test('short credential assignments and terminal controls cannot leak into feedback',()=>{
+  const text=redactDiagnostic('\x1b[31mcredential="private-short-value"\x1b[0m\naccess_token=short-access; refresh_token=short-refresh; detail=visible',{});
+  for(const secret of ['private-short-value','short-access','short-refresh','\x1b'])assert(!text.includes(secret));
+  assert(text.includes('\n'));assert(text.includes('detail=visible'));
+});
