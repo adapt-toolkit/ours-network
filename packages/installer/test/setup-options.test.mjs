@@ -232,3 +232,17 @@ test('Podman selection uses the container plan and retained engine',async()=>{
  const f=interactiveFixture({selections:{'How should the server run?':'podman'}});
  const options=await collectSetupOptions(f.effects);assert.equal(options.mode,'docker');assert.equal(options.containerEngine,'podman');
 });
+
+
+test('partial username collects missing profile inputs on a retained installation',async()=>{
+ const f=interactiveFixture({existing:{mode:'docker',messengerIdentity:'Different Existing Root'},answers:{'Proceed with this update and keep a recovery backup?':true}});
+ const options=await collectSetupOptions(f.effects,{localUsername:'alex',disableFleetAgentsSetup:true});
+ assert.equal(options.name,'Taylor');assert.equal(options.surname,'Example');
+ assert(f.questions.some(row=>row[0]==='Name: '));assert(f.questions.some(row=>row[0]==='Surname: '));
+});
+
+for(const pending of [false,true])test(`permanent profile presets retain different ${pending?'pending':'detected'} migration root`,async()=>{
+ const f=interactiveFixture({legacy:pending?null:{stateDir:'/private/old'},existing:pending?{mode:'docker',legacyMigrationSource:'/private/old/config.json'}:null,journal:pending?{phase:'copied'}:null,answers:{[migrationConsent]:true}});
+ const options=await collectSetupOptions(f.effects,{localUsername:'alex',name:'Alex',surname:'Taylor',disableFleetAgentsSetup:true});
+ assert.equal(options.identityName,'Retained Human');assert(options.migrateFrom);assert.equal(options.name,'Alex');
+});

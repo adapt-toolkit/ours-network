@@ -45,8 +45,8 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
     options.hostname = options.hostname?.trim() || defaultHostname();
     if (!/^[a-z0-9][a-z0-9-]{0,29}$/.test(options.hostname)) throw new Error('Hostname must contain 1–30 lowercase letters, digits or hyphens');
     const identity = `${options.localUsername}@${options.hostname}`;
-    if (options.identityName !== undefined && options.identityName !== identity) throw new Error('--identity-name conflicts with username and hostname');
-    options.identityName = identity;
+    if (options.migrateFrom === undefined && options.identityName !== undefined && options.identityName !== identity) throw new Error('--identity-name conflicts with username and hostname');
+    if (options.migrateFrom === undefined) options.identityName = identity;
   } else if (options.hostname !== undefined) throw new Error('--hostname requires username, name and surname');
   if (options.disableFleetAgentsSetup !== undefined && typeof options.disableFleetAgentsSetup !== 'boolean') throw new Error('disableFleetAgentsSetup must be a boolean');
   if (options.disableFleetAgentsSetup && options.fleetSettingsPath) throw new Error('--disable-fleet-agents-setup conflicts with --fleet-settings');
@@ -237,6 +237,14 @@ export async function collectSetupOptions(effects, presets = {}) {
         options.surname ??= await effects.askLine('Surname: ', '');
         options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
       }
+    }
+    if (options.localUsername !== undefined) {
+      // Partial profile presets still collect missing fields on retained and
+      // migration paths; these inputs never replace their authoritative root.
+      effects.out('Name and Surname initialize a missing Messenger profile; an existing profile is retained.');
+      options.name ??= await effects.askLine('Name: ', '');
+      options.surname ??= await effects.askLine('Surname: ', '');
+      options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
     }
     for (const [key, fallback] of Object.entries(defaults)) options[key] ??= existing?.[key] ?? fallback;
     if (options.operation === 'update') {
