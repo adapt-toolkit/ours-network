@@ -58,8 +58,13 @@ try {
   assert.equal(retained.cid, stored.cid, 'repeat retains the same identity');
   assert.deepEqual(retained.humanProfile, stored.humanProfile, 'repeat retains the stored profile');
   execFileSync(join(prefix, 'bin', 'ours-fleet'), ['setup-tunnel', '--help'], { env, stdio: 'inherit' });
+  // The runner has no cloudflared: the installed Fleet must refuse before any workspace proof and say nothing was bound.
+  const check = spawnSync(join(prefix, 'bin', 'ours-fleet'), ['setup-tunnel', '--check'], { env, encoding: 'utf8' });
+  process.stdout.write(check.stdout); process.stderr.write(check.stderr);
+  assert.notEqual(check.status, 0, 'prerequisite check fails on a host without the tunnel prerequisites');
+  assert.match(check.stdout + check.stderr, /Nothing was changed and this host was not bound\./);
   failed = false;
-  console.log('HUMAN_SETUP_E2E_PASS: packed installer, real Docker gateway stack, Messenger stores the requested Name and Surname, identity and profile retained on repeat, installed Fleet offers setup-tunnel. No tunnel, device link or browser exercised.');
+  console.log('HUMAN_SETUP_E2E_PASS: packed installer, real Docker gateway stack, Messenger stores the requested Name and Surname, identity and profile retained on repeat, installed Fleet offers setup-tunnel and its prerequisite check refuses an unprepared host. No tunnel, device link or browser exercised.');
 } finally {
   if (fs.existsSync(join(stateDir, 'installation.json'))) {
     const record = readRecord();
