@@ -4,7 +4,8 @@ export const USAGE = `ours-install — interactive setup with optional CLI prese
   ours-install
     Opens the console form. Choose all (server + clients), server, or client;
     runtime, installation directory, identity, integrations and Fleet settings.
-    Docker provides the full-stack gateway; native mode is server-only. Windows uses WSL.
+    Full setup runs the server in Docker or Podman, which provide the gateway local clients need.
+    Native mode is offered for server-only setup. Windows uses WSL.
 
   Install now, configure Fleet agents in the App after linking:
     ours-install --username alex --name Alex --surname Taylor --disable-fleet-agents-setup

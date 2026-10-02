@@ -219,9 +219,17 @@ export async function collectSetupOptions(effects, presets = {}) {
   }
   if (options.scope !== 'client') {
     const recommendation = recommendedMode({ ...effects.platform, arch: effects.platform?.arch ?? process.arch });
-    effects.out(`${recommendation.reason} Native runs directly on this computer; Docker runs in containers and needs Docker installed and running. An existing installation must keep its current mode.`);
+    // Native runs the server only: local clients need the container gateway. A retained
+    // native installation keeps its mode, so a full setup of it cannot finish.
+    // (An unfinished migration is resumed in its recorded mode and is validated with the plan.)
+    if (options.scope === 'all' && existing?.mode === 'packages' && !options.migrateFrom)
+      throw new Error('This installation runs natively, which supports the server only. Choose the server-only setup to maintain it (ours-install server); local clients need an installation that runs in Docker or Podman. Nothing was changed.');
+    const nativeOffered = options.scope === 'server' || existing?.mode === 'packages';
+    effects.out(nativeOffered
+      ? `${recommendation.reason} Native runs directly on this computer; Docker runs in containers and needs Docker installed and running. An existing installation must keep its current mode.`
+      : 'The server runs in containers. Docker and Podman both work; the one you choose must be installed and running. An existing installation must keep its current mode.');
     const runtime = options.mode ?? await effects.select('How should the server run?', [
-      { value: 'packages', label: 'Native packages' }, { value: 'docker', label: 'Docker' }, { value: 'podman', label: 'Podman' },
+      ...(nativeOffered ? [{ value: 'packages', label: 'Native packages' }] : []), { value: 'docker', label: 'Docker' }, { value: 'podman', label: 'Podman' },
     ], existing?.mode === 'docker' && existing?.containerEngine === 'podman' ? 'podman' : existing?.mode ?? recommendation.mode);
     options.mode = runtime === 'podman' ? 'docker' : runtime;
     if (runtime === 'podman') options.containerEngine = 'podman';
