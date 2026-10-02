@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { verifyOwnerAdmission } from './verify-owner-admission.mjs';
 
 if (process.env.CI !== 'true') throw new Error('Run this qualification in CI only');
 const root = fs.mkdtempSync(join(tmpdir(), 'ours-human-setup-'));
@@ -68,8 +69,12 @@ try {
   process.stdout.write(check.stdout); process.stderr.write(check.stderr);
   assert.notEqual(check.status, 0, 'prerequisite check fails on a host without the tunnel prerequisites');
   assert.match(check.stdout + check.stderr, /Nothing was changed and this host was not bound\./);
+  const admitted = await verifyOwnerAdmission({ env, prefix, root, expectedCid: retained.cid });
+  // The admitted identity is still the installation's choice afterwards.
+  assert.equal(messengerIdentity(readRecord()).cid, retained.cid);
+  console.log('Owner admission:', JSON.stringify(admitted));
   failed = false;
-  console.log('HUMAN_SETUP_E2E_PASS: packed installer, real Docker gateway stack, Messenger stores the requested Name and Surname, identity and profile retained on repeat, installed Fleet offers setup-tunnel and its prerequisite check refuses an unprepared host. No tunnel, device link or browser exercised.');
+  console.log('HUMAN_SETUP_E2E_PASS: packed installer, real Docker gateway stack, Messenger stores the requested Name and Surname, identity and profile retained on repeat, installed Fleet offers setup-tunnel and its prerequisite check refuses an unprepared host, a room created by the installed Fleet seats that Messenger identity (not the Human root) as its only active Owner. No tunnel, device link, task or browser exercised.');
 } finally {
   if (fs.existsSync(join(stateDir, 'installation.json'))) {
     const record = readRecord();
