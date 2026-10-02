@@ -141,8 +141,10 @@ test('Messenger profile handoff preserves retained root and profile bytes throug
   const exec = promisify(execFile);
   const f=fixture(t),cid='a'.repeat(64),original=JSON.stringify({name:'Existing',surname:'Human'}),profilePath=join(f.root,'profile.json');
   writeFileSync(profilePath,original,{mode:0o600});
-  const credential=join(f.root,'credentials','messenger-token');
-  const { mkdirSync }=await import('node:fs');mkdirSync(join(f.root,'credentials'),{mode:0o700});writeFileSync(credential,'fixture-token',{mode:0o600});
+  const { installationPaths }=await import('../lib/plan.mjs');
+  const credential=installationPaths(f.record).credentials.messenger;
+  const { dirname }=await import('node:path');
+  const { mkdirSync }=await import('node:fs');mkdirSync(dirname(credential),{recursive:true,mode:0o700});writeFileSync(credential,'fixture-token',{mode:0o600});
   const calls=[];
   const server=createServer((req,res)=>{
     calls.push(req.method+' '+req.url);assert.equal(req.headers['x-ours-api-token'],'fixture-token');
