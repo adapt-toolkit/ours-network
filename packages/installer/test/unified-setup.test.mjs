@@ -9,9 +9,9 @@ const root = '/private/install';
 const record = { schema: 2, mode: 'packages', root, workDir: `${root}/runtime`, sourcesPath: `${root}/sources.json`, configPath: `${root}/storage/state/daemon/config.json`, instanceId: '12345678-1234-1234-1234-123456789abc', project: 'ours-test', services: ['daemon', 'telegram', 'cowork', 'messenger'], port: 3050, coworkPort: 3052, messengerPort: 8420, uid: 1000, gid: 1000 };
 const policy = { packages: Object.fromEntries(['sdk', 'cli', 'daemon', 'mcp', 'tg-connector', 'cowork', 'messenger-server', 'codex', 'claude-code', 'fleet'].map(n => [`@ours.network/${n}`, { type: 'npm', version: '1.0.0' }])) };
 const options = { scope: 'all', operation: 'install', mode: 'docker', stateDir: root, identityName: 'Test Human', integrations: ['codex'], port: 3050, coworkPort: 3052, messengerPort: 8420, interactive: false };
-function fixture(existing = false) {
+function fixture(existing = false, { messengerIdentity, identities = [] } = {}) {
   const events = [], lines = [];
-  const files = new Map(existing ? [[`${root}/installation.json`, { ...record }], [record.sourcesPath, policy]] : []);
+  const files = new Map(existing ? [[`${root}/installation.json`, { ...record, ...(messengerIdentity ? { messengerIdentity } : {}) }], [record.sourcesPath, policy]] : []);
   const effects = {
     home: '/private', env: {}, platform: { platform: 'linux', arch: 'x64' }, interactive: false,
     out: line => lines.push(line), readJson: path => files.get(path) ?? null,
@@ -25,6 +25,8 @@ function fixture(existing = false) {
     serverAccess: async (_record, operation) => { events.push(operation); }, recordInstallationBuild: async () => { events.push('record'); },
     serverLifecycle: async (_record, operation, services) => { events.push([operation, services]); },
     serverEnsureIdentity: async (_record, name) => { events.push(['identity', name]); return { name, cid: 'A'.repeat(64), created: false }; },
+    serverEnsureMessengerIdentity: async (_record, name) => { events.push(['messenger-identity', name]); return { name, cid: 'C'.repeat(64), created: true }; },
+    serverListIdentities: async () => { events.push('list-identities'); return identities; },
     serverEnsureHumanProfile: async (_record, profile) => { events.push(['human-profile', profile]); },
     prepareLocalClient: async () => { events.push('handoff'); return { configPath: '/private/client/profile.json' }; },
   };
@@ -77,6 +79,36 @@ test('full installation starts daemon, retains identity, starts consumers, then 
   const command = events.find(e => Array.isArray(e) && e[0] === 'clients')[1];
   assert.equal(command.preset, true); assert.equal(command.nonInteractive, true);
   assert.deepEqual(command.integrations, ['codex']);
+});
+
+const person = { localUsername: 'ada', name: 'Ada', surname: 'Lovelace', hostname: 'home', identityName: 'ada@home' };
+const selectedMessenger = async (setup, extra = {}) => {
+  const { effects, events, files } = setup;
+  assert.equal(await executeSetupPlan({ ...options, ...extra, sourcePolicy: policy }, effects, { server: runServerCommand, client: async () => 0 }), 0);
+  return { events, selected: files.get(`${root}/installation.json`).messengerIdentity };
+};
+test('with Name and Surname, Messenger runs as the person\'s own identity created after the root and before Messenger starts', async () => {
+  const { events, selected } = await selectedMessenger(fixture(), person);
+  const identity = events.findIndex(e => Array.isArray(e) && e[0] === 'identity'), own = events.findIndex(e => Array.isArray(e) && e[0] === 'messenger-identity');
+  const consumers = events.findIndex(e => Array.isArray(e) && e[0] === 'start' && e[1]?.includes('messenger'));
+  assert.deepEqual(events[identity], ['identity', 'ada@home']); assert.deepEqual(events[own], ['messenger-identity', 'Ada Lovelace']);
+  assert.ok(identity < own && own < consumers); assert.equal(selected, 'Ada Lovelace');
+});
+test('an installation whose Messenger ran as the root moves to the person\'s own identity when Name and Surname are given', async () => {
+  const { events, selected } = await selectedMessenger(fixture(true, { messengerIdentity: 'ada@home' }), person);
+  assert.ok(events.some(e => Array.isArray(e) && e[0] === 'messenger-identity' && e[1] === 'Ada Lovelace')); assert.equal(selected, 'Ada Lovelace');
+});
+test('an installation whose Messenger runs as another identity under the root keeps it, with or without Name and Surname', async () => {
+  for (const extra of [person, { identityName: 'ada@home' }]) {
+    const { events, selected } = await selectedMessenger(fixture(true, { messengerIdentity: 'Earlier Person', identities: [{ name: 'ada@home', cid: 'r', kind: 'root', temp: null }, { name: 'Earlier Person', cid: 'e', kind: 'role', temp: null }] }), extra);
+    assert.ok(!events.some(e => Array.isArray(e) && e[0] === 'messenger-identity')); assert.equal(selected, 'Earlier Person');
+  }
+});
+test('a recorded Messenger identity that is no longer a permanent identity under the root falls back to the root', async () => {
+  for (const identities of [[], [{ name: 'Earlier Person', cid: 'e', kind: 'role', temp: { state: 'stale', ownerPid: 1 } }], [{ name: 'Earlier Person', status: 'awaiting-root' }]]) {
+    const { selected } = await selectedMessenger(fixture(true, { messengerIdentity: 'Earlier Person', identities }), { identityName: 'ada@home' });
+    assert.equal(selected, 'ada@home');
+  }
 });
 
 test('server failure prevents client handoff and a false completion message', async () => {

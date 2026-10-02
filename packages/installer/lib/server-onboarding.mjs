@@ -43,6 +43,8 @@ const client = await attachOursClient({ endpoint: selection.endpoint,
   sessionMode: 'external', leaseToken: randomUUID(), env: {} });
 try {
   const result = selection.operation === 'list' ? await client.listIdentities()
+    : selection.operation === 'create-role' ? await client.createIdentity({ name: selection.name, bio: '',
+        exposeLocal: true, localAutoAccept: true })
     : await client.createRootIdentity({ name: selection.name, bio: '',
         exposeLocal: true, localAutoAccept: true, skipIfRootExists: true });
   process.stdout.write(JSON.stringify(result));
@@ -114,6 +116,41 @@ try {
       if (after.root.name !== name) return retained(after);
       effects.out?.(`Human identity ${after.root.name} is ready.`);
       return { name: after.root.name, cid: after.root.cid, created: true };
+    },
+    /**
+     * The person's own identity under the Human root, which Messenger runs as. An identity of that name is
+     * used only when it is already a permanent identity under the root; nothing else is renamed or adopted.
+     */
+    async serverEnsureMessengerIdentity(record, name) {
+      validateRecord(record);
+      validateIdentityName(name);
+      const usable = row => row?.kind === 'role' && row.temp == null;
+      const taken = () => new Error('Requested Messenger identity name is already used by another identity; no identity was changed');
+      const prior = await identities(record);
+      if (!prior.root) throw new Error('Messenger identity requires the Human identity; no identity was changed');
+      const existing = prior.rows.find(row => row.name === name);
+      if (existing) {
+        if (!usable(existing)) throw taken();
+        effects.out?.(`Retained Messenger identity ${name}.`);
+        return { name, cid: existing.cid, created: false };
+      }
+      effects.out?.(`Creating Messenger identity ${name} under ${prior.root.name}; retaining ${prior.rows.length} existing identities.`);
+      let created;
+      try {
+        created = await identityCommand(record, 'create-role', name);
+      } catch (error) {
+        // A concurrent creator is safe only when the authoritative list now shows a usable identity of that name.
+        const raced = (await identities(record)).rows.find(row => row.name === name);
+        if (!raced) throw error;
+        if (!usable(raced)) throw taken();
+        return { name, cid: raced.cid, created: false };
+      }
+      if (created?.hierarchy !== 'role') throw new Error('Messenger identity creation did not delegate it under the Human identity');
+      const after = await identities(record);
+      const row = after.rows.find(candidate => candidate.name === name);
+      if (after.root?.cid !== prior.root.cid || !usable(row)) throw new Error('Messenger identity creation completed without a usable identity under the Human identity');
+      effects.out?.(`Messenger identity ${name} is ready.`);
+      return { name, cid: row.cid, created: true };
     },
     async serverEnsureHumanProfile(record, human) {
       validateRecord(record);

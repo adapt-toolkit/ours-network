@@ -75,6 +75,49 @@ test('name collision with a non-root identity fails without mutating it', async 
   const f = fixture(t, [[{ name: 'Human', cid: 'role-cid', kind: 'role' }]]);
   await assert.rejects(f.helper().serverEnsureIdentity(f.record, 'Human'), /already exists/i); assert.equal(f.calls.length, 1);
 });
+const own = { name: 'Ada Lovelace', cid: 'own-cid', kind: 'role', temp: null, session: null };
+test('an existing permanent identity of that name under the root is the Messenger identity, unchanged', async t => {
+  const f = fixture(t, [[rootRow, own, { name: 'Role', cid: 'role-cid', kind: 'role' }]]);
+  assert.deepEqual(await f.helper().serverEnsureMessengerIdentity(f.record, own.name), { name: own.name, cid: own.cid, created: false });
+  assert.equal(f.calls.length, 1); assert.equal(JSON.parse(f.calls[0].args.at(-1)).operation, 'list');
+});
+test('a missing Messenger identity is created as a role under the retained root and reread', async t => {
+  const f = fixture(t, [[rootRow], { info: { name: own.name, cid: own.cid }, hierarchy: 'role', underRoot: rootRow.name }, [rootRow, own]]);
+  assert.deepEqual(await f.helper().serverEnsureMessengerIdentity(f.record, own.name), { name: own.name, cid: own.cid, created: true });
+  const selection = JSON.parse(f.calls[1].args.at(-1));
+  assert.equal(selection.operation, 'create-role'); assert.equal(selection.name, own.name);
+  assert.match(f.calls[1].args[2], /createIdentity\(/); assert.match(f.calls[1].args[2], /releaseLease/);
+  assert.equal(f.calls[1].options.sensitive, true); assert.equal(f.calls.length, 3);
+});
+for (const [label, taken] of [['the root', { ...rootRow, name: own.name }], ['a temporary identity', { ...own, temp: { state: 'other-live', ownerPid: 1 } }], ['a quarantined identity', { name: own.name, status: 'awaiting-root' }]])
+  test('a name held by ' + label + ' is refused without creating or changing anything', async t => {
+    const f = fixture(t, [[...(taken.kind === 'root' ? [] : [rootRow]), taken]]);
+    await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /already used by another identity/); assert.equal(f.calls.length, 1);
+  });
+test('no Messenger identity is created on a host without a Human identity', async t => {
+  const f = fixture(t, [[]]);
+  await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /requires the Human identity/); assert.equal(f.calls.length, 1);
+});
+test('a creation that did not delegate under the root, or left the root changed, is not accepted', async t => {
+  let f = fixture(t, [[rootRow], { info: { name: own.name, cid: own.cid }, hierarchy: 'root' }, [rootRow, own]]);
+  await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /did not delegate/);
+  f = fixture(t, [[rootRow], { info: { name: own.name, cid: own.cid }, hierarchy: 'role' }, [{ ...rootRow, cid: 'other-root' }, own]]);
+  await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, own.name), /without a usable identity/);
+});
+for (const [label, after, expected] of [
+  ['a compatible winner is used', [rootRow, own], { name: own.name, cid: own.cid, created: false }],
+  ['an incompatible winner is refused', [rootRow, { ...own, temp: { state: 'other-live', ownerPid: 1 } }], /already used by another identity/],
+  ['no winner keeps the original failure', [rootRow], error => error.code === 'NAME_TAKEN'],
+]) test('concurrent creation of the Messenger identity: ' + label, async t => {
+  const f = fixture(t); let n = 0;
+  f.effects.run = async () => { n++; if (n === 2) throw Object.assign(Error('create failed'), { code: 'NAME_TAKEN' }); return { stdout: JSON.stringify(n === 1 ? [rootRow] : after) }; };
+  const result = f.helper().serverEnsureMessengerIdentity(f.record, own.name);
+  if (expected instanceof RegExp || typeof expected === 'function') await assert.rejects(result, expected); else assert.deepEqual(await result, expected);
+  assert.equal(n, 3);
+});
+for (const name of ['', '../Ada', 'a'.repeat(65)]) test('invalid Messenger identity name fails before owner effects: ' + JSON.stringify(name), async t => {
+  const f = fixture(t); await assert.rejects(f.helper().serverEnsureMessengerIdentity(f.record, name), /identity name/i); assert.equal(f.calls.length, 0);
+});
 test('client handoff atomically publishes private profile and a separately issued credential', async t => {
   const f = fixture(t), settings = join(f.root, 'fleet.json'); writeFileSync(settings, '{}');
   const result = await f.helper().prepareLocalClient(f.record, ['codex', 'fleet'], settings);
