@@ -221,7 +221,7 @@ test('gateway handoff binds the Fleet notification producer credential to this s
   const token = 'n'.repeat(43), seen = [];
   f.deps.compose = async (_selected, args, options) => { seen.push({ args, options }); return { code: 0, stdout: token }; };
   const result = await f.helper().prepareLocalClient(f.record, ['fleet']);
-  assert.deepEqual(seen[0].args, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'cat', 'access', '/credentials/fleet-notifications/producer']);
+  assert.deepEqual(seen[0].args, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'cat', 'messenger', '/var/lib/ours-notifications/fleet-producer']);
   assert.equal(seen[0].options.sensitive, true);
   const path = join(dirname(result.configPath), 'notifications-producer.json');
   assert.equal(statSync(path).mode & 0o777, 0o600);

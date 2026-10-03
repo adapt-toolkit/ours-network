@@ -43,15 +43,6 @@ export function gatewayCompose(record) {
     environment:
       OURS_MESSENGER_PUBLIC_ORIGIN: ${JSON.stringify(origin)}
       OURS_MESSENGER_BASE_PATH: ${JSON.stringify(prefix + "/messenger/")}
-      OURS_NOTIFICATIONS_CONFIG: /var/lib/ours-notifications/config.json
-    volumes:
-      - {type: volume, source: server-storage, target: /var/lib/ours-notifications, volume: {nocopy: true, subpath: state/notifications}}
-  prepare:
-    environment:
-      OURS_NOTIFICATIONS: "1"
-  access:
-    volumes:
-      - {type: volume, source: server-storage, target: /credentials/fleet-notifications, read_only: true, volume: {nocopy: true, subpath: state/credentials/fleet-notifications}}
   gateway:
     image: "\${OURS_GATEWAY_IMAGE:-${record.project}:gateway}"
     build:

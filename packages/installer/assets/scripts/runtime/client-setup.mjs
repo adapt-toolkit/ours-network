@@ -85,7 +85,8 @@ const NOTIFICATIONS_PORT = 49677;
 const NOTIFICATION_FILES = {
   config: '/storage/state/notifications/config.json',
   messenger: '/storage/state/credentials/messenger/notifications-producer',
-  fleet: '/storage/state/credentials/fleet-notifications/producer',
+  // Read through the Messenger service by local client setup.
+  fleet: '/storage/state/notifications/fleet-producer',
 };
 
 function privateText(path, value) {
@@ -125,8 +126,8 @@ function validNotificationConfig(config) {
  * delivery files are derived from the retained configuration on every run.
  */
 function prepareNotifications() {
-  // Gateway Compose mounts these directories whether or not this runtime ships the service.
-  for (const path of ['/storage/state/notifications', '/storage/state/credentials/fleet-notifications']) ensureDirectory(path);
+  // Messenger mounts this directory whether or not this runtime ships the service.
+  ensureDirectory('/storage/state/notifications');
   if (!existsSync('/opt/ours/node_modules/@ours.network/notifications/package.json')) return;
   initializeBuildMarker('/storage/state/notifications/.ours-provenance', readBuildRecords('/opt/ours'));
   if (!existingPrivate(NOTIFICATION_FILES.config, false)) atomicJson(NOTIFICATION_FILES.config, notificationConfig());
@@ -179,7 +180,7 @@ function prepare() {
     const config = jsonObject(coworkPath);
     if (config.version !== 1 || config.stateDir !== cowork.stateDir || config.rest?.enabled !== true || config.rest?.host !== '0.0.0.0') fail('Existing cowork configuration conflicts with Compose');
   }
-  if (process.env.OURS_NOTIFICATIONS === '1') prepareNotifications();
+  prepareNotifications();
   console.log('OURS persistent volumes are ready');
 }
 

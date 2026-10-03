@@ -25,16 +25,16 @@ test('the gateway route is authenticated and carries no notification secret', ()
   assert.doesNotThrow(() => validateGatewayDiscovery('http://127.0.0.1:3050', gatewayDiscovery(without), '/private/token'));
 });
 
-test('notifications live in the Messenger container: no new service, host port or secret in Compose', () => {
-  const compose = gatewayCompose(without);
-  assert.doesNotMatch(compose, /\n  notifications:/);
-  const messenger = compose.match(/\n  messenger:\n[\s\S]*?(?=\n  [a-z]+:\n)/)?.[0];
-  assert.match(messenger, /ports: !reset \[\]/);
+test('notifications live in the Messenger container: no new service, host port or secret in Compose', async () => {
+  const { readFileSync } = await import('node:fs');
+  const overlay = gatewayCompose(without);
+  assert.doesNotMatch(overlay, /notifications/i);
+  const base = readFileSync(new URL('../assets/docker-compose.yaml', import.meta.url), 'utf8');
+  assert.doesNotMatch(base, /\n  notifications:/);
+  const messenger = base.match(/\n  messenger:\n[\s\S]*?(?=\n  [a-z-]+:\n)/)?.[0];
   assert.match(messenger, /OURS_NOTIFICATIONS_CONFIG: \/var\/lib\/ours-notifications\/config.json/);
   assert.match(messenger, /target: \/var\/lib\/ours-notifications, volume: \{nocopy: true, subpath: state\/notifications\}/);
-  assert.doesNotMatch(compose, /OURS_NOTIFICATIONS_PRODUCER_TOKEN|OURS_NOTIFICATIONS_ORIGIN/);
-  assert.match(compose, /\n  prepare:\n    environment:\n      OURS_NOTIFICATIONS: "1"/);
-  assert.match(compose, /target: \/credentials\/fleet-notifications, read_only: true/);
+  assert.doesNotMatch(base, /OURS_NOTIFICATIONS_PRODUCER_TOKEN|OURS_NOTIFICATIONS_ORIGIN|49677/);
 });
 
 test('an update prepares stored state for the activated runtime before restoring services', async t => {

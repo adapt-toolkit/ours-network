@@ -245,7 +245,7 @@ else { await request('identity/profile', selection.human); process.stdout.write(
         writeFileSync(join(stage, 'profile.json'), JSON.stringify(profile, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
         // Fleet on this host produces agent notifications through the server gateway.
         // A runtime without the notification service prepares no producer credential.
-        const issued = record.gateway ? await compose(record, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'cat', 'access', '/credentials/fleet-notifications/producer'], { sensitive: true, allowCodes: [1] }) : null;
+        const issued = record.gateway ? await compose(record, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'cat', 'messenger', '/var/lib/ours-notifications/fleet-producer'], { sensitive: true, allowCodes: [1] }) : null;
         if (issued && (issued.code ?? 0) === 0) {
           const token = String(issued.stdout ?? '');
           if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) throw new Error('Notification producer credential is invalid; repeat server install');
