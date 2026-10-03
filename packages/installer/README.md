@@ -8,7 +8,7 @@ This permanent command contains no tunnel credentials or enrollment expiry. On a
 
 `--disable-fleet-agents-setup` installs the Fleet CLI and saves the choice without opening its agent/model wizard or rewriting existing Fleet configuration. Configure agents in the App after device linking. Complete presets still work unattended; partial presets require a terminal and cannot use `OURS_ASSUME_YES`.
 
-The separate `ours-fleet setup-tunnel --file /private/setup-payload` step requires the matching Fleet follow-up release. Its private App payload remains scoped, signed-root-bound and expiring. A compatible Fleet prints its QR and private single-use connection code immediately after successful setup; scan or paste it into the App. `ours-fleet link-device` remains available for additional devices or expired codes. Do not put the expiring tunnel payload in the permanent installer command.
+The separate `ours-fleet setup-tunnel <encoded-v2-grant>` step requires the matching Fleet follow-up release. Its private App payload remains scoped, signed-root-bound and expiring. A compatible Fleet prints its QR and private single-use connection code immediately after successful setup; scan or paste it into the App. `ours-fleet link-device` remains available for additional devices or expired codes. Do not put the expiring tunnel payload in the permanent installer command.
 
 Native packages currently provide server-only installation; full Fleet/App onboarding requires the supported gateway (Docker or Podman). The installer refuses unsupported native full-stack setup before changing anything. This PR does not add a native gateway or release unpublished Fleet commands.
 
@@ -628,17 +628,20 @@ Workspace setup pins Fleet `1.2.0-nightly.41` with its recorded registry integri
 
 ### App tunnel setup prerelease sequencing
 
-The simplified App flow downloads `ours-tunnel-setup.txt` containing only the existing
-v2 single-use grant (`version`, `appOrigin`, `code`, `expiresAt`). Securely transfer it
-to the intended host, restrict it with `chmod 600`, and run
-`ours-fleet setup-tunnel --file /private/ours-tunnel-setup.txt`. Fleet validates host
-prerequisites before HTTPS POST redemption, then retains the existing signed-root
-binding and scoped connector token-file controls. It prints the QR and connection
-code automatically; the App checks readiness and opens the code field. Delete the
-file afterward. `--stdin` is available for secure pipe callers; no grant belongs in
-argv, URLs or shell history.
+The simplified App flow shows one copyable `ours-fleet setup-tunnel <encoded-v2-grant>`
+command for the installed host, including an SSH session on a VPS. Its argument
+contains only the existing v2 single-use grant (`version`, `appOrigin`, `code`,
+`expiresAt`), never a connector token or broad provider credential. The command can
+appear in shell history and process listings: keep it private and remove it from
+history after use. Base64 is encoding, not encryption. Server-side expiry and
+one-time redemption remain enforced. Fleet checks prerequisites before HTTPS POST
+redemption; it never prints the grant or puts it in a URL, and retains existing
+signed-root binding and scoped connector token-file controls. It prints the QR and
+connection code automatically; the App checks readiness and opens the code field.
+Private `--file`/`--stdin` transports remain optional and are the only transports
+for legacy v1 payloads with long-lived credentials.
 
-Release dependency: publish the reviewed Fleet with v2-file/`--stdin` support first,
+Release dependency: publish the reviewed Fleet with v2 argument and private-input support first,
 then update this repository's generated release manifest/source lock using the
 normal integrity-recording release workflow, then release the installer and App.
 The current nightly.41 lock predates this capability and must not be presented as
