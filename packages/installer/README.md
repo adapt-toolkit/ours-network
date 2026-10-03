@@ -384,6 +384,39 @@ when proxying. A compatible release must contain these capabilities:
 `telegram.gateway-listener-v1`. Older releases are rejected without enabling the
 new listener; no package version is silently substituted.
 
+### Notifications
+
+When the selected release includes `@ours.network/notifications`, gateway
+installations run it inside the Messenger container, under one supervisor with
+Messenger: a signal stops both, and either one exiting stops the container so
+its normal restart recovers both. It publishes no host port. The gateway routes
+`<serverUrl>/notifications/` to it after the same daemon credential check as
+Telegram, and the service's adapter checks that credential again before acting
+as the installation owner. Browser cookies, origins and fetch metadata are
+removed. Messenger produces message notifications over loopback.
+
+`prepare` creates the private configuration once in
+`storage/state/notifications/config.json`: the owner token, separate Fleet and
+Messenger producer tokens, and VAPID keys. Later runs only validate it; rotating
+the owner token or VAPID keys would orphan every browser subscription, so a
+differing configuration is refused rather than rewritten. Back it up with the
+rest of the server state. A local client setup binds the Fleet producer token
+to this server in `~/.ours-client/notifications-producer.json`; Fleet then sends
+agent completions through `<serverUrl>/notifications/`. Remote clients and
+native installations do not produce notifications. The gateway discovery
+document is unchanged, so existing clients keep accepting the server. A
+retained source policy without the package keeps working without notifications.
+
+An existing complete installation gains them with its normal update, which
+prepares the credentials after activating the new runtime and hands the Fleet
+producer credential to the local client, then a web-only Fleet restart (agents
+keep running):
+
+```sh
+ours-install all update --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json --compatible
+ours-fleet web restart
+```
+
 ### Authenticated external entry
 
 Messenger has no application authentication. Loopback access trusts local users;
@@ -591,4 +624,4 @@ Existing installation records keep their ports and identities. A listener acquir
 by another process after preflight still causes startup to fail safely; no foreign
 process is stopped and no retained installation is silently moved.
 
-Workspace setup pins Fleet `1.2.0-nightly.38` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, separate `ours-fleet setup-tunnel` and `ours-fleet link-device` commands, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
+Workspace setup pins Fleet `1.2.0-nightly.39` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, separate `ours-fleet setup-tunnel` and `ours-fleet link-device` commands, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.

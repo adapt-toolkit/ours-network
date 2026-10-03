@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServerOnboarding } from '../lib/server-onboarding.mjs';
 
@@ -201,7 +201,10 @@ test('CLI-only workspace handoff issues a private profile without harness integr
 test('gateway handoff derives daemon prefix and retains existing managed credential on rerun', async t => {
   const f = fixture(t);
   f.record.mode = 'docker'; f.record.gateway = { version: 1 };
+  // A runtime without the notification service has no producer credential to hand over.
+  f.deps.compose = async () => ({ code: 1, stdout: '' });
   const first = await f.helper().prepareLocalClient(f.record, ['fleet']);
+  assert.equal(existsSync(join(dirname(first.configPath), 'notifications-producer.json')), false);
   assert.equal(first.profile.serverUrl, 'http://127.0.0.1:3050');
   assert.equal(first.profile.endpoint, 'http://127.0.0.1:3050/daemon');
   f.effects.readManagedClientProfile = () => first.profile;
@@ -210,6 +213,22 @@ test('gateway handoff derives daemon prefix and retains existing managed credent
   assert.equal(second.profile.credentialPath, first.profile.credentialPath);
   assert.deepEqual(second.profile.installer.integrations, ['fleet', 'codex']);
   assert.equal(readFileSync(first.profile.credentialPath, 'utf8'), 'issued-client-secret\n');
+});
+
+test('gateway handoff binds the Fleet notification producer credential to this server', async t => {
+  const f = fixture(t);
+  f.record.mode = 'docker'; f.record.gateway = { version: 1 };
+  const token = 'n'.repeat(43), seen = [];
+  f.deps.compose = async (_selected, args, options) => { seen.push({ args, options }); return { code: 0, stdout: token }; };
+  const result = await f.helper().prepareLocalClient(f.record, ['fleet']);
+  assert.deepEqual(seen[0].args, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'cat', 'messenger', '/var/lib/ours-notifications/fleet-producer']);
+  assert.equal(seen[0].options.sensitive, true);
+  const path = join(dirname(result.configPath), 'notifications-producer.json');
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { schema: 1, serverUrl: 'http://127.0.0.1:3050', expectedInstanceId: f.record.instanceId, token });
+  f.deps.compose = async () => ({ code: 0, stdout: 'short' });
+  f.effects.readManagedClientProfile = () => result.profile;
+  await assert.rejects(f.helper().prepareLocalClient(f.record, ['fleet']), /producer credential is invalid/);
 });
 
 test('permission and lifecycle failures never trigger root reread or retry', async t => {

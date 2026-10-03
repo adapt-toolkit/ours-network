@@ -40,7 +40,7 @@ if(process.argv[2]==='pack'){
     assert.equal(prepared.status,0,prepared.stderr);
     assert.deepEqual(JSON.parse(readFileSync(join(dir,'packages/installer/assets/release.json'))),manifest);
     const sources=JSON.parse(readFileSync(join(dir,'packages/installer/assets/sources.json')));
-    assert.equal(Object.keys(sources.packages).length,9);
+    assert.equal(Object.keys(sources.packages).length,10);
     assert.deepEqual(sources.release,manifest);
     assert.deepEqual(sources.packages['@ours.network/sdk'],{type:'npm',version:'9.9.9'});
    }

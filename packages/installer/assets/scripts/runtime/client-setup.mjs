@@ -1,7 +1,7 @@
 import { readBuildRecords, initializeBuildMarker } from '../maintenance/build-context.mjs';
 import { redactDiagnostic } from './diagnostics.mjs';
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import {
   existsSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync,
   realpathSync, renameSync, unlinkSync, writeFileSync, readdirSync, chmodSync, chownSync,
@@ -81,6 +81,61 @@ function composeConfig(domain) {
   return null;
 }
 
+const NOTIFICATIONS_PORT = 49677;
+const NOTIFICATION_FILES = {
+  config: '/storage/state/notifications/config.json',
+  messenger: '/storage/state/credentials/messenger/notifications-producer',
+  // Read through the Messenger service by local client setup.
+  fleet: '/storage/state/notifications/fleet-producer',
+};
+
+function privateText(path, value) {
+  if (existingPrivate(path, false) && readFileSync(path, 'utf8') === value) return;
+  const temp = `${path}.setup-${randomBytes(8).toString('hex')}`;
+  try { writeFileSync(temp, value, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); renameSync(temp, path); }
+  finally { try { unlinkSync(temp); } catch (error) { if (error.code !== 'ENOENT') throw error; } }
+}
+
+function notificationConfig() {
+  const token = () => randomBytes(32).toString('base64url');
+  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const pub = publicKey.export({ format: 'jwk' }), key = privateKey.export({ format: 'jwk' });
+  const raw = Buffer.concat([Buffer.from([4]), Buffer.from(pub.x, 'base64url'), Buffer.from(pub.y, 'base64url')]);
+  return {
+    host: '0.0.0.0', port: NOTIFICATIONS_PORT, stateFile: '/var/lib/ours-notifications/state.json',
+    users: [{ userId: 'owner', token: token() }],
+    producers: [{ userId: 'owner', source: 'fleet', token: token() }, { userId: 'owner', source: 'messenger', token: token() }],
+    vapid: { subject: 'https://ours.network', publicKey: raw.toString('base64url'), privateKey: key.d },
+  };
+}
+
+/** Exact retained shape; any other content is operator state the installer will not rewrite. */
+function validNotificationConfig(config) {
+  const tokens = [...(config.users ?? []), ...(config.producers ?? [])].map(entry => entry?.token);
+  return config.host === '0.0.0.0' && config.port === NOTIFICATIONS_PORT && config.stateFile === '/var/lib/ours-notifications/state.json'
+    && Array.isArray(config.users) && config.users.length === 1 && config.users[0].userId === 'owner'
+    && Array.isArray(config.producers) && config.producers.length === 2
+    && ['fleet', 'messenger'].every(source => config.producers.some(p => p?.source === source && p.userId === 'owner'))
+    && tokens.every(t => typeof t === 'string' && t.length >= 32) && new Set(tokens).size === tokens.length
+    && typeof config.vapid?.subject === 'string' && /^[A-Za-z0-9_-]{87}$/.test(config.vapid.publicKey ?? '') && /^[A-Za-z0-9_-]{43}$/.test(config.vapid.privateKey ?? '');
+}
+
+/**
+ * Notification secrets are created once and then only validated: rotating the
+ * owner token or VAPID keys would orphan every browser subscription. Producer
+ * delivery files are derived from the retained configuration on every run.
+ */
+function prepareNotifications() {
+  // Messenger mounts this directory whether or not this runtime ships the service.
+  ensureDirectory('/storage/state/notifications');
+  if (!existsSync('/opt/ours/node_modules/@ours.network/notifications/package.json')) return;
+  initializeBuildMarker('/storage/state/notifications/.ours-provenance', readBuildRecords('/opt/ours'));
+  if (!existingPrivate(NOTIFICATION_FILES.config, false)) atomicJson(NOTIFICATION_FILES.config, notificationConfig());
+  const config = jsonObject(NOTIFICATION_FILES.config);
+  if (!validNotificationConfig(config)) fail('Existing notification configuration differs; use the supported maintenance workflow');
+  for (const source of ['messenger', 'fleet']) privateText(NOTIFICATION_FILES[source], config.producers.find(p => p.source === source).token);
+}
+
 function prepare() {
   const uid = Number(process.env.OURS_UID), gid = Number(process.env.OURS_GID);
   if (![uid, gid].every((n) => Number.isSafeInteger(n) && n > 0)) fail('Configure non-root numeric OURS_UID and OURS_GID');
@@ -125,6 +180,7 @@ function prepare() {
     const config = jsonObject(coworkPath);
     if (config.version !== 1 || config.stateDir !== cowork.stateDir || config.rest?.enabled !== true || config.rest?.host !== '0.0.0.0') fail('Existing cowork configuration conflicts with Compose');
   }
+  prepareNotifications();
   console.log('OURS persistent volumes are ready');
 }
 

@@ -281,6 +281,9 @@ export function planDaemonSteps(target, { cliVersionChanged = false, cliStartedI
 }
 
 export const SERVER_PACKAGES = ['sdk', 'cli', 'daemon', 'tg-connector', 'cowork', 'messenger-server'].map(n => `@ours.network/${n}`);
+/** Selected when the policy names it; retained policies from before it existed stay valid. */
+export const NOTIFICATIONS_PACKAGE = '@ours.network/notifications';
+const serverPackages = manifest => [...SERVER_PACKAGES, ...(manifest?.packages?.[NOTIFICATIONS_PACKAGE] ? [NOTIFICATIONS_PACKAGE] : [])];
 export const SERVER_DEPENDENCIES = {
   daemon: [], telegram: ['daemon'], cowork: ['daemon'], messenger: ['daemon'],
 };
@@ -296,7 +299,7 @@ export function maintenanceServices(record, domain) {
 
 /** Validate exact supplied selections, without rewriting the source authority. */
 export function selectSourcePackages(manifest, role, clients = []) {
-  const names = role === 'server' ? SERVER_PACKAGES : clients.map(n => `@ours.network/${n}`);
+  const names = role === 'server' ? serverPackages(manifest) : clients.map(n => `@ours.network/${n}`);
   const result = {};
   for (const name of names) {
     const selected = manifest?.packages?.[name];
@@ -314,7 +317,7 @@ export function selectSourcePackages(manifest, role, clients = []) {
 /** Resolve a packaged compatibility policy into a role-filtered exact selection. */
 export async function resolveSourcePolicy(manifest, role, clients = [], resolveNpm) {
   const release = releaseBinding(manifest);
-  const names = role === 'server' ? SERVER_PACKAGES : clients.map(name => `@ours.network/${name}`);
+  const names = role === 'server' ? serverPackages(manifest) : clients.map(name => `@ours.network/${name}`);
   const packages = {};
   const sourceNames = new Set();
   for (const name of names) {

@@ -164,8 +164,11 @@ services:
       OURS_MESSENGER_PORT: "8420"
       OURS_MESSENGER_PUBLIC_ORIGIN: "http://127.0.0.1:${OURS_MESSENGER_PORT:-8420}"
       OURS_MESSENGER_STATE_DIR: /var/lib/ours-messenger
+      # Started beside Messenger when the runtime ships @ours.network/notifications.
+      OURS_NOTIFICATIONS_CONFIG: /var/lib/ours-notifications/config.json
     volumes:
       - {type: volume, source: server-storage, target: /var/lib/ours-messenger, volume: {nocopy: true, subpath: state/messenger}}
+      - {type: volume, source: server-storage, target: /var/lib/ours-notifications, volume: {nocopy: true, subpath: state/notifications}}
       - {type: volume, source: server-storage, target: /credentials/messenger, read_only: true, volume: {nocopy: true, subpath: state/credentials/messenger}}
     ports:
       - {target: 8420, published: "${OURS_MESSENGER_PORT:-8420}", host_ip: 127.0.0.1}

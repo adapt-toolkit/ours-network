@@ -1,5 +1,7 @@
 /** One public URL; fixed same-origin service paths are never supplied by a peer. */
 export const GATEWAY_SERVICES = Object.freeze({daemon:'/daemon',cowork:'/cowork',telegram:'/tg-connector',messenger:'/messenger'});
+/** Notifications run inside the Messenger container when its runtime ships the service. */
+export const NOTIFICATIONS_PORT=49677;
 export function serverBase(value) {
   if(typeof value!=='string'||/[\s\\?#]/.test(value)||!/^https?:\/\//.test(value))throw new Error('Server URL must be an HTTP or HTTPS base URL');
   const url=new URL(value);
@@ -135,6 +137,20 @@ http {
       proxy_set_header X-Ours-Api-Token $http_x_ours_api_token;
     }
     ${route('messenger','/messenger')}
+    location = ${basePath}/notifications { return 308 ${basePath}/notifications/; }
+    # The service's own adapter authenticates again and holds the credential it injects.
+    location ${basePath}/notifications/ {
+      auth_request /_server_auth;
+      set $notifications http://messenger:${NOTIFICATIONS_PORT};
+      rewrite ^${basePath}/notifications/(.*)$ /$1 break;
+      proxy_pass $notifications;
+      proxy_set_header Host $http_host;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_http_version 1.1;
+      proxy_buffering off;
+      proxy_read_timeout 300s;
+    }
     location / { return 404; }
   }
 }

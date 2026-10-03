@@ -7,7 +7,8 @@ export const ROOT = resolve(process.env.OURS_BUILD_ROOT || '/opt/ours');
 export const SOURCE_ROOT = resolve(process.env.OURS_SOURCE_ROOT || '/src');
 export const OUT = join(ROOT, 'docker/vendor');
 export const CONFIG = JSON.parse(readFileSync(join(ROOT, 'sources.json'), 'utf8'));
-export const SELECTED = new Set((process.env.OURS_BUILD_PACKAGES || 'sdk,cli,daemon,tg-connector,cowork,messenger-server').split(',').map(name => '@ours.network/' + name));
+// Notifications joined the server set later; retained selections without it still build.
+export const SELECTED = new Set((process.env.OURS_BUILD_PACKAGES || ['sdk,cli,daemon,tg-connector,cowork,messenger-server', ...(CONFIG.packages?.['@ours.network/notifications'] ? ['notifications'] : [])].join(',')).split(',').map(name => '@ours.network/' + name));
 export const inheritedLock = process.env.OURS_INSTALLER_LOCK_FD === '3' ? [3] : [];
 export const run = (args, cwd) => execFileSync(args[0], args.slice(1), { cwd, stdio: ['inherit', 'inherit', 'inherit', ...inheritedLock] });
 export const capture = (args, cwd, env = process.env) => execFileSync(args[0], args.slice(1), { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit', ...inheritedLock] });

@@ -28,6 +28,7 @@ import { executeLegacyMigration } from './legacy-migration.mjs';
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { parseNetworkArgs, validateHostProfile, parseInstallArgs, resolveTarget, resolveProfileSelection, profileEnv, InstallUsageError } from './target.mjs';
+import { NOTIFICATIONS_PRODUCER_FILE } from './server-onboarding.mjs';
 import { clientPackageNames, selectSourcePackages, validateInstallation, SERVER_SERVICES, planDaemonConfig, planServiceInstall, serviceInstallCommand } from './plan.mjs';
 import {
   COMPONENTS,
@@ -1506,7 +1507,9 @@ export async function runClientCommand(command, effects) {
   }
   effects.out(progress(0, 4, 'Client configuration', 'Prepare the selected integrations and private connection profile.'));
   if (profile.serverUrl && integrations.includes('fleet')) await effects.qualifyGatewayClient({ profile, sourcesPath, sources: resolvedSources, integrations, refresh: !!command.preset });
-  const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, disableFleetAgentsSetup, refresh: !!command.preset });
+  // A prepared local profile may carry the Fleet notification producer credential beside it.
+  const notificationsProducerPath = configPath && configPath !== managedPath && effects.exists?.(join(dirname(configPath), NOTIFICATIONS_PRODUCER_FILE)) ? join(dirname(configPath), NOTIFICATIONS_PRODUCER_FILE) : undefined;
+  const imported = effects.importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, disableFleetAgentsSetup, refresh: !!command.preset, notificationsProducerPath });
   let phase = 'Validate saved server connection';
   try {
     await effects.verifyHostProfile(imported.configPath);
@@ -1532,6 +1535,9 @@ export async function runClientCommand(command, effects) {
       for (const name of incomplete) explainClientFailure(effects, name, summary.find(row => row.key === name));
       clientRetry(effects, imported, integrations);
     } else effects.out(ok(`Client setup complete. New clients discover ${imported.configPath}; no OURS_CONFIG export is required.`));
+    // Fleet's web service reads its producer credential when it starts; agents keep running across a web restart.
+    if (imported.notificationsProducerChanged && integrations.includes('fleet'))
+      effects.out(info('Notifications are ready for Fleet. Run `ours-fleet web restart` so a running Fleet web console starts producing them.'));
     if (!incomplete.length) effects.out(progress(4, 4, 'Client setup complete', 'All selected integrations are configured.'));
     return incomplete.length ? EXIT_REFUSED : EXIT_OK;
   } catch (error) {
