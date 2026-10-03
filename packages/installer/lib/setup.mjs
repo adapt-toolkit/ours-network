@@ -139,7 +139,7 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
       disableFleetAgentsSetup: plan.disableFleetAgentsSetup, preset: true, nonInteractive: !plan.interactive }, effects);
     if (result !== 0) return result;
   }
-  if (plan.disableFleetAgentsSetup && plan.integrations?.includes('fleet')) effects.out(info('Fleet is installed. Run ours-fleet setup-tunnel with the private expiring App setup file, then ours-fleet link-device. Configure agents and models in the App after linking.'));
+  if (plan.disableFleetAgentsSetup && plan.integrations?.includes('fleet')) effects.out(info('Fleet is installed. Run ours-fleet setup-tunnel with the private expiring App setup file; a compatible Fleet prints the QR and connection code automatically. Configure agents and models in the App after linking.'));
   effects.out(ok(`Requested ${plan.operation} completed. Existing identities were retained.`));
   if (plan.integrations?.includes('fleet') && !plan.disableFleetAgentsSetup) effects.out(info('Fleet is configured but stopped. Review its settings, then run ours-fleet doctor, ours-fleet config and ours-fleet up.'));
   return 0;
