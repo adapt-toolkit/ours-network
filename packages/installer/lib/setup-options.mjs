@@ -7,7 +7,7 @@ const integrations = ['codex', 'claude-code', 'fleet'];
 const valueFlags = new Map(Object.entries({
   '--container-engine': 'containerEngine', '--server-url': 'serverUrl', '--scope': 'scope', '--action': 'operation', '--mode': 'mode', '--state-dir': 'stateDir',
   '--username': 'localUsername', '--name': 'name', '--surname': 'surname', '--hostname': 'hostname',
-  '--identity-name': 'identityName', '--integrations': 'integrations', '--fleet-settings': 'fleetSettingsPath',
+  '--identity-name': 'identityName', '--integrations': 'integrations', '--fleet-settings': 'fleetSettingsPath', '--fleet-task-workflow': 'fleetTaskWorkflowAgents',
   '--config': 'config', '--sources': 'sources', '--migrate-from': 'migrateFrom', '--port': 'port', '--cowork-port': 'coworkPort', '--messenger-port': 'messengerPort',
 }));
 const boolFlags = new Map([['--compatible', 'compatible'], ['--dry-run', 'dryRun'], ['--migrate', 'migrate'], ['--disable-fleet-agents-setup', 'disableFleetAgentsSetup']]);
@@ -54,6 +54,15 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
   } else if (options.hostname !== undefined) throw new Error('--hostname requires username, name and surname');
   if (options.disableFleetAgentsSetup !== undefined && typeof options.disableFleetAgentsSetup !== 'boolean') throw new Error('disableFleetAgentsSetup must be a boolean');
   if (options.disableFleetAgentsSetup && options.fleetSettingsPath) throw new Error('--disable-fleet-agents-setup conflicts with --fleet-settings');
+  if (options.fleetTaskWorkflowAgents !== undefined) {
+    // Fleet owns what the workflow is; the installer only carries which agents the operator named.
+    const agents = options.fleetTaskWorkflowAgents;
+    if (!Array.isArray(agents) || !agents.length || agents.some(name => typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)) || new Set(agents).size !== agents.length)
+      throw new Error('--fleet-task-workflow requires unique Fleet agent names separated by commas');
+    if (!options.integrations?.includes?.('fleet')) throw new Error('--fleet-task-workflow requires the fleet integration');
+    if (options.disableFleetAgentsSetup) throw new Error('--fleet-task-workflow conflicts with --disable-fleet-agents-setup: no agents are configured by this run');
+    options.fleetTaskWorkflowAgents = [...agents];
+  }
   const missing = [];
   if (server) for (const [key, flag] of [['mode', '--mode'], ['stateDir', '--state-dir'], ...(options.migrateFrom === undefined ? [['identityName', '--identity-name']] : [])]) if (!nonempty(options[key])) missing.push(flag);
   if (client && options.integrations === undefined) missing.push('--integrations (use none to skip)');
@@ -135,6 +144,7 @@ export function parseSetupArgs(argv, { home, validate = true } = {}) {
     if (!nonempty(value) || value.startsWith('--')) throw new Error(`${flag} requires a value`);
     const key = valueFlags.get(flag);
     if (key === 'integrations') put(key, value === 'none' ? [] : value.split(',').map(item => item.trim()));
+    else if (key === 'fleetTaskWorkflowAgents') put(key, value.split(',').map(item => item.trim()));
     else if (Object.hasOwn(defaults, key)) {
       if (!/^[1-9]\d*$/.test(value)) throw new Error(`${flag} requires an integer port`);
       put(key, Number(value)); options.explicitPorts.push(key);

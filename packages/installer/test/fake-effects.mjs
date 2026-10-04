@@ -22,7 +22,7 @@ export function fx({
   runFails = [], voiceReady = false, interactiveOk = true, restoreFails = [], known = [],
   restoreDoesNotTake = [], restoreChangesMode = [], packageDeps = {}, registryVersions = {},
   codexMarket = null, claudePluginInstalled = false,
-  profile = null, profileVerificationError = null,
+  profile = null, profileVerificationError = null, fleetCapabilities = [],
 } = {}) {
   // A restore that RETURNS without the bytes landing — the case a read-back
   // catches and a returning call cannot. Distinct from `restoreFails`, which
@@ -137,6 +137,9 @@ export function fx({
       recorder.ranEnv.push(opts.env ?? null);
       return { ok: interactiveOk, code: interactiveOk ? 0 : 1 };
     },
+    // What the installed Fleet says about itself. Empty by default: a Fleet that
+    // predates managed CLI setup, which is every release the older tests model.
+    fleetCapabilities: async () => [...fleetCapabilities],
     installedVersion: (pkg) => versions[pkg] ?? null,
     packageDependencies: (spec) => packageDeps[spec] ?? null,
     resolvePackageVersion: (pkg, channel) => registryVersions[`${pkg}@${channel}`] ?? (channel === 'nightly' ? '9.10.0-nightly.1' : '9.9.9'),

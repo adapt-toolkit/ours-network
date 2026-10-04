@@ -8,6 +8,19 @@ This permanent command contains no tunnel credentials or enrollment expiry. On a
 
 `--disable-fleet-agents-setup` installs the Fleet CLI and saves the choice without opening its agent/model wizard or rewriting existing Fleet configuration. Configure agents in the App after device linking. Complete presets still work unattended; partial presets require a terminal and cannot use `OURS_ASSUME_YES`.
 
+### Fleet task commands from a harness command sandbox
+
+After Fleet configuration, and again on update, the installer asks the exact Fleet it installed to run `ours-fleet managed-cli setup`. Fleet owns that policy; the installer writes no Codex rule or Claude setting itself, and the step starts no agent session and no model. It is skipped silently when the pinned Fleet predates the `managed-cli.setup-v1` capability, and it never fails an installation: an unsupported combination is printed with Fleet's reason and left exactly as sandboxed as before.
+
+Nothing is prepared unless an Agent declares `managed_cli: [task-workflow]`. To opt agents in from the installer, name them:
+
+```sh
+ours-install client --config /private/profile.json --integrations codex,fleet \
+  --fleet-settings /private/fleet-settings.json --fleet-task-workflow FleetCoordinator
+```
+
+`--fleet-task-workflow` takes a comma-separated list of Fleet agent names, requires the Fleet integration and conflicts with `--disable-fleet-agents-setup`. It adds that one key to each named Agent and changes no permission. The prepared scope is the packaged Coordinator task workflow (`task create|start|finish|block|unblock|review|list|show`, `room show|members`, template/plan/help inspection) for one pinned Fleet configuration; `task start` and `task finish` provision and retire rooms and agents, which is real authority, and the installer prints that scope. The result is generated configuration only. It is not evidence that a command reached a supervisor: `ours-fleet managed-cli status` and `ours-fleet doctor` report what running agents actually observed. Fleet's `docs/validation/managed-cli-permissions.md` lists the qualified harnesses and platforms.
+
 The separate `ours-fleet setup-tunnel <encoded-v2-grant>` step is supported by the pinned Fleet release. Its private App payload remains scoped, signed-root-bound and expiring. Fleet prints its QR and private single-use connection code immediately after successful setup; scan or paste it into the App. `ours-fleet link-device` remains available for additional devices or expired codes. Do not put the expiring tunnel payload in the permanent installer command.
 
 Native packages currently provide server-only installation; full Fleet/App onboarding requires the supported gateway (Docker or Podman). The installer refuses unsupported native full-stack setup before changing anything. This flow does not add a native gateway.

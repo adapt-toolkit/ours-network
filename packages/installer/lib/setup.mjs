@@ -136,7 +136,8 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
   if (plan.scope !== 'server') {
     const result = await client({ role: 'client', operation: 'install', config: clientConfig,
       integrations: plan.integrations, fleetSettingsPath: plan.fleetSettingsPath, sourcePolicy: clientPolicy,
-      disableFleetAgentsSetup: plan.disableFleetAgentsSetup, preset: true, nonInteractive: !plan.interactive }, effects);
+      disableFleetAgentsSetup: plan.disableFleetAgentsSetup, fleetTaskWorkflowAgents: plan.fleetTaskWorkflowAgents,
+      preset: true, nonInteractive: !plan.interactive }, effects);
     if (result !== 0) return result;
   }
   if (plan.disableFleetAgentsSetup && plan.integrations?.includes('fleet')) effects.out(info('Fleet is installed. Run ours-fleet setup-tunnel with the expiring one-use payload from the App command; a compatible Fleet prints the QR and connection code automatically. Configure agents and models in the App after linking.'));
