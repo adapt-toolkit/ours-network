@@ -641,7 +641,7 @@ connection code automatically; the App checks readiness and opens the code field
 Private `--file`/`--stdin` transports remain optional and are the only transports
 for legacy v1 payloads with long-lived credentials.
 
-The companion installer repin PR #48 selects published Fleet `1.2.0-nightly.44`
+The nightly installer release manifest selects published Fleet `1.2.0-nightly.44`
 and its actual registry integrity through the normal release manifest/source-policy
 generators. This release includes v2 argument and private-input support. The former
 nightly.41 selection predates this capability. Merge and publish the repinned
