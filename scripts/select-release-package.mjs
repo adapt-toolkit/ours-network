@@ -39,7 +39,8 @@ try {
   if (packed.name !== name || packed.version !== version) throw new Error(`Registry package identity mismatch: ${name}`);
   const actual = `sha512-${createHash('sha512').update(readFileSync(join(dir, packed.filename))).digest('base64')}`;
   if (actual !== published) throw new Error(`Registry archive for ${name}@${version} does not match its published integrity`);
-  assertArchiveCapabilities(name, version, join(dir, packed.filename));
+  // A newly selected release must carry everything this installer offers: selecting is how a step gets delivered.
+  assertArchiveCapabilities(name, version, join(dir, packed.filename), { strict: true });
 
   const previous = manifest.packages[name].version;
   const next = structuredClone(manifest);

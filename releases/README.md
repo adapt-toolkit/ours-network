@@ -26,14 +26,19 @@ node scripts/select-release-package.mjs @ours.network/fleet <published-version>
 node scripts/verify-release.mjs --installed
 ```
 
-`verify-release` also reads `dist/capabilities.js` from each downloaded archive
-and fails when a selected component lacks a capability this installer calls
-(`scripts/release-capabilities.mjs`). The installer's use of
-`ours-fleet managed-cli setup` requires `managed-cli.setup-v1`, so the release
-check stays red until a Fleet nightly that advertises it is published and
-selected. At run time the installer still degrades for an older Fleet; the gate
-only prevents releasing an installer whose pinned Fleet cannot do what its
-documentation promises.
+`verify-release` also reads `dist/build-info.json` from each downloaded archive
+(`scripts/release-capabilities.mjs`). It refuses a selection that lacks a
+capability the installer cannot work without. For a step the installer only
+offers when the installed component declares it, a selection without the
+capability is still releasable and the check prints a `NOTICE` naming what
+that installer will skip. `ours-fleet managed-cli setup` is such a step
+(`managed-cli.setup-v1`): until a Fleet release that declares it is selected,
+the installer skips it and says nothing is prepared. The release that is meant
+to deliver it is verified with the notice turned into a refusal:
+
+```sh
+node scripts/verify-release.mjs --installed --require-all-capabilities
+```
 
 Publication follows the same split as the component repositories:
 

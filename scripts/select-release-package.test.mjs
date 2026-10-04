@@ -6,14 +6,14 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { PACKAGE_NAMES } from './release-manifest.mjs';
-import { REQUIRED_CAPABILITIES } from './release-capabilities.mjs';
+import { DEGRADING_CAPABILITIES, REQUIRED_CAPABILITIES } from './release-capabilities.mjs';
 
 const fleet = '@ours.network/fleet';
 function fixture(mode) {
   const dir = mkdtempSync(join(tmpdir(), 'release-select-fixture-'));
   for (const p of ['scripts', 'releases', 'packages/installer/assets', 'bin', 'archive/package/dist']) mkdirSync(join(dir, p), { recursive: true });
   for (const file of ['release-manifest.mjs', 'release-capabilities.mjs', 'select-release-package.mjs']) cpSync(new URL(file, import.meta.url), join(dir, 'scripts', file));
-  const capabilities = mode === 'old-fleet' ? ['cowork.http-management-v1'] : REQUIRED_CAPABILITIES[fleet];
+  const capabilities = mode === 'old-fleet' ? REQUIRED_CAPABILITIES[fleet] : [...REQUIRED_CAPABILITIES[fleet], ...DEGRADING_CAPABILITIES[fleet]];
   writeFileSync(join(dir, 'archive/package/dist/build-info.json'), JSON.stringify({ capabilities }));
   assert.equal(spawnSync('tar', ['-czf', join(dir, 'published.tgz'), '-C', join(dir, 'archive'), 'package']).status, 0);
   const published = `sha512-${createHash('sha512').update(readFileSync(join(dir, 'published.tgz'))).digest('base64')}`;

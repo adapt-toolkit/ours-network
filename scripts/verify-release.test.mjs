@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { PACKAGE_NAMES } from './release-manifest.mjs';
-import { REQUIRED_CAPABILITIES } from './release-capabilities.mjs';
-for (const mode of ['valid','wrong-bytes','nested-drift','registry-failure','missing-capability']) {
+import { DEGRADING_CAPABILITIES, REQUIRED_CAPABILITIES } from './release-capabilities.mjs';
+const FLEET='@ours.network/fleet', ALL=[...REQUIRED_CAPABILITIES[FLEET],...DEGRADING_CAPABILITIES[FLEET]];
+for (const mode of ['valid','wrong-bytes','nested-drift','registry-failure','missing-capability','degraded','degraded-strict']) {
  test(`official artifact gate: ${mode}`,()=>{
   const dir=mkdtempSync(join(tmpdir(),'release-gate-fixture-'));
   try {
@@ -15,7 +16,7 @@ for (const mode of ['valid','wrong-bytes','nested-drift','registry-failure','mis
    for(const file of ['release-manifest.mjs','release-capabilities.mjs','verify-release.mjs','prepare-installer.mjs'])cpSync(new URL(file,import.meta.url),join(dir,'scripts',file));
    // A real npm archive: the gate reads the component's own build-info.json out of the pinned bytes.
    mkdirSync(join(dir,'archive/package/dist'),{recursive:true});
-   writeFileSync(join(dir,'archive/package/dist/build-info.json'),JSON.stringify({capabilities:mode==='missing-capability'?REQUIRED_CAPABILITIES['@ours.network/fleet'].slice(0,-1):REQUIRED_CAPABILITIES['@ours.network/fleet']}));
+   writeFileSync(join(dir,'archive/package/dist/build-info.json'),JSON.stringify({capabilities:mode==='missing-capability'?ALL.slice(1):mode.startsWith('degraded')?REQUIRED_CAPABILITIES[FLEET]:ALL}));
    assert.equal(spawnSync('tar',['-czf',join(dir,'fixture-source.tgz'),'-C',join(dir,'archive'),'package']).status,0);
    const integrity=`sha512-${createHash('sha512').update(readFileSync(join(dir,'fixture-source.tgz'))).digest('base64')}`;
    const manifest={schema:1,channel:'stable',installerVersion:'9.9.9',packages:Object.fromEntries(PACKAGE_NAMES.map(n=>[n,{version:'9.9.9',integrity}]))};
@@ -37,11 +38,16 @@ if(process.argv[2]==='pack'){
 `,{mode:0o755});
    const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.startsWith('OURS_')&&!k.toLowerCase().startsWith('npm_config_')));
    Object.assign(env,{PATH:`${join(dir,'bin')}:${env.PATH}`,HOME:join(dir,'home'),RELEASE_GATE_FIXTURE:mode,RELEASE_GATE_ARCHIVE:join(dir,'fixture-source.tgz')});
-   const r=spawnSync(process.execPath,[join(dir,'scripts/verify-release.mjs')],{env,encoding:'utf8',timeout:30_000});
-   assert.equal(r.status===0,mode==='valid',r.stdout+r.stderr);
-   if(mode==='missing-capability')assert.match(r.stderr,/Release graph refused: @ours\.network\/fleet@9\.9\.9 does not declare managed-cli\.setup-v1/);
-   assert.equal(existsSync(join(dir,'packages/installer/assets/release-lock.json')),mode==='valid');
-   if(mode==='valid'){
+   const r=spawnSync(process.execPath,[join(dir,'scripts/verify-release.mjs'),...(mode==='degraded-strict'?['--require-all-capabilities']:[])],{env,encoding:'utf8',timeout:30_000});
+   const passes=mode==='valid'||mode==='degraded';
+   assert.equal(r.status===0,passes,r.stdout+r.stderr);
+   if(mode==='missing-capability')assert.match(r.stderr,/Release graph refused: @ours\.network\/fleet@9\.9\.9 does not declare cowork\.http-management-v1/);
+   // A selection without a step the installer only offers is releasable, and says what it lacks.
+   if(mode==='degraded')assert.match(r.stderr,/NOTICE: @ours\.network\/fleet@9\.9\.9 does not declare managed-cli\.setup-v1\. An installer released with this selection skips that step/);
+   else assert.doesNotMatch(r.stderr,/NOTICE:/);
+   if(mode==='degraded-strict')assert.match(r.stderr,/Release graph refused: @ours\.network\/fleet@9\.9\.9 does not declare managed-cli\.setup-v1/);
+   assert.equal(existsSync(join(dir,'packages/installer/assets/release-lock.json')),passes);
+   if(passes){
     const prepared=spawnSync(process.execPath,[join(dir,'scripts/prepare-installer.mjs')],{env,encoding:'utf8'});
     assert.equal(prepared.status,0,prepared.stderr);
     assert.deepEqual(JSON.parse(readFileSync(join(dir,'packages/installer/assets/release.json'))),manifest);

@@ -20,7 +20,7 @@ try {
   if(packed.name!==name||packed.version!==p.version)throw new Error(`Registry package identity mismatch: ${name}`);
   const sri=`sha512-${createHash('sha512').update(readFileSync(join(dir,packed.filename))).digest('base64')}`;
   if(sri!==p.integrity)throw new Error(`Registry archive integrity mismatch: ${name}`);
-  assertArchiveCapabilities(name,p.version,join(dir,packed.filename));
+  assertArchiveCapabilities(name,p.version,join(dir,packed.filename),{strict:process.argv.includes('--require-all-capabilities')});
   archives[name]=packed.filename;
  }
  writeFileSync(join(dir,'package.json'),JSON.stringify({name:'ours-release-set-verification',version:'0.0.0',private:true,dependencies:Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,p.version]))}));

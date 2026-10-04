@@ -9,7 +9,17 @@ export const REQUIRED_CAPABILITIES = {
   '@ours.network/fleet': [
     'cowork.http-management-v1',          // gateway HTTP management (client acquisition gate)
     'workspace.enroll.preserve-profile-v1', // workspace setup
-    'managed-cli.setup-v1',               // `ours-fleet managed-cli setup` invoked after Fleet configuration
+  ],
+};
+
+// Behaviour the installer asks for only when the installed component declares it,
+// and skips otherwise (lib/orchestrate.mjs checks the same token at run time). A
+// selected release without it is releasable but ships without that behaviour, so
+// the gate says so on every run. `--require-all-capabilities` turns the notice
+// into a refusal: use it for the release that is meant to deliver the behaviour.
+export const DEGRADING_CAPABILITIES = {
+  '@ours.network/fleet': [
+    'managed-cli.setup-v1',               // `ours-fleet managed-cli setup` after Fleet configuration
   ],
 };
 
@@ -25,11 +35,16 @@ export function archiveCapabilities(archive) {
   } catch { return []; }
 }
 
-export function assertArchiveCapabilities(name, version, archive, required = REQUIRED_CAPABILITIES[name] ?? []) {
-  if (!required.length) return;
+export function assertArchiveCapabilities(name, version, archive, { strict = false, required = REQUIRED_CAPABILITIES[name] ?? [], degrading = DEGRADING_CAPABILITIES[name] ?? [], notice = console.warn } = {}) {
+  if (!required.length && !degrading.length) return;
   const declared = archiveCapabilities(archive);
-  const missing = required.filter(token => !declared.includes(token));
+  const lacks = tokens => tokens.filter(token => !declared.includes(token));
+  const missing = lacks(strict ? [...required, ...degrading] : required);
+  const select = `select a published ${name} release that contains it (node scripts/select-release-package.mjs ${name} <version>)`;
   if (missing.length)
-    throw new Error(`Release graph refused: ${name}@${version} does not declare ${missing.join(', ')}, which this installer invokes; `
-      + `select a published ${name} release that contains it (node scripts/select-release-package.mjs ${name} <version>)`);
+    throw new Error(`Release graph refused: ${name}@${version} does not declare ${missing.join(', ')}, which this installer invokes; ${select}`);
+  const skipped = lacks(degrading);
+  if (skipped.length)
+    notice(`NOTICE: ${name}@${version} does not declare ${skipped.join(', ')}. An installer released with this selection skips that step; `
+      + `to deliver it, ${select} and verify with --require-all-capabilities`);
 }
