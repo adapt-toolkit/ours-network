@@ -10,7 +10,7 @@ This permanent command contains no tunnel credentials or enrollment expiry. On a
 
 ### Fleet task commands from a harness command sandbox
 
-After Fleet configuration, and again on update, the installer asks the exact Fleet it installed to run `ours-fleet managed-cli setup`. Fleet owns that policy; the installer writes no Codex rule or Claude setting itself, and the step starts no agent session and no model. It runs only when the installed Fleet declares the `managed-cli.setup-v1` capability; with an earlier Fleet, including the release currently pinned by this installer, it is skipped (and `--fleet-task-workflow` reports that it was not applied), and it never fails an installation: an unsupported combination is printed with Fleet's reason and left exactly as sandboxed as before.
+After Fleet configuration, and again on update, the installer asks the exact Fleet it installed to run `ours-fleet managed-cli setup`. Fleet owns that policy; the installer writes no Codex rule or Claude setting itself, and the step starts no agent session and no model. It runs only when the installed Fleet declares the `managed-cli.setup-v1` capability; the Fleet release this installer pins does. With an earlier Fleet (a retained or development installation) it is skipped (and `--fleet-task-workflow` reports that it was not applied), and it never fails an installation: an unsupported combination is printed with Fleet's reason and left exactly as sandboxed as before.
 
 Nothing is prepared unless an Agent declares `managed_cli: [task-workflow]`. To opt agents in from the installer, name them:
 
