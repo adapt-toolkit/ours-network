@@ -8,6 +8,19 @@ This permanent command contains no tunnel credentials or enrollment expiry. On a
 
 `--disable-fleet-agents-setup` installs the Fleet CLI and saves the choice without opening its agent/model wizard or rewriting existing Fleet configuration. Configure agents in the App after device linking. Complete presets still work unattended; partial presets require a terminal and cannot use `OURS_ASSUME_YES`.
 
+### Fleet task commands from a harness command sandbox
+
+After Fleet configuration, and again on update, the installer asks the exact Fleet it installed to run `ours-fleet managed-cli setup`. Fleet owns that policy; the installer writes no Codex rule or Claude setting itself, and the step starts no agent session and no model. It runs only when the installed Fleet declares the `managed-cli.setup-v1` capability; the Fleet release this installer pins does. With an earlier Fleet (a retained or development installation) it is skipped (and `--fleet-task-workflow` reports that it was not applied), and it never fails an installation: an unsupported combination is printed with Fleet's reason and left exactly as sandboxed as before.
+
+Nothing is prepared unless an Agent declares `managed_cli: [task-workflow]`. To opt agents in from the installer, name them:
+
+```sh
+ours-install client --config /private/profile.json --integrations codex,fleet \
+  --fleet-settings /private/fleet-settings.json --fleet-task-workflow FleetCoordinator
+```
+
+`--fleet-task-workflow` takes a comma-separated list of Fleet agent names, requires the Fleet integration and conflicts with `--disable-fleet-agents-setup`. It adds that one key to each named Agent and changes no permission. The prepared scope is the packaged Coordinator task workflow (`task create|start|finish|block|unblock|review|list|show`, `room show|members`, template/plan/help inspection) for one pinned Fleet configuration; `task start` and `task finish` provision and retire rooms and agents, which is real authority, and the installer prints that scope. The result is generated configuration only. It is not evidence that a command reached a supervisor: `ours-fleet managed-cli status` and `ours-fleet doctor` report what running agents actually observed. Fleet's `docs/validation/managed-cli-permissions.md` lists the qualified harnesses and platforms.
+
 The separate `ours-fleet setup-tunnel <encoded-v2-grant>` step is supported by the pinned Fleet release. Its private App payload remains scoped, signed-root-bound and expiring. Fleet prints its QR and private single-use connection code immediately after successful setup; scan or paste it into the App. `ours-fleet link-device` remains available for additional devices or expired codes. Do not put the expiring tunnel payload in the permanent installer command.
 
 Native packages currently provide server-only installation; full Fleet/App onboarding requires the supported gateway (Docker or Podman). The installer refuses unsupported native full-stack setup before changing anything. This flow does not add a native gateway.
@@ -624,7 +637,7 @@ Existing installation records keep their ports and identities. A listener acquir
 by another process after preflight still causes startup to fail safely; no foreign
 process is stopped and no retained installation is silently moved.
 
-Workspace setup pins Fleet `1.2.0-nightly.44` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
+Workspace setup pins Fleet `1.2.0-nightly.45` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
 
 ### App tunnel setup prerelease sequencing
 
@@ -641,7 +654,7 @@ connection code automatically; the App checks readiness and opens the code field
 Private `--file`/`--stdin` transports remain optional and are the only transports
 for legacy v1 payloads with long-lived credentials.
 
-The nightly installer release manifest selects published Fleet `1.2.0-nightly.44`
+The nightly installer release manifest selects published Fleet `1.2.0-nightly.45`
 and its actual registry integrity through the normal release manifest/source-policy
 generators. This release includes v2 argument and private-input support. The former
 nightly.41 selection predates this capability. Merge and publish the repinned

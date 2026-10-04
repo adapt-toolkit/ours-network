@@ -16,6 +16,30 @@ integrities in the manifest. PR CI downloads and verifies all ten archives,
 checks actual installed ours dependency graphs, and inspects the packed installer.
 The version bump preserves these component selections.
 
+Selecting a version is one command. It reads the published version's registry
+integrity and rewrites the manifest, the packaged source policy and the README
+pin together, and refuses a version from another channel or one that is not
+published:
+
+```sh
+node scripts/select-release-package.mjs @ours.network/fleet <published-version>
+node scripts/verify-release.mjs --installed
+```
+
+`verify-release` also reads `dist/build-info.json` from each downloaded archive
+(`scripts/release-capabilities.mjs`). It refuses a selection that lacks a
+capability the installer cannot work without. For a step the installer only
+offers when the installed component declares it, a selection without the
+capability is still releasable and the check prints a `NOTICE` naming what
+that installer will skip. `ours-fleet managed-cli setup` is such a step
+(`managed-cli.setup-v1`): until a Fleet release that declares it is selected,
+the installer skips it and says nothing is prepared. The release that is meant
+to deliver it is verified with the notice turned into a refusal:
+
+```sh
+node scripts/verify-release.mjs --installed --require-all-capabilities
+```
+
 Publication follows the same split as the component repositories:
 
 - `prerelease`: after gates, compute an ephemeral patch-line `X.Y.Z-nightly.N`

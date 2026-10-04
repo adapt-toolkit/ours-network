@@ -530,7 +530,8 @@ test('deferring Fleet agents installs CLI without init, prompts or config writes
  const calls=[];
  const row=await runFleetPhase({...ARGS,disableFleetAgentsSetup:true}, {
   home:'/home/fixture',out:()=>{},run:async(...args)=>{calls.push(args);return {ok:true};},
-  runInteractive:()=>assert.fail('must not open wizard'),readText:()=>assert.fail('no config prerequisite'),
+  runInteractive:()=>assert.fail('must not open wizard'),readText:()=>null,
+  fleetCapabilities:()=>assert.fail('no retained configuration, so nothing to prepare'),
  },{target:AT_DEFAULT,isDefaultStateDir:true});
  assert.equal(row.state,'installed');assert.equal(calls.length,1);assert.equal(calls[0][0],'npm');
  assert(!calls.some(call=>call[1].includes('init')));

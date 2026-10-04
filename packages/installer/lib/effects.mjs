@@ -1436,6 +1436,13 @@ export function networkEffects(effects) {
       const localPackages = Object.fromEntries(integrations.filter(n => n !== 'fleet').map(name => [name, join(root, 'node_modules', '@ours.network', name)]));
       return { localPackages, packages: {}, cliBin, fleetBin: integrations.includes('fleet') ? join(root, 'node_modules/.bin/ours-fleet') : null };
     },
+    /** Capability tokens the given Fleet executable reports for itself; [] when it reports none. */
+    async fleetCapabilities(fleetBin, env = null) {
+      try {
+        const capabilities = JSON.parse((await effects.run(fleetBin, ['version', '--json'], { env })).stdout).capabilities;
+        return Array.isArray(capabilities) ? capabilities.filter(item => typeof item === 'string') : [];
+      } catch { return []; }
+    },
     async prepareClientMarketplace(name, packagePath) {
       const acquisitionRoot = dirname(dirname(dirname(packagePath)));
       const sourcePath = join(acquisitionRoot, 'sources.json');

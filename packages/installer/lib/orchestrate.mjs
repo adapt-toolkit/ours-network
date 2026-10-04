@@ -993,6 +993,58 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
   return rows;
 }
 
+export const FLEET_MANAGED_CLI_CAPABILITY = 'managed-cli.setup-v1';
+
+/**
+ * Ask the Fleet release that was just installed to prepare and validate its own
+ * managed CLI policy. Fleet owns the commands, paths and harness rules; nothing
+ * about them is duplicated here. The command is static: it starts no agent
+ * session and no model. Its findings are reported, never turned into an
+ * installation failure, and never widened on the operator's behalf.
+ */
+export async function runFleetManagedCliSetup(args, effects, plan, target) {
+  const fleet = args.acquiredFleet || plan.init[0];
+  const env = target.mode === 'host-profile' ? profileEnv(target) : daemonEnv(target.stateDir, target.port);
+  const requested = args.fleetTaskWorkflowAgents ?? [];
+  const manual = `${fleet === plan.init[0] ? fleet : shellQuote(fleet)} managed-cli setup --configuration ${shellQuote(plan.configPath)}`;
+  // Version-matched: the capability is asked of the exact Fleet that was installed.
+  const capabilities = await effects.fleetCapabilities(fleet, env);
+  if (!capabilities.includes(FLEET_MANAGED_CLI_CAPABILITY)) {
+    if (requested.length) effects.out(warn(`The installed Fleet does not provide managed CLI setup (${FLEET_MANAGED_CLI_CAPABILITY}); --fleet-task-workflow was not applied to ${requested.join(', ')} and nothing was changed.`));
+    return { state: 'unavailable' };
+  }
+  let report;
+  try {
+    const result = await effects.run(fleet, ['managed-cli', 'setup', '--configuration', plan.configPath, '--json',
+      ...requested.flatMap(agent => ['--enable', agent])], { env, allowCodes: [0, 1] });
+    report = JSON.parse(result.stdout ?? '');
+    if (report?.version !== 1 || !Array.isArray(report.roles)) throw new Error('unrecognised report');
+  } catch (error) {
+    effects.out(warn(`Fleet managed CLI setup did not complete (${installerFailure(error)}). Nothing else was changed; retry: ${manual}`));
+    return { state: 'failed' };
+  }
+  for (const item of report.enabled ?? [])
+    effects.out(ok(`${item.changed ? 'Enabled' : 'Already enabled:'} Fleet task commands for ${item.agent} (${item.file}). Its permissions were not changed.`));
+  const declared = report.roles.filter(role => role.setup?.state !== 'not-declared');
+  if (!declared.length) {
+    effects.out(info('No Fleet agent is set up to run Fleet task commands from a command sandbox; nothing was generated and no permission changed.'));
+    effects.out(info(`To allow it for one agent, re-run with --fleet-task-workflow <Agent> or run: ${manual} --enable <Agent>`));
+    return { state: 'none', report };
+  }
+  const good = ['prepared', 'generated-at-launch', 'not-required'];
+  for (const role of declared) {
+    const line = `${role.role} (${role.harness}/${role.session}): ${role.setup.state} — ${role.setup.detail}`;
+    effects.out((good.includes(role.setup.state) ? ok : warn)(`Fleet task commands, ${line}`));
+    for (const scope of role.scope ?? []) effects.out(info(`  ${scope}`));
+    for (const note of role.warnings ?? []) effects.out(info(`  note: ${note}`));
+    if (role.session_policy === 'restart-required')
+      effects.out(warn(`  ${role.role} is still running the previous policy; restart it (ours-fleet restart ${role.role}) to load this one.`));
+  }
+  for (const item of report.removed ?? []) effects.out(info(`Removed obsolete Fleet-generated policy ${item.path} (${item.detail ?? 'no longer needed'}).`));
+  effects.out(info('This is generated configuration only. It was not executed: no agent session or model was started, and it is not evidence that a command reached a supervisor. Check with: ours-fleet doctor'));
+  return { state: declared.every(role => good.includes(role.setup.state)) ? 'prepared' : 'attention', report };
+}
+
 /** Install Fleet and let its interactive wizard publish the owned configuration. */
 export async function runFleetPhase(args, effects, { target, isDefaultStateDir }) {
   effects.out(heading('ours-fleet (your always-online agent team)'));
@@ -1012,6 +1064,8 @@ export async function runFleetPhase(args, effects, { target, isDefaultStateDir }
   if (args.disableFleetAgentsSetup) {
     if (!install.ok) return { key: 'fleet', label: plan.label, state: 'failed', note: 'Fleet installation failed' };
     effects.out(ok('Fleet CLI installed; agent and model setup deferred to the App. Existing Fleet configuration was retained.'));
+    // A retained configuration may already declare the workflow; its generated policy names the package path this run just replaced.
+    if (!args.dryRun && effects.readText(plan.configPath) !== null) await runFleetManagedCliSetup(args, effects, plan, target);
     return { key: 'fleet', label: plan.label, state: 'installed', note: 'agents setup deferred' };
   }
   // Fleet owns its v2 manifest, roles, models and permissions. With no prepared
@@ -1037,6 +1091,7 @@ export async function runFleetPhase(args, effects, { target, isDefaultStateDir }
     return { key: 'fleet', label: plan.label, state: 'failed', note: 'Fleet configuration was not published' };
   }
   effects.out(ok('ours-fleet installed and initialized; no fleet roles were started.'));
+  if (!args.dryRun) await runFleetManagedCliSetup(args, effects, plan, target);
   if (plan.instruction) effects.out(info(plan.instruction));
   return { key: 'fleet', label: plan.label, state: 'installed', note: `configured at ${plan.configPath}; stopped` };
 }
@@ -1517,7 +1572,8 @@ export async function runClientCommand(command, effects) {
     phase = 'Acquire client packages';
     const exactSuite = await effects.acquireClientPackages(imported.configPath, imported.settings.sourcesPath, integrations, { refresh: !!command.preset });
     const args = { assumeYes: true, dryRun: false, channel: 'latest', clientIntegrations: integrations,
-      acquiredFleet: exactSuite.fleetBin, fleetSettingsPath: imported.settings.fleetSettingsPath, disableFleetAgentsSetup: imported.settings.disableFleetAgentsSetup };
+      acquiredFleet: exactSuite.fleetBin, fleetSettingsPath: imported.settings.fleetSettingsPath, disableFleetAgentsSetup: imported.settings.disableFleetAgentsSetup,
+      fleetTaskWorkflowAgents: command.fleetTaskWorkflowAgents };
     const target = { mode: 'host-profile', managed: true, configPath: imported.configPath, profile: imported.profile, endpoint: imported.profile.endpoint };
     effects.out(progress(2, 4, 'Client integrations', 'Register the selected agent integrations.'));
     phase = 'Register client integrations';

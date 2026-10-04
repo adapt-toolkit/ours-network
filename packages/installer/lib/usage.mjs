@@ -37,6 +37,7 @@ export const USAGE = `ours-install — interactive setup with optional CLI prese
   --identity-name NAME      desired Human name for a fresh server; existing root is retained
   --integrations LIST       codex,claude-code,fleet; use none to skip clients explicitly
   --fleet-settings PATH     JSON settings for Fleet; required unless Fleet agents setup is disabled
+  --fleet-task-workflow A[,B]  let these Fleet agents run Fleet task commands outside their command sandbox
   --config PATH             complete connection profile for client-only setup
   --sources PATH            explicit full development source policy override
   --port N                  public gateway port for Docker (default 3050; e.g. 4050)
