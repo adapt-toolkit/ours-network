@@ -55,14 +55,19 @@ test('injects nothing for a caller without a server credential', async t => {
   assert.equal(f.seen.length, 2);
 });
 
-test('selects a producer credential only for an authenticated send', async t => {
+test('selects a producer credential only for authenticated send and target retirement', async t => {
   const f = await fixture(); t.after(() => f.close());
   assert.equal(await f.call('/api/v1/send', { method: 'POST', headers: { 'x-ours-api-token': SERVER, 'x-ours-notifications-producer': PRODUCER } }), 200);
   assert.equal(f.seen[0].headers.authorization, `Bearer ${PRODUCER}`);
   assert.equal(f.seen[0].headers['x-ours-notifications-producer'], undefined);
   for (const [path, method] of [['/api/v1/summary', 'GET'], ['/api/v1/send', 'GET'], ['/api/v1/read', 'POST']])
     assert.equal(await f.call(path, { method, headers: { 'x-ours-api-token': SERVER, 'x-ours-notifications-producer': PRODUCER } }), 401, path);
-  assert.equal(f.seen.length, 1);
+  assert.equal(await f.call('/api/v1/delete-target', { method: 'POST', headers: { 'x-ours-api-token': SERVER, 'x-ours-notifications-producer': PRODUCER } }), 200);
+  assert.equal(f.seen[1].headers.authorization, `Bearer ${PRODUCER}`);
+  assert.equal(await f.call('/api/v1/delete-target', { method: 'GET', headers: { 'x-ours-api-token': SERVER, 'x-ours-notifications-producer': PRODUCER } }), 401);
+  assert.equal(await f.call('/api/v1/delete', { method: 'POST', headers: { 'x-ours-api-token': SERVER, 'x-ours-notifications-producer': PRODUCER } }), 401);
+  assert.equal(await f.call('/api/v1/delete-target', { method: 'POST', headers: { 'x-ours-notifications-producer': PRODUCER } }), 401);
+  assert.equal(f.seen.length, 2);
 });
 
 test('authenticates presence upgrades the same way', async t => {
