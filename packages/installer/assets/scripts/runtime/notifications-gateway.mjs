@@ -21,7 +21,7 @@ export function daemonCredentialCheck(daemonUrl) {
 /**
  * Front the notification service with the server's own authentication.
  * A request carrying a server API credential is checked with the daemon; only then
- * does it act as this installation's owner (or, for /api/v1/send, as the named
+ * does it act as this installation's owner (or, for producer lifecycle routes, as the named
  * producer). A request without one keeps its own Authorization, which the service
  * checks against its scoped tokens. Nothing is injected for an unauthenticated caller.
  */
@@ -33,7 +33,7 @@ export function createNotificationsAdapter({ service, userToken, verifyServerCre
     if (credential === undefined) return producer === undefined;
     if (typeof credential !== 'string' || !credential || !await verifyServerCredential(credential)) return false;
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-    if (producer !== undefined && !(req.method === 'POST' && path === '/api/v1/send')) return false;
+    if (producer !== undefined && !(req.method === 'POST' && ['/api/v1/send', '/api/v1/delete-target'].includes(path))) return false;
     req.headers.authorization = `Bearer ${producer ?? userToken}`;
     return true;
   };

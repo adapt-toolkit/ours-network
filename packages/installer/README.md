@@ -661,3 +661,10 @@ nightly.41 selection predates this capability. Merge and publish the repinned
 installer before deploying the App; the pin change alone is not an installer
 publication. Existing v1 private-file enrollment remains compatible. The legacy
 App wrapper refuses an older Fleet before reading or redeeming its grant.
+
+The notification gateway permits daemon-authenticated producer selection only on
+POST `/api/v1/send` and `/api/v1/delete-target`. The latter retires a removed
+conversation using the credential's fixed user/source scope. Browser inbox
+`/api/v1/delete` continues to require the user credential. The notification
+service must support the scoped lifecycle route; this change does not repin or
+publish an installer release.
