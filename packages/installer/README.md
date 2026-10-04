@@ -8,9 +8,9 @@ This permanent command contains no tunnel credentials or enrollment expiry. On a
 
 `--disable-fleet-agents-setup` installs the Fleet CLI and saves the choice without opening its agent/model wizard or rewriting existing Fleet configuration. Configure agents in the App after device linking. Complete presets still work unattended; partial presets require a terminal and cannot use `OURS_ASSUME_YES`.
 
-The separate `ours-fleet setup-tunnel --file /private/setup-payload` step requires the matching Fleet follow-up release. Its private App payload remains scoped, signed-root-bound and expiring. Then run `ours-fleet link-device` and paste its private single-use code into the App. Do not put the expiring tunnel payload in the permanent installer command.
+The separate `ours-fleet setup-tunnel <encoded-v2-grant>` step is supported by the pinned Fleet release. Its private App payload remains scoped, signed-root-bound and expiring. Fleet prints its QR and private single-use connection code immediately after successful setup; scan or paste it into the App. `ours-fleet link-device` remains available for additional devices or expired codes. Do not put the expiring tunnel payload in the permanent installer command.
 
-Native packages currently provide server-only installation; full Fleet/App onboarding requires the supported gateway (Docker or Podman). The installer refuses unsupported native full-stack setup before changing anything. This PR does not add a native gateway or release unpublished Fleet commands.
+Native packages currently provide server-only installation; full Fleet/App onboarding requires the supported gateway (Docker or Podman). The installer refuses unsupported native full-stack setup before changing anything. This flow does not add a native gateway.
 
 See [one-connection setup, localhost:4050 and systemd migration](GATEWAY_SETUP.md) for the gateway-only client workflow.
 
@@ -624,4 +624,27 @@ Existing installation records keep their ports and identities. A listener acquir
 by another process after preflight still causes startup to fail safely; no foreign
 process is stopped and no retained installation is silently moved.
 
-Workspace setup pins Fleet `1.2.0-nightly.41` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, separate `ours-fleet setup-tunnel` and `ours-fleet link-device` commands, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
+Workspace setup pins Fleet `1.2.0-nightly.44` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
+
+### App tunnel setup prerelease sequencing
+
+The simplified App flow shows one copyable `ours-fleet setup-tunnel <encoded-v2-grant>`
+command for the installed host, including an SSH session on a VPS. Its argument
+contains only the existing v2 single-use grant (`version`, `appOrigin`, `code`,
+`expiresAt`), never a connector token or broad provider credential. The command can
+appear in shell history and process listings: keep it private and remove it from
+history after use. Base64 is encoding, not encryption. Server-side expiry and
+one-time redemption remain enforced. Fleet checks prerequisites before HTTPS POST
+redemption; it never prints the grant or puts it in a URL, and retains existing
+signed-root binding and scoped connector token-file controls. It prints the QR and
+connection code automatically; the App checks readiness and opens the code field.
+Private `--file`/`--stdin` transports remain optional and are the only transports
+for legacy v1 payloads with long-lived credentials.
+
+The nightly installer release manifest selects published Fleet `1.2.0-nightly.44`
+and its actual registry integrity through the normal release manifest/source-policy
+generators. This release includes v2 argument and private-input support. The former
+nightly.41 selection predates this capability. Merge and publish the repinned
+installer before deploying the App; the pin change alone is not an installer
+publication. Existing v1 private-file enrollment remains compatible. The legacy
+App wrapper refuses an older Fleet before reading or redeeming its grant.
