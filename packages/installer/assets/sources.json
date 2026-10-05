@@ -5,81 +5,81 @@
     "installerVersion": "1.2.0-nightly.3",
     "packages": {
       "@ours.network/sdk": {
-        "version": "3.8.1-nightly.15",
-        "integrity": "sha512-ynKaKmKtINBqYk3kNovsgEO/3TiFY1CC9FgZzrOH+H6onnM3J//Q8cBb9sun8dl9mhB4mKZYgvneSiOejYwZUw=="
+        "version": "3.8.1-nightly.17",
+        "integrity": "sha512-GCPbGzh0IxFJluyRk4y1O+9419kZcnHapnr42FQKs4u2kKU7EcDRLBlINqSYgF0YUCZyZUDv/9Rk1//GKs/6oQ=="
       },
       "@ours.network/cli": {
-        "version": "2.8.1-nightly.13",
-        "integrity": "sha512-1BeAG12vh4ruBOeJ54l60qWUhLzPLRNKnGtRiJpQmSXkamNQglrPQeXa9xW3taAM4Vg5uYgEhsz6+ieM+1TUSA=="
+        "version": "2.8.1-nightly.15",
+        "integrity": "sha512-ht96LfYH7Du19YWeht+5eRsZxuF1Fobfj6sPSH+aFgWD9hYdrWTeG/5rrCTAClQflnl49Qaskk4n/TclkWrkRw=="
       },
       "@ours.network/tg-connector": {
-        "version": "1.0.1-nightly.9",
-        "integrity": "sha512-wm0V8c97aIg7p26L9My36I3BE9Cy2Xc5W7WgHg6Vo+hmPvE+jXmen86yA4+DxIu9VYxoVSMtpBbu76485eCeNw=="
+        "version": "1.0.1-nightly.11",
+        "integrity": "sha512-ZT/51g+YgjCpPoYKF+6zuWhn/rAUa49Qq/mChOHZmZf2WJR16VLPGCc31LDA26kRE+kQtdkWiuGf2v0XOa7CXg=="
       },
       "@ours.network/cowork": {
-        "version": "1.3.3-nightly.20261001.6d49d3a",
-        "integrity": "sha512-tqoLOWc4O8CGwLdO1j6ukm6Vn57EE0zbuxKo4BWd0QVwu9ObKgHCEMOKPgW2mXHeESXSv9m7edcIrnK8I5gD+w=="
+        "version": "1.3.3-nightly.20261005.f549477",
+        "integrity": "sha512-9RYvgAPrsKtzAOUSYsNLws3zhse3BvKu4Z2xC5vUYniWhyU8s2RiHO6bH7oBrjcRyjpCiFwnNpOE6oobi1Vllg=="
       },
       "@ours.network/messenger-server": {
-        "version": "1.0.31-nightly.15",
-        "integrity": "sha512-NEpPsn3x4ZxYjhTo3c8JSYPKgfkhZ/W9s0u5Bd6OALWj40qc5ethui1uHfpw5Cu3+XHJz28WPh5e4RbjUMCmXQ=="
+        "version": "1.0.31-nightly.17",
+        "integrity": "sha512-03qDDGRgN9pBGsBsCcvArhPuYfMblqsaXS9HinxAzOSiI3PaoNOh+4MxIAOoHXoE/12xxCDf7kbMdEAR0CPIfg=="
       },
       "@ours.network/notifications": {
         "version": "0.3.1-nightly.2",
         "integrity": "sha512-OjnrJ8ZuOfKYT4KAmiRLU7czfiuacs6rShwOvvqxqBaUKcs1UwjsYwHARNb6erMxG4am3xxcE0ItahL+d2vt4A=="
       },
       "@ours.network/fleet": {
-        "version": "1.2.0-nightly.46",
-        "integrity": "sha512-k39gR9pKGPb6V4c2nhmfZAuHZmI9jgW+Hd1cTjDydJm7feRbnILTuEKxn5E+EUOxl/NwMIpWEJgCx99P+yQGtA=="
+        "version": "1.2.0-nightly.47",
+        "integrity": "sha512-h+K+KtHEwiG/doG9i7e8g6IaX3AKKyOwd3nNpTRxd+UYHLcB6KtcAlD5k+hnKrdBBMdA69c7zZknBUxPXbT+IA=="
       },
       "@ours.network/mcp": {
-        "version": "1.2.0-nightly.10",
-        "integrity": "sha512-59sxJOcQagNRR+43Z5ScFlqFDBIlZSMQi8iz9mpxp5Jjl38B0dmCFsv5e+srbEYrV3xaOg9ZBsT17OUABFAseQ=="
+        "version": "1.2.0-nightly.12",
+        "integrity": "sha512-ZvwCaIgMaMcUrLhWNaWWOErIHwtvQyOZHfophf+rrjnlG0eBpBwmwQPuABS7jPuQvi69pBIT4jUWN3CArgxzRQ=="
       },
       "@ours.network/codex": {
-        "version": "1.2.0-nightly.10",
-        "integrity": "sha512-7hV4R0w8tiQ/JKFU5MxtM7fihd33tzWDgT+Bn8cidasxI5zmTLqDEIv6om5LM/xk7UqcPw5gDN2kcJYiybnP9Q=="
+        "version": "1.2.0-nightly.12",
+        "integrity": "sha512-O3emBbe4KXfD9nDsgjN3Z8J11aSMz4KAdiZo4EPZIqEypOXCaRnbZqpuJpd14FZpFHSHGEfel6KgP0mZYFYtRA=="
       },
       "@ours.network/claude-code": {
-        "version": "1.2.0-nightly.10",
-        "integrity": "sha512-C3+H/vXespanVj9E1uQAWno9RFrI5KlK2SHSc7dnmRRuFVyRsoVcbvlpVI3nZ8snFaKVzbetebZr7vxd73AWSg=="
+        "version": "1.2.0-nightly.12",
+        "integrity": "sha512-122cnztQqVkXvXy4y4zJQAVVD5gBTqdj5gkf2dTVnR/g0Nzw5uBxdch0xkhyluqmjN74MHuklv2YRr9Gs8vbbQ=="
       },
       "@ours.network/daemon": {
-        "version": "3.8.1-nightly.7",
-        "integrity": "sha512-dDFDm+xERplzu4yXKvLjKGNaIdr9u4ku5/4jiI4g8do3qOX9VS0tF1+O67uSu4jqkypg860UdZRdn9Zce72H/A=="
+        "version": "3.8.1-nightly.9",
+        "integrity": "sha512-KQUAmd/Ae97DcaxKFinsVuyQiREUuXp6uiv0FeOsU59patpFKUcw7gYpmifBeywnvsDVrS+XX33CubYYkpMacw=="
       }
     },
     "hostCli": {
       "@ours.network/sdk": {
-        "version": "3.8.1-nightly.15",
-        "integrity": "sha512-ynKaKmKtINBqYk3kNovsgEO/3TiFY1CC9FgZzrOH+H6onnM3J//Q8cBb9sun8dl9mhB4mKZYgvneSiOejYwZUw=="
+        "version": "3.8.1-nightly.17",
+        "integrity": "sha512-GCPbGzh0IxFJluyRk4y1O+9419kZcnHapnr42FQKs4u2kKU7EcDRLBlINqSYgF0YUCZyZUDv/9Rk1//GKs/6oQ=="
       },
       "@ours.network/cli": {
-        "version": "2.8.1-nightly.13",
-        "integrity": "sha512-1BeAG12vh4ruBOeJ54l60qWUhLzPLRNKnGtRiJpQmSXkamNQglrPQeXa9xW3taAM4Vg5uYgEhsz6+ieM+1TUSA=="
+        "version": "2.8.1-nightly.15",
+        "integrity": "sha512-ht96LfYH7Du19YWeht+5eRsZxuF1Fobfj6sPSH+aFgWD9hYdrWTeG/5rrCTAClQflnl49Qaskk4n/TclkWrkRw=="
       }
     }
   },
   "packages": {
     "@ours.network/sdk": {
       "type": "npm",
-      "version": "3.8.1-nightly.15"
+      "version": "3.8.1-nightly.17"
     },
     "@ours.network/cli": {
       "type": "npm",
-      "version": "2.8.1-nightly.13"
+      "version": "2.8.1-nightly.15"
     },
     "@ours.network/tg-connector": {
       "type": "npm",
-      "version": "1.0.1-nightly.9"
+      "version": "1.0.1-nightly.11"
     },
     "@ours.network/cowork": {
       "type": "npm",
-      "version": "1.3.3-nightly.20261001.6d49d3a"
+      "version": "1.3.3-nightly.20261005.f549477"
     },
     "@ours.network/messenger-server": {
       "type": "npm",
-      "version": "1.0.31-nightly.15"
+      "version": "1.0.31-nightly.17"
     },
     "@ours.network/notifications": {
       "type": "npm",
@@ -87,23 +87,23 @@
     },
     "@ours.network/fleet": {
       "type": "npm",
-      "version": "1.2.0-nightly.46"
+      "version": "1.2.0-nightly.47"
     },
     "@ours.network/mcp": {
       "type": "npm",
-      "version": "1.2.0-nightly.10"
+      "version": "1.2.0-nightly.12"
     },
     "@ours.network/codex": {
       "type": "npm",
-      "version": "1.2.0-nightly.10"
+      "version": "1.2.0-nightly.12"
     },
     "@ours.network/claude-code": {
       "type": "npm",
-      "version": "1.2.0-nightly.10"
+      "version": "1.2.0-nightly.12"
     },
     "@ours.network/daemon": {
       "type": "npm",
-      "version": "3.8.1-nightly.7"
+      "version": "3.8.1-nightly.9"
     }
   }
 }
