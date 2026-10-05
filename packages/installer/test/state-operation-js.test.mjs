@@ -129,12 +129,12 @@ else {assert.equal(args[1],'access-retain');assert.equal(args[args.indexOf('--co
   }
 });
 
-for (const operation of ['update', 'rebuild']) test(`full-server ${operation} backs up old provenance and preserves all component data`, async () => {
+for (const notifications of [false, true]) for (const operation of ['update', 'rebuild']) test(`full-server ${operation} backs up old provenance and preserves all component data${notifications ? ' including notifications' : ''}`, async () => {
   const { runStateOperation } = await import('../assets/scripts/maintenance/state-operation.mjs');
   const { extractArchive } = await import('../assets/scripts/maintenance/state-archive.mjs');
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'ours-state-update-')));
   const live = join(root, 'live'), build = join(root, 'build');
-  const components = ['daemon', 'telegram', 'cowork', 'messenger'];
+  const components = ['daemon', 'telegram', 'cowork', 'messenger', ...(notifications ? ['notifications'] : [])];
   const records = ['package-lock.json', 'dependency-tree.json'];
   const old = Object.fromEntries(records.map(name => [name, Buffer.from('{"build":"old"}')]));
   try {
@@ -161,6 +161,11 @@ for (const operation of ['update', 'rebuild']) test(`full-server ${operation} ba
     await runStateOperation([operation, 'server', ...(operation === 'update' ? ['--compatible'] : [])], env);
     for (const name of [...components, 'mcp', 'credentials']) assert.equal(fs.readFileSync(join(live, name, 'retained'), 'utf8'), name);
     for (const name of components) for (const record of records) assert.equal(fs.readFileSync(join(live, name, '.ours-provenance', record), 'utf8'), operation === 'rebuild' ? old[record].toString() : '{"build":"new"}');
+    if (notifications) {
+      const { readBuildRecords, initializeBuildMarker } = await import('../assets/scripts/maintenance/build-context.mjs');
+      // The actual runtime startup gate must admit the retargeted generation.
+      assert.doesNotThrow(() => initializeBuildMarker(join(live, 'notifications/.ours-provenance'), readBuildRecords(build)));
+    }
     const backup = fs.readdirSync(join(root, 'backups')).find(name => name.startsWith('pre-update-'));
     await extractArchive(join(root, 'backups', backup), join(root, 'restored'), { domain: 'server', uid: process.getuid(), gid: process.getgid(), provenance: old });
     for (const name of components) assert.equal(fs.readFileSync(join(root, 'restored', name, '.ours-provenance/package-lock.json'), 'utf8'), '{"build":"old"}');
