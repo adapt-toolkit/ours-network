@@ -6,13 +6,18 @@ import { createNotificationsAdapter, daemonCredentialCheck } from '../assets/scr
 
 const USER = 'u'.repeat(43), PRODUCER = 'p'.repeat(43), SERVER = 's'.repeat(43);
 
-async function fixture() {
+async function fixture(verify) {
+  let daemonMode = 'ok';
   const seen = [];
   const service = { server: createServer((req, res) => { seen.push({ method: req.method, url: req.url, headers: { ...req.headers } }); res.end('{}'); }), async close() {} };
   service.server.on('upgrade', (req, socket) => { seen.push({ upgrade: true, url: req.url, headers: { ...req.headers } }); socket.end('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n'); });
-  const daemon = createServer((req, res) => { res.writeHead(req.url === '/identities' && req.headers['x-ours-api-token'] === SERVER ? 200 : 401); res.end(); });
+  const daemon = createServer((req, res) => {
+    if (daemonMode === 'socket') { req.socket.destroy(); return; }
+    if (daemonMode === 'timeout') return;
+    res.writeHead(daemonMode === 'failure' ? 503 : req.url === '/identities' && req.headers['x-ours-api-token'] === SERVER ? 200 : 401); res.end();
+  });
   daemon.listen(0, '127.0.0.1'); await once(daemon, 'listening');
-  const adapter = createNotificationsAdapter({ service, userToken: USER, verifyServerCredential: daemonCredentialCheck(`http://127.0.0.1:${daemon.address().port}`) });
+  const adapter = createNotificationsAdapter({ service, userToken: USER, verifyServerCredential: verify ?? daemonCredentialCheck(`http://127.0.0.1:${daemon.address().port}`) });
   adapter.server.listen(0, '127.0.0.1'); await once(adapter.server, 'listening');
   const base = `http://127.0.0.1:${adapter.server.address().port}`;
   const call = (path, { method = 'GET', headers = {} } = {}) => new Promise((resolve, reject) => {
@@ -25,7 +30,7 @@ async function fixture() {
     req.on('response', res => { res.resume(); resolve(res.statusCode); });
     req.on('error', reject); req.end();
   });
-  return { seen, call, upgrade, async close() { await adapter.close(); daemon.closeAllConnections(); daemon.close(); } };
+  return { seen, call, upgrade, setDaemonMode(mode) { daemonMode = mode; }, async close() { await adapter.close(); daemon.closeAllConnections(); daemon.close(); } };
 }
 
 test('acts as the owner only for a daemon-authenticated server credential, with browser context removed', async t => {
@@ -112,4 +117,29 @@ test('shutdown destroys an upgraded connection the service did not close', async
   const outcome = await Promise.race([adapter.close().then(() => 'closed'), new Promise(resolve => setTimeout(() => resolve('timeout'), 2000))]);
   assert.equal(outcome, 'closed');
   await ended;
+});
+
+
+test('daemon transport failure,503 and timeout are unavailable; recovery needs no credential change', { timeout: 15000 }, async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const headers = { 'x-ours-api-token': SERVER };
+  assert.equal(await f.call('/api/v1/summary', { headers }), 200);
+  for (const mode of ['socket', 'failure', 'timeout']) {
+    f.setDaemonMode(mode);
+    assert.equal(await f.call('/api/v1/summary', { headers }), 503, mode);
+    assert.equal(f.seen.length, 1, 'an unavailable auth check never reaches the service');
+  }
+  f.setDaemonMode('socket'); assert.equal(await f.upgrade(headers), 503);
+  f.setDaemonMode('ok');
+  assert.equal(await f.call('/api/v1/summary', { headers }), 200);
+  assert.equal(await f.call('/api/v1/summary', { headers: { 'x-ours-api-token': 'wrong' } }), 401);
+  assert.equal(f.seen.length, 2);
+});
+
+test('an unexpected credential verifier exception fails closed as unavailable for HTTP and upgrade', async t => {
+  const f = await fixture(async () => { throw new Error('private verifier failure'); }); t.after(() => f.close());
+  const headers = { 'x-ours-api-token': SERVER };
+  assert.equal(await f.call('/api/v1/summary', { headers }), 503);
+  assert.equal(await f.upgrade(headers), 503);
+  assert.deepEqual(f.seen, []);
 });

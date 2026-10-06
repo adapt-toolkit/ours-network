@@ -7,9 +7,10 @@ that token alone cannot qualify the fix. The release archive gate now requires
 `managed-cli.codex-reasoning-effort-v1`. An affected archive must fail even if its
 version and SHA512 are otherwise correct.
 
-The nightly manifest selects published Fleet `1.2.0-nightly.49`, built from merged
-commit `007bb41d5f822b22ebc9c708882f6cd7e70ae537` with content build ID
-`992b454dab6f`. Its archive contains both managed CLI tokens and the reviewed fix;
+The nightly manifest selects published Fleet `1.2.0-nightly.50`, built from merged
+commit `e8706ae9eecd3a26992da89c9c7c38651a8ea5fd` with content build ID
+`f9c280d92583`. Its archive retains both managed CLI tokens and the reviewed fix,
+and includes the workspace device-auth provenance correction from Fleet PR240;
 the selector records its actual registry SHA512 in the manifest and source policy.
 Other package selections remain unchanged. Do not substitute an affected archive
 that advertises only `managed-cli.setup-v1`.
