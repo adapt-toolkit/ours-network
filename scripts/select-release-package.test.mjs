@@ -13,7 +13,7 @@ function fixture(mode) {
   const dir = mkdtempSync(join(tmpdir(), 'release-select-fixture-'));
   for (const p of ['scripts', 'releases', 'packages/installer/assets', 'bin', 'archive/package/dist']) mkdirSync(join(dir, p), { recursive: true });
   for (const file of ['release-manifest.mjs', 'release-capabilities.mjs', 'select-release-package.mjs']) cpSync(new URL(file, import.meta.url), join(dir, 'scripts', file));
-  const capabilities = mode === 'old-fleet' ? REQUIRED_CAPABILITIES[fleet] : [...REQUIRED_CAPABILITIES[fleet], ...DEGRADING_CAPABILITIES[fleet]];
+  const capabilities = mode === 'effort-bug' ? [...REQUIRED_CAPABILITIES[fleet].filter(token => token !== 'managed-cli.codex-reasoning-effort-v1'), ...DEGRADING_CAPABILITIES[fleet]] : mode === 'old-fleet' ? REQUIRED_CAPABILITIES[fleet] : [...REQUIRED_CAPABILITIES[fleet], ...DEGRADING_CAPABILITIES[fleet]];
   writeFileSync(join(dir, 'archive/package/dist/build-info.json'), JSON.stringify({ capabilities }));
   assert.equal(spawnSync('tar', ['-czf', join(dir, 'published.tgz'), '-C', join(dir, 'archive'), 'package']).status, 0);
   const published = `sha512-${createHash('sha512').update(readFileSync(join(dir, 'published.tgz'))).digest('base64')}`;
@@ -65,6 +65,7 @@ test('selects a published component with the registry integrity and regenerates 
 for (const [mode, args, message] of [
   ['unpublished', [fleet, '1.2.0-nightly.45'], /./],
   ['tampered', [fleet, '1.2.0-nightly.45'], /does not match its published integrity/],
+  ['effort-bug', [fleet, '1.2.0-nightly.47'], /does not declare .*managed-cli\.codex-reasoning-effort-v1/],
   ['old-fleet', [fleet, '1.2.0-nightly.45'], /does not declare .*managed-cli\.setup-v1/],
   ['valid', ['@ours.network/unknown', '1.2.0-nightly.45'], /is not a component/],
   ['valid', [fleet, 'nightly'], /Invalid exact nightly version/],
