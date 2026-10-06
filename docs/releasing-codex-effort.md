@@ -7,9 +7,12 @@ that token alone cannot qualify the fix. The release archive gate now requires
 `managed-cli.codex-reasoning-effort-v1`. An affected archive must fail even if its
 version and SHA512 are otherwise correct.
 
-The companion Fleet PR adds that token with the implementation and regressions.
-Do not merge this installer change with the affected Fleet selection. No exact
-version or registry integrity for the corrected release exists before publication.
+The nightly manifest selects published Fleet `1.2.0-nightly.49`, built from merged
+commit `007bb41d5f822b22ebc9c708882f6cd7e70ae537` with content build ID
+`992b454dab6f`. Its archive contains both managed CLI tokens and the reviewed fix;
+the selector records its actual registry SHA512 in the manifest and source policy.
+Other package selections remain unchanged. Do not substitute an affected archive
+that advertises only `managed-cli.setup-v1`.
 
 After the Owner approves the independently reviewed Fleet PR for merge and its
 nightly publication completes, perform these steps in the installer checkout:
