@@ -718,5 +718,7 @@ Linux needs user linger for pre-login startup, macOS needs a GUI login session,
 and native hung-process recovery is not supplied by this Docker supervisor.
 Fleet stays on the host with Fleet-owned lifecycle and crash protection. Installing
 the exact Fleet nightly binary does not upgrade or restart an existing supervisor.
-The reboot incident is explained by the shipped no-policy core delivery; its
-actual host service enablement and stopped state still require Owner confirmation.
+The published no-policy core delivery is a verified recovery omission that
+reproduces the reported symptom. The original incident cause remains unconfirmed:
+actual host Engine availability, installed policies and pre-reboot stopped state
+still require Owner confirmation.

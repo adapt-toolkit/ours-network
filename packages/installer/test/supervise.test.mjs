@@ -9,10 +9,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const supervisor = new URL('../assets/scripts/runtime/supervise.mjs', import.meta.url).pathname;
 // A child records the signal it received, then exits.
-const child = (marker, exitAfterMs) => [process.execPath, '-e', `
+const child = (marker, exitAfterMs, readyFor) => [process.execPath, '-e', `
   const fs = require('fs');
   for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => { fs.writeFileSync(${JSON.stringify(marker)}, s); process.exit(0); });
-  ${exitAfterMs === undefined ? 'setInterval(() => {}, 1000);' : `setTimeout(() => process.exit(7), ${exitAfterMs});`}`];
+  fs.writeFileSync(${JSON.stringify(marker + '.ready')}, 'ready');
+  ${exitAfterMs === undefined ? 'setInterval(() => {}, 1000);' : `const tick=setInterval(()=>{if(!${JSON.stringify(readyFor ?? '')}||fs.existsSync(${JSON.stringify(readyFor ?? '')})){clearInterval(tick);setTimeout(()=>process.exit(7),${exitAfterMs});}},10);`}`];
 
 function run(t, commands, env = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'ours-supervise-'));
@@ -23,7 +24,7 @@ function run(t, commands, env = {}) {
 }
 
 test('a child that exits stops the other and the supervisor exits with its status', async t => {
-  const { dir, proc } = run(t, dir => [child(join(dir, 'a')), child(join(dir, 'b'), 300)]);
+  const { dir, proc } = run(t, dir => [child(join(dir, 'a')), child(join(dir, 'b'), 300, join(dir, 'a.ready'))]);
   const [code] = await once(proc, 'exit');
   assert.equal(code, 7);
   assert.equal(readFileSync(join(dir, 'a'), 'utf8'), 'SIGTERM');
@@ -32,7 +33,11 @@ test('a child that exits stops the other and the supervisor exits with its statu
 
 test('SIGTERM reaches every child and the supervisor exits cleanly', async t => {
   const { dir, proc } = run(t, dir => [child(join(dir, 'a')), child(join(dir, 'b'))]);
-  await sleep(300);
+  const deadline = Date.now() + 10000;
+  while (!existsSync(join(dir, 'a.ready')) || !existsSync(join(dir, 'b.ready'))) {
+    assert(Date.now() < deadline, 'both children must register signal handlers');
+    await sleep(10);
+  }
   proc.kill('SIGTERM');
   const [code] = await once(proc, 'exit');
   assert.equal(code, 0);
@@ -47,10 +52,10 @@ test('refuses a malformed command list', async () => {
 });
 
 // A child that ignores SIGTERM and records that it is still alive.
-const stubborn = marker => [process.execPath, '-e', `process.on('SIGTERM', () => require('fs').writeFileSync(${JSON.stringify(marker)}, 'ignored')); setInterval(() => {}, 1000);`];
+const stubborn = marker => [process.execPath, '-e', `process.on('SIGTERM', () => require('fs').writeFileSync(${JSON.stringify(marker)}, 'ignored')); require('fs').writeFileSync(${JSON.stringify(marker+'.ready')}, 'ready'); setInterval(() => {}, 1000);`];
 
 test('a child ignoring SIGTERM is killed after the bounded grace period', async t => {
-  const { dir, proc } = run(t, dir => [stubborn(join(dir, 'a')), child(join(dir, 'b'), 200)], { OURS_SUPERVISE_KILL_AFTER_MS: '300' });
+  const { dir, proc } = run(t, dir => [stubborn(join(dir, 'a')), child(join(dir, 'b'), 200, join(dir, 'a.ready'))], { OURS_SUPERVISE_KILL_AFTER_MS: '300' });
   const started = Date.now();
   const [code] = await once(proc, 'exit');
   assert.equal(code, 7);
