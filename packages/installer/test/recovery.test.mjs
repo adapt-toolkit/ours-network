@@ -128,3 +128,13 @@ for(const env of [{OURS_UNINSTALL:'hermes'},{OURS_UNINSTALL_DAEMON:'no'},{OURS_U
  const effects={home:'/private/home',env,readJson:()=>({schema:2,mode:'docker'}),out:()=>{},withInstallationLock:()=>{mutations++;throw Error('should not mutate');}};
  assert.equal(await runUninstall(['--state-dir','/private/selected'],effects),2);assert.equal(mutations,0);
 });
+
+test('explicitly owned detached Cowork worker is killed after owner death and before replacement', async t=>{
+ const f=fixture(t,{},false);const pids=join(f.dir,'detached-pids');
+ const worker=`require('fs').appendFileSync(${JSON.stringify(pids)},process.pid+'\\n');process.kill(process.pid,'SIGSTOP');setInterval(()=>{},1000)`;
+ f.config.ownerPidEnvironment='OURS_COWORK_SUPERVISOR_PID';
+ f.config.command=node(`require('child_process').spawn(process.execPath,['-e',${JSON.stringify(worker)}],{detached:true,stdio:'inherit',env:{...process.env,OURS_COWORK_SUPERVISOR_PID:String(process.pid)}});require('fs').appendFileSync(${JSON.stringify(f.count)},'x');setTimeout(()=>process.exit(7),350);`);
+ const proc=f.launch(f.config);await until(()=>read(f.count).length===4);await sleep(450);
+ const live=pid=>{try{const stat=readFileSync('/proc/'+pid+'/stat','utf8');return !['Z','X'].includes(stat.slice(stat.lastIndexOf(')')+2).split(' ')[0]);}catch{return false;}};
+ assert(read(pids).trim().split('\n').every(pid=>!live(pid)),'no detached writer survives circuit exhaustion');await stop(proc);
+});

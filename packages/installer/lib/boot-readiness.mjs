@@ -25,6 +25,11 @@ export async function reportBootReadiness(effects, record) {
     }
     const info = JSON.parse((await effects.run('docker', ['info', '--format', '{{json .SecurityOptions}}'])).stdout);
     const rootless = info.some(option => option.startsWith('name=rootless'));
+    const sockets = rootless ? [`unix:///run/user/${process.getuid()}/docker.sock`] : ['unix:///var/run/docker.sock', 'unix:///run/docker.sock'];
+    if (!sockets.includes(endpoint)) {
+      effects.out('The selected custom Docker socket is reachable, but its boot service binding is unverified; enable and verify the service owning that Engine.');
+      return;
+    }
     const enabled = await effects.run('systemctl', [...(rootless ? ['--user'] : []), 'is-enabled', 'docker.service']);
     if (enabled.stdout.trim() !== 'enabled') throw new Error('persistent Docker service enablement is unverified');
     if (rootless) {

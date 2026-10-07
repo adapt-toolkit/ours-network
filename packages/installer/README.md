@@ -681,7 +681,9 @@ Docker health status alone does not restart a container.
 The four application containers also supervise their locked entrypoints. After
 90 seconds of startup grace, probes run every 5 seconds with a 15-second timeout.
 Three consecutive local health failures or a child exit stop its entire process
-group (TERM, then KILL within 20 seconds) before restarting. Each container start
+group (TERM, then KILL within 20 seconds) before restarting. Cowork's detached
+workers carry an explicit supervisor-PID marker; recovery also kills those
+owned groups and waits for them to stop before launching a replacement. Each container start
 allows three automatic child recovery attempts. Exhaustion leaves the container
 running but unhealthy, with its children stopped and a diagnostic in its logs.
 Correct the cause and use `ours-install server restart --state-dir PATH` to
@@ -710,7 +712,8 @@ Host boot is a separate prerequisite. On Linux, enable the selected Docker
 Engine system service; rootless Docker additionally needs its user service and
 user linger. The installer reports read-only boot diagnostics and does not enable
 or restart host services. A reachable remote Engine or Docker Desktop context
-cannot prove boot recovery on this machine. On macOS/Windows with WSL, enable Docker
+cannot prove boot recovery on this machine. A custom Unix socket also has an
+unverified boot-service binding; a host unit cannot establish its startup. On macOS/Windows with WSL, enable Docker
 Desktop startup at sign-in; this does not provide pre-login startup. Rootless
 Podman's existing enabled socket/restart-service and linger preflight remains.
 Native package mode retains its package-owned systemd user/launchd services:
