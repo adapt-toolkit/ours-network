@@ -22,3 +22,10 @@ mode. Docker uses one named `server-storage` volume: `state/daemon`, `state/mcp`
 Preparation mounts the storage root; running applications mount only their own
 state children and selected credentials. Backups and maintenance staging are
 outside `state/`. The owner-lock volume contains transient runtime locks.
+
+`recover.mjs` supervises the locked entrypoints with timed health probes and three
+automatic recovery attempts per container start. It kills the entire child group
+and waits for lock release before a new generation. Exhaustion holds unhealthy
+until explicit restart. `dependency-ready.mjs` waits for the authenticated pinned
+daemon without consuming the consumer's failure circuit. Host boot still depends
+on an independently configured Docker Engine or Desktop startup.

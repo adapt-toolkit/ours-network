@@ -58,7 +58,7 @@ installer with preparation, identity restoration, update and readiness progress.
 Fleet is configured but left stopped for operator review.
 
 Scoped maintenance:
-  ours-install server status|start|stop|restart|rebuild --state-dir PATH
+  ours-install server status|start|stop|restart|rebuild|uninstall --state-dir PATH
   ours-install server gateway-enable --state-dir PATH [--server-url URL]
   ours-install server access-issue --state-dir PATH --output PATH
   ours-install server access-replace --state-dir PATH --confirm

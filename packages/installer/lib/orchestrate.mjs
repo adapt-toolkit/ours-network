@@ -1470,6 +1470,8 @@ async function executeServerCommand(args, effects) {
     }
     if (record.gateway) await effects.verifyGateway(record);
     if (showInstallProgress) effects.out(progress(installStageCount, installStageCount, 'Installation complete', 'The selected services are ready.'));
+  } else if (args.operation === 'uninstall') {
+    await effects.serverUninstall(record);
   } else if (args.operation === 'gateway-enable') {
     await enableGateway(record, args, effects);
   } else if (['backup', 'restore', 'reset'].includes(args.operation)) {

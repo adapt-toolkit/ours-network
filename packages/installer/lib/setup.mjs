@@ -13,7 +13,7 @@ import { validateIdentityName } from './server-onboarding.mjs';
 import { validateFleetSettings } from './fleet-settings.mjs';
 import { installerFailure } from './diagnostics.mjs';
 
-const maintenance = new Set(['status', 'start', 'stop', 'restart', 'rebuild', 'gateway-enable', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
+const maintenance = new Set(['status', 'start', 'stop', 'restart', 'uninstall', 'rebuild', 'gateway-enable', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
 
 export function completeReleasePolicy(retained, supplied) {
   if (retained?.release) {

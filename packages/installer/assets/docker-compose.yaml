@@ -83,6 +83,7 @@ services:
 
   daemon:
     <<: *runtime
+    restart: unless-stopped
     environment: *owner-environment
     volumes:
       - {type: volume, source: server-storage, target: /var/lib/ours, volume: {nocopy: true, subpath: state/daemon}}
@@ -107,6 +108,7 @@ services:
 
   telegram:
     <<: *runtime
+    restart: unless-stopped
     entrypoint: [/bin/sh, -e, /opt/ours/docker/start-telegram.sh]
     environment:
       HOME: /tmp
@@ -129,6 +131,7 @@ services:
 
   cowork:
     <<: *runtime
+    restart: unless-stopped
     entrypoint: [/bin/sh, -e, /opt/ours/docker/start-cowork.sh]
     environment:
       HOME: /tmp
@@ -153,6 +156,7 @@ services:
 
   messenger:
     <<: *runtime
+    restart: unless-stopped
     entrypoint: [/bin/sh, -e, /opt/ours/docker/start-messenger.sh]
     environment:
       HOME: /tmp

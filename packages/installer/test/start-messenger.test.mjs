@@ -27,7 +27,7 @@ function fixture(t, { notifications = true } = {}) {
   writeFileSync(join(notes, 'state.json.lock'), 'stale', { mode: 0o600 });
   writeFileSync(join(root, 'producer'), 'p'.repeat(43), { mode: 0o600 });
   const record = join(root, 'record.jsonl');
-  const env = { PATH: process.env.PATH, RECORD: record, OURS_RUNTIME_ROOT: runtime, OURS_MESSENGER_STATE_DIR: state,
+  const env = { PATH: process.env.PATH, RECORD: record, OURS_RECOVERY_CHILD: '1', OURS_RUNTIME_ROOT: runtime, OURS_MESSENGER_STATE_DIR: state,
     OURS_NOTIFICATIONS_CONFIG: join(notes, 'config.json'), OURS_NOTIFICATIONS_PRODUCER_FILE: join(root, 'producer') };
   const run = () => spawnSync('/bin/sh', [script], { env, encoding: 'utf8', timeout: 10000 });
   const records = () => existsSync(record) ? readFileSync(record, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
