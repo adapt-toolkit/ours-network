@@ -75,12 +75,6 @@ export async function runUninstall(argv, effects) {
   if (args.version) { effects.out(`ours-uninstall v${effects.version ?? '?'}`); return EXIT_OK; }
   const purge = argv.includes('--purge');
   const dir = args.stateDir;
-  const config = effects.readJson(join(dir, 'config.json'));
-  const endpoint = `http://127.0.0.1:${typeof config?.port === 'number' ? config.port : 3050}`;
-
-  effects.out(heading(`ours-uninstall --state-dir ${dir}`));
-  if (args.dryRun) effects.out(info('dry-run: nothing will be removed or stopped'));
-
   // Read the documented OURS_UNINSTALL_* contract before any
   // file is opened. A variable this uninstaller cannot deliver stops the run
   // here, naming itself and naming the replacement, rather than being silently
@@ -90,6 +84,24 @@ export async function runUninstall(argv, effects) {
     effects.out(warn(`ours: ${contract.message}`));
     return EXIT_REFUSED;
   }
+
+  const managed = effects.readJson(join(dir, 'installation.json'));
+  if (managed?.schema === 2 && ['docker', 'packages'].includes(managed.mode)) {
+    if (contract.engaged || args.config || effects.env.OURS_CONFIG) {
+      effects.out(warn('Managed server uninstall does not support legacy component/profile selections. Nothing was changed; use an explicit server uninstall with those selectors cleared.'));
+      return EXIT_REFUSED;
+    }
+    if (purge) { effects.out(warn('Managed server uninstall retains identities and volumes; --purge is not supported.')); return EXIT_REFUSED; }
+    if (args.dryRun) { effects.out(info('[dry-run] would stop and remove managed server services, retaining all stored data.')); return EXIT_OK; }
+    const { runServerCommand } = await import('./orchestrate.mjs');
+    return runServerCommand({ role: 'server', operation: 'uninstall', stateDir: dir }, effects);
+  }
+  const config = effects.readJson(join(dir, 'config.json'));
+  const endpoint = `http://127.0.0.1:${typeof config?.port === 'number' ? config.port : 3050}`;
+
+  effects.out(heading(`ours-uninstall --state-dir ${dir}`));
+  if (args.dryRun) effects.out(info('dry-run: nothing will be removed or stopped'));
+
 
   let profileSelection;
   try {

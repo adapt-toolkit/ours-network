@@ -637,7 +637,7 @@ Existing installation records keep their ports and identities. A listener acquir
 by another process after preflight still causes startup to fail safely; no foreign
 process is stopped and no retained installation is silently moved.
 
-Workspace setup pins Fleet `1.2.0-nightly.50` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
+Workspace setup pins Fleet `1.2.0-nightly.52` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
 
 ### App tunnel setup prerelease sequencing
 
@@ -654,7 +654,7 @@ connection code automatically; the App checks readiness and opens the code field
 Private `--file`/`--stdin` transports remain optional and are the only transports
 for legacy v1 payloads with long-lived credentials.
 
-The nightly installer release manifest selects published Fleet `1.2.0-nightly.50`
+The nightly installer release manifest selects published Fleet `1.2.0-nightly.52`
 and its actual registry integrity through the normal release manifest/source-policy
 generators. This release includes v2 argument and private-input support. The former
 nightly.41 selection predates this capability. Merge and publish the repinned
@@ -668,3 +668,60 @@ conversation using the credential's fixed user/source scope. Browser inbox
 `/api/v1/delete` continues to require the user credential. The notification
 service must support the scoped lifecycle route; this change does not repin or
 publish an installer release.
+
+## Boot and failure recovery
+
+Docker long-running daemon, Telegram, Cowork, Messenger/Notifications and gateway
+containers use `unless-stopped`. They resume when the selected Docker Engine
+starts, and Docker restarts a failed container with its built-in backoff. A manual
+`docker stop`, `ours-install server stop`, or uninstall stays stopped across
+Engine restarts. Administrative/maintenance jobs have no automatic restart.
+Docker health status alone does not restart a container.
+
+The four application containers also supervise their locked entrypoints. After
+90 seconds of startup grace, probes run every 5 seconds with a 15-second timeout.
+Three consecutive local health failures or a child exit stop its entire process
+group (TERM, then KILL within 20 seconds) before restarting. Cowork's detached
+workers carry an explicit supervisor-PID marker; recovery also kills those
+owned groups and waits for them to stop before launching a replacement. Each container start
+allows three automatic child recovery attempts. Exhaustion leaves the container
+running but unhealthy, with its children stopped and a diagnostic in its logs.
+Correct the cause and use `ours-install server restart --state-dir PATH` to
+reset that circuit; `server start` alone does not reset a running circuit holder.
+Consumers wait for authenticated readiness of their pinned daemon instance and
+do not spend their recovery budget on a daemon outage. The gateway uses Docker
+process recovery only; a gateway hang requires operator restart.
+
+Re-run `server install` to deliver recovery to an existing installation without
+changing its retained exact packages, identity, credentials, volumes or config.
+This explicit install starts its selected services, as before. `server update`
+with reviewed storage compatibility delivers the new selected release and
+restores only previously running services. Retained runtime scripts are refreshed
+and rebuilt on install; an interrupted refresh retains a rebuild marker. The
+restart policy overlay also covers retained Compose files. Reconciliation updates
+only this project's recorded long-running containers and does not start or
+recreate a deliberately stopped container. `server start` can reconcile policies
+but does not retrofit health supervision into an old image: run install/update.
+Backup, migration and update still stop writers before maintenance, and a failed
+maintenance operation keeps them stopped. `server uninstall` (also `ours-uninstall --state-dir PATH` for a managed
+schema-2 installation) stops and removes managed services, retaining volumes,
+identity and credentials. It refuses unfinished transitions and data purge.
+Recovery introduces no host watchdog or service.
+
+Host boot is a separate prerequisite. On Linux, enable the selected Docker
+Engine system service; rootless Docker additionally needs its user service and
+user linger. The installer reports read-only boot diagnostics and does not enable
+or restart host services. A reachable remote Engine or Docker Desktop context
+cannot prove boot recovery on this machine. A custom Unix socket also has an
+unverified boot-service binding; a host unit cannot establish its startup. On macOS/Windows with WSL, enable Docker
+Desktop startup at sign-in; this does not provide pre-login startup. Rootless
+Podman's existing enabled socket/restart-service and linger preflight remains.
+Native package mode retains its package-owned systemd user/launchd services:
+Linux needs user linger for pre-login startup, macOS needs a GUI login session,
+and native hung-process recovery is not supplied by this Docker supervisor.
+Fleet stays on the host with Fleet-owned lifecycle and crash protection. Installing
+the exact Fleet nightly binary does not upgrade or restart an existing supervisor.
+The published no-policy core delivery is a verified recovery omission that
+reproduces the reported symptom. The original incident cause remains unconfirmed:
+actual host Engine availability, installed policies and pre-reboot stopped state
+still require Owner confirmation.

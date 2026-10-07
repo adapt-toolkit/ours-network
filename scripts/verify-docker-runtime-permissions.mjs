@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { realEffects } from '../packages/installer/lib/effects.mjs';
-import { SERVER_PACKAGES } from '../packages/installer/lib/plan.mjs';
+import { SERVER_PACKAGES, SERVER_SERVICES } from '../packages/installer/lib/plan.mjs';
 
 if (process.env.CI !== 'true') throw new Error('Run this qualification in CI only');
 const root = fs.mkdtempSync(join(tmpdir(), 'ours-image-permissions-'));
@@ -76,7 +76,7 @@ try {
   catch (error) { assert.equal(error.status, 1); }
   const beforeContainer = JSON.parse(execFileSync('docker', ['inspect', failedContainer], { encoding: 'utf8' }))[0];
   assert.equal(beforeContainer.State.ExitCode, 1);
-  const record = { schema: 2, mode: 'docker', root: retained, workDir, sourcesPath, project, instanceId: randomUUID(), port: 3050, coworkPort: 3052, messengerPort: 3053, uid: 12345, gid: 12345 };
+  const record = { schema: 2, mode: 'docker', services: [...SERVER_SERVICES], root: retained, workDir, sourcesPath, project, instanceId: randomUUID(), port: 3050, coworkPort: 3052, messengerPort: 3053, uid: 12345, gid: 12345 };
   const effects = realEffects({ env: process.env, out: console.log });
   await effects.prepareInstallation(record, { runtimeOnly: true });
   assert.equal(fs.statSync(join(workDir, 'Dockerfile')).mode & 0o777, 0o600);
