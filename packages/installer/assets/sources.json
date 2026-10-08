@@ -29,20 +29,20 @@
         "integrity": "sha512-OjnrJ8ZuOfKYT4KAmiRLU7czfiuacs6rShwOvvqxqBaUKcs1UwjsYwHARNb6erMxG4am3xxcE0ItahL+d2vt4A=="
       },
       "@ours.network/fleet": {
-        "version": "1.2.0-nightly.52",
-        "integrity": "sha512-nIwGknps0FBDhdtivXAFalRbZ67XHAdNcs6AiTBE0ULYeLcohdfqoFqyAS0iZQPUeEUhxkPTKfVuESKeQKP/ow=="
+        "version": "1.2.0-nightly.54",
+        "integrity": "sha512-Sh3t8iRGBoYzbyslS+IKuqQ573Zn+M0GVhR0cGepy/hlyNMAwXD2TBM+j7d8QiA1+ALugkMhKnanivE97JBmhQ=="
       },
       "@ours.network/mcp": {
-        "version": "1.2.0-nightly.12",
-        "integrity": "sha512-ZvwCaIgMaMcUrLhWNaWWOErIHwtvQyOZHfophf+rrjnlG0eBpBwmwQPuABS7jPuQvi69pBIT4jUWN3CArgxzRQ=="
+        "version": "1.2.0-nightly.13",
+        "integrity": "sha512-/SxWOeiQfOu0i+jV3su2khYQ4eUCH+exe6CjSUZ9u5FmTUfXmg7cBnPOzFT2PKbNulsSLf9vnU+QBGBwSa/Iag=="
       },
       "@ours.network/codex": {
-        "version": "1.2.0-nightly.12",
-        "integrity": "sha512-O3emBbe4KXfD9nDsgjN3Z8J11aSMz4KAdiZo4EPZIqEypOXCaRnbZqpuJpd14FZpFHSHGEfel6KgP0mZYFYtRA=="
+        "version": "1.2.0-nightly.13",
+        "integrity": "sha512-m5tcTu6QoMhrcrKgglTyG+nxe1nwRLc2t7nPJcjVRqf/5m8e9CRGqXssrioOAS/wD7qGKl2jPVwJr/0ZmMltVQ=="
       },
       "@ours.network/claude-code": {
-        "version": "1.2.0-nightly.12",
-        "integrity": "sha512-122cnztQqVkXvXy4y4zJQAVVD5gBTqdj5gkf2dTVnR/g0Nzw5uBxdch0xkhyluqmjN74MHuklv2YRr9Gs8vbbQ=="
+        "version": "1.2.0-nightly.13",
+        "integrity": "sha512-KnVGMyZAL9i8vqFTvI3V6OEpbOqk4YH106jfeB0JlTCRkk0Oy5H1rx764GucIxmYCiasAF1NKExHe2tDLlmiXQ=="
       },
       "@ours.network/daemon": {
         "version": "3.8.1-nightly.9",
@@ -87,19 +87,19 @@
     },
     "@ours.network/fleet": {
       "type": "npm",
-      "version": "1.2.0-nightly.52"
+      "version": "1.2.0-nightly.54"
     },
     "@ours.network/mcp": {
       "type": "npm",
-      "version": "1.2.0-nightly.12"
+      "version": "1.2.0-nightly.13"
     },
     "@ours.network/codex": {
       "type": "npm",
-      "version": "1.2.0-nightly.12"
+      "version": "1.2.0-nightly.13"
     },
     "@ours.network/claude-code": {
       "type": "npm",
-      "version": "1.2.0-nightly.12"
+      "version": "1.2.0-nightly.13"
     },
     "@ours.network/daemon": {
       "type": "npm",
