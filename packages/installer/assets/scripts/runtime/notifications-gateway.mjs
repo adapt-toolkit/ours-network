@@ -6,14 +6,14 @@ import { readFileSync, statSync } from 'node:fs';
 const BROWSER = ['cookie', 'origin', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest', 'sec-fetch-user'];
 const SERVER_CREDENTIAL = 'x-ours-api-token', PRODUCER = 'x-ours-notifications-producer';
 
-/** Ask the daemon, exactly like the gateway's auth_request, whether a server API credential is valid. */
+/** true: accepted; false: explicitly denied; null: the daemon could not decide. */
 export function daemonCredentialCheck(daemonUrl) {
   return token => new Promise(resolve => {
     const req = request(new URL('/identities', daemonUrl), { method: 'GET', headers: { [SERVER_CREDENTIAL]: token }, timeout: 5000 }, res => {
-      res.resume(); resolve(res.statusCode >= 200 && res.statusCode < 300);
+      res.resume(); resolve(res.statusCode >= 200 && res.statusCode < 300 ? true : [401,403].includes(res.statusCode) ? false : null);
     });
     req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve(false));
+    req.on('error', () => resolve(null));
     req.end();
   });
 }
@@ -30,23 +30,31 @@ export function createNotificationsAdapter({ service, userToken, verifyServerCre
     for (const name of BROWSER) delete req.headers[name];
     const credential = req.headers[SERVER_CREDENTIAL], producer = req.headers[PRODUCER];
     delete req.headers[SERVER_CREDENTIAL]; delete req.headers[PRODUCER];
-    if (credential === undefined) return producer === undefined;
-    if (typeof credential !== 'string' || !credential || !await verifyServerCredential(credential)) return false;
+    if (credential === undefined) return producer === undefined ? 200 : 401;
+    if (typeof credential !== 'string' || !credential) return 401;
+    let verified;
+    try { verified = await verifyServerCredential(credential); } catch { return 503; }
+    if (verified !== true) return verified === false ? 401 : 503;
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-    if (producer !== undefined && !(req.method === 'POST' && ['/api/v1/send', '/api/v1/delete-target'].includes(path))) return false;
+    if (producer !== undefined && !(req.method === 'POST' && ['/api/v1/send', '/api/v1/delete-target'].includes(path))) return 401;
     req.headers.authorization = `Bearer ${producer ?? userToken}`;
-    return true;
+    return 200;
   };
   const server = createServer(async (req, res) => {
     if (req.url === '/healthz' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); return; }
-    if (!await authorize(req)) { res.writeHead(401, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"error":"authentication required"}'); return; }
+    const status = await authorize(req);
+    if (status !== 200) {
+      res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...(status === 503 ? { 'retry-after': '1' } : {}) });
+      res.end(status === 503 ? '{"error":{"code":"authentication_unavailable","message":"Server authentication is temporarily unavailable"}}' : '{"error":"authentication required"}'); return;
+    }
     service.server.emit('request', req, res);
   });
   // Upgraded connections leave the HTTP server's connection tracking, so shutdown ends them itself.
   const upgraded = new Set();
   server.on('upgrade', async (req, socket, head) => {
     upgraded.add(socket); socket.once('close', () => upgraded.delete(socket));
-    if (!await authorize(req)) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return; }
+    const status = await authorize(req);
+    if (status !== 200) { socket.end(`HTTP/1.1 ${status} ${status === 503 ? 'Service Unavailable' : 'Unauthorized'}\r\nConnection: close\r\n${status === 503 ? 'Retry-After: 1\r\n' : ''}Content-Length: 0\r\n\r\n`); return; }
     service.server.emit('upgrade', req, socket, head);
   });
   return { server, async close() {

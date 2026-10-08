@@ -30,6 +30,8 @@ import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
 import { qualifyDockerRuntime, refreshDockerPolicyCopy } from './docker-runtime-repair.mjs';
+import { refreshDockerRecovery, recoveryCompose, reconcileDockerRecovery } from './docker-recovery.mjs';
+import { reportBootReadiness } from './boot-readiness.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
 import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
@@ -555,6 +557,7 @@ export function networkEffects(effects) {
       record.schema === 1 && existsSync(join(record.workDir, 'docker-compose.legacy.yaml'))
         ? 'docker-compose.legacy.yaml' : 'docker-compose.yaml'),
     ...(record.gateway ? ['--file', join(record.workDir, 'docker-compose.gateway.yaml')] : []),
+    ...(existsSync(join(record.workDir, 'compose.recovery.json')) ? ['--file', join(record.workDir, 'compose.recovery.json')] : []),
     ...(engineName(record) === 'podman' ? ['--file', join(record.workDir, 'compose.podman.json')] : []),
     '--project-name', record.project, ...args,
   ];
@@ -824,6 +827,7 @@ export function networkEffects(effects) {
       }
     },
     async prepareInstallation(record, { runtimeOnly = false } = {}) {
+      if (!runtimeOnly) await reportBootReadiness(effects, record);
       let copied = false;
       if (!existsSync(record.workDir)) {
         cpSync(INSTALLER_ASSETS, record.workDir, { recursive: true, errorOnExist: true, force: false });
@@ -838,6 +842,8 @@ export function networkEffects(effects) {
       if (record.mode === 'docker') {
         if (engineName(record) === 'podman') atomicWriteConfig(join(record.workDir, 'compose.podman.json'), JSON.stringify({ services: Object.fromEntries(record.services.map(name => [name, { restart: 'unless-stopped' }])) }));
         const rebuildPrivateScripts = refreshDockerPolicyCopy(record);
+        const rebuildRecovery = refreshDockerRecovery(record);
+        atomicWriteConfig(join(record.workDir, 'compose.recovery.json'), JSON.stringify(recoveryCompose(record)));
         if (record.gateway) {
           atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
           atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
@@ -847,9 +853,10 @@ export function networkEffects(effects) {
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
         const image = await container(record, ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
-        if (image.code !== 0 || rebuildPrivateScripts) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+        if (image.code !== 0 || rebuildPrivateScripts || rebuildRecovery) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         await effects.qualifyDockerRuntime(record);
         if (rebuildPrivateScripts) rmSync(join(record.workDir, '.script-permissions-rebuild'));
+        if (rebuildRecovery) rmSync(join(record.workDir, '.recovery-rebuild'));
         if (record.gateway) {
           await effects.qualifyGatewayRuntime(record);
           await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
@@ -1250,6 +1257,15 @@ export function networkEffects(effects) {
       }
       await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
     },
+    async serverUninstall(record) {
+      if (record.schema !== 2 || record.layoutConversion || record.buildTransition) throw new Error('Complete retained installation transitions before uninstall');
+      if (record.mode === 'docker') {
+        await effects.serverLifecycle(record, 'stop');
+        await requireCleanContainerExit(record, record.services);
+        await compose(record, ['rm', '-f', ...record.services]);
+      } else await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
+      effects.out('Managed services removed; installation selection, stored identities, credentials and volumes retained.');
+    },
     async serverLifecycle(record, operation, selected = record.services) {
       record = buildRuntime(record);
       if (record.mode === 'docker') {
@@ -1266,6 +1282,8 @@ export function networkEffects(effects) {
           if ((await effects.serverLifecycle(record, 'status', selected)).length) throw new Error('Writers did not stop');
           return;
         }
+        if (existsSync(record.workDir)) atomicWriteConfig(join(record.workDir, 'compose.recovery.json'), JSON.stringify(recoveryCompose(record)));
+        await reconcileDockerRecovery(record, effects);
         const start = async service => {
           effects.out(`Starting ${service}; waiting for readiness...`);
           // Gateway has no persistent state. Recreate its network endpoint on each

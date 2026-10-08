@@ -29,8 +29,8 @@
         "integrity": "sha512-OjnrJ8ZuOfKYT4KAmiRLU7czfiuacs6rShwOvvqxqBaUKcs1UwjsYwHARNb6erMxG4am3xxcE0ItahL+d2vt4A=="
       },
       "@ours.network/fleet": {
-        "version": "1.2.0-nightly.47",
-        "integrity": "sha512-h+K+KtHEwiG/doG9i7e8g6IaX3AKKyOwd3nNpTRxd+UYHLcB6KtcAlD5k+hnKrdBBMdA69c7zZknBUxPXbT+IA=="
+        "version": "1.2.0-nightly.52",
+        "integrity": "sha512-nIwGknps0FBDhdtivXAFalRbZ67XHAdNcs6AiTBE0ULYeLcohdfqoFqyAS0iZQPUeEUhxkPTKfVuESKeQKP/ow=="
       },
       "@ours.network/mcp": {
         "version": "1.2.0-nightly.12",
@@ -87,7 +87,7 @@
     },
     "@ours.network/fleet": {
       "type": "npm",
-      "version": "1.2.0-nightly.47"
+      "version": "1.2.0-nightly.52"
     },
     "@ours.network/mcp": {
       "type": "npm",

@@ -468,7 +468,7 @@ export function searchFreePort(isTaken, { floor = FREE_PORT_FLOOR, reserved = IN
 export function parseNetworkArgs(argv) {
   if (!['server', 'client'].includes(argv[0])) return null;
   const [role, operation] = argv;
-  const operations = role === 'client' ? ['install'] : ['install', 'status', 'start', 'stop', 'restart', 'access-issue', 'access-replace', 'backup', 'restore', 'reset', 'update', 'rebuild', 'gateway-enable'];
+  const operations = role === 'client' ? ['install'] : ['install', 'status', 'start', 'stop', 'restart', 'uninstall', 'access-issue', 'access-replace', 'backup', 'restore', 'reset', 'update', 'rebuild', 'gateway-enable'];
   if (!operations.includes(operation)) throw new InstallUsageError(`Unsupported ${role} operation: ${operation ?? '(missing)'}`);
   const allowed = role === 'client' ? ['config'] : ['state-dir'];
   if (role === 'server' && operation === 'install') allowed.push('mode', 'sources', 'migrate', 'container-engine');
