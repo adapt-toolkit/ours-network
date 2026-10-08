@@ -88,6 +88,14 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
   }
   function validateTree(tree, records) {
     const roots = domain === 'server' ? APPLICATIONS.map(name => join(tree, name)) : [tree];
+    // Notifications shares Messenger's service, but owns a separate state directory.
+    // Older installations/backups may contain only its empty mount placeholder.
+    // Include every retained notification generation in full-server maintenance.
+    if (domain === 'server' && exists(join(tree, 'notifications'))) {
+      const notifications = join(tree, 'notifications');
+      privateStat(notifications, true, 0o700);
+      if (exists(join(notifications, PROVENANCE))) roots.push(notifications);
+    }
     for (const root of roots) if (!sameRecords(readRecords(join(root, PROVENANCE)), records)) fail('restored component provenance does not match the archive build');
     if (domain === 'server') for (const name of ['mcp', 'credentials']) privateStat(join(tree, name), true, 0o700);
     if (paired) privateStat(join(tree, '.mcp'), true, 0o700);
