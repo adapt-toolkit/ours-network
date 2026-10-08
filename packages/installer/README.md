@@ -314,6 +314,24 @@ build. `server status` reports the pending phase; `server stop` remains availabl
 Other mutations refuse until activation completes. There is no automatic rollback
 of application state after publication.
 
+For Docker updates interrupted by the Notifications provenance omission in older
+installers, use an installer containing the recovery helper and resume with
+`ours-install server update --mode docker --state-dir /path/to/installation --compatible`.
+Retain any original `--sources` input; do not substitute a newer candidate.
+This uses the compatibility attestation saved in the pending update. Passing the
+flag again cannot authorize a transition that did not originally record it.
+The helper requires the four core markers to match the retained candidate and
+Notifications to match its retained previous build, including every recorded
+context, lockfile and dependency-tree byte. It preserves a Notifications-only
+backup with the original provenance, repairs that marker atomically with the
+complete state tree, and resumes preparation and the original running subset.
+It also recognizes a completed state exchange whose journal still says `prepared`;
+untouched source state continues through normal migration. Missing retained
+evidence, arbitrary mixed generations, unsafe files and unclean service exits
+remain errors. Keep the installation, candidate and backups intact on refusal.
+An `all update` requires a running daemon for client verification, so complete
+this server recovery first, then repeat `all update` to refresh clients.
+
 
 New builds retain `build-context.json` alongside their original lockfile and dependency
 tree. The context binds the original record bytes to verified vendor tar names,
@@ -637,7 +655,7 @@ Existing installation records keep their ports and identities. A listener acquir
 by another process after preflight still causes startup to fail safely; no foreign
 process is stopped and no retained installation is silently moved.
 
-Workspace setup pins Fleet `1.2.0-nightly.52` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
+Workspace setup pins Fleet `1.2.0-nightly.54` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
 
 ### App tunnel setup prerelease sequencing
 
@@ -654,7 +672,7 @@ connection code automatically; the App checks readiness and opens the code field
 Private `--file`/`--stdin` transports remain optional and are the only transports
 for legacy v1 payloads with long-lived credentials.
 
-The nightly installer release manifest selects published Fleet `1.2.0-nightly.52`
+The nightly installer release manifest selects published Fleet `1.2.0-nightly.54`
 and its actual registry integrity through the normal release manifest/source-policy
 generators. This release includes v2 argument and private-input support. The former
 nightly.41 selection predates this capability. Merge and publish the repinned

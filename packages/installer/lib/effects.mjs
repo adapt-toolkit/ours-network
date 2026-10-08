@@ -408,7 +408,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     // invocation only and never to the installer's own process: a state
     // directory selected by one run must not leak into anything the operator
     // starts afterwards.
-    run: async (cmd, args, { env: extraEnv = null, stream = false, cwd, sensitive = false, allowCodes = [], timeout } = {}) => {
+    run: async (cmd, args, { env: extraEnv = null, stream = false, cwd, sensitive = false, allowCodes = [], timeout, input } = {}) => {
       // Always built from this layer's OWN env rather than left to spawnSync's
       // implicit inheritance, so what a child receives is a property of the
       // effects object a caller constructed and not of whatever ambient shell
@@ -421,7 +421,8 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
         cwd,
         timeout,
         encoding: 'utf8',
-        stdio: [...(stream ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe']), ...(installationLockFd === null ? [] : [installationLockFd])],
+        input,
+        stdio: [...(stream ? [input === undefined ? 'ignore' : 'pipe', 'inherit', 'inherit'] : [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']), ...(installationLockFd === null ? [] : [installationLockFd])],
         env: childEnv,
       });
       if (r.error) {
@@ -1001,6 +1002,38 @@ export function networkEffects(effects) {
             OURS_COWORK_STATE_DIR: paths.cowork },
         });
       }
+    },
+    async recoverServerBuildNotifications(record, candidate, phase) {
+      const transition = record.buildTransition;
+      if (record.mode !== 'docker' || transition?.operation !== 'update' || !transition.compatible
+        || !['prepared', 'state-updated', 'runtime-activated'].includes(phase)
+        || transition.phase !== phase
+        || transition.candidate.root !== candidate.root) throw new Error('Notifications recovery requires the retained compatible Docker update');
+      const previous = join(candidate.root, 'previous-build');
+      privateDirectory(previous);
+      let active = phase === 'runtime-activated' ? record.workDir : candidate.workDir;
+      // Publication can move both directories before its journal save. Resume
+      // from the protected active copy only when the previous runtime was kept.
+      if (phase === 'state-updated' && !existsSync(candidate.workDir)) {
+        privateDirectory(join(candidate.root, 'previous-runtime'));
+        active = record.workDir;
+      }
+      privateDirectory(active);
+      const encode = directory => Object.fromEntries(Object.entries(readBuildRecords(directory, { privateFiles: true })).map(([name, bytes]) => [name, bytes.toString('base64')]));
+      const input = JSON.stringify({ phase, previous: encode(previous), target: encode(active) });
+      // Execute shipped maintenance against the retained image and its selected
+      // volume/user contract. No image retag, build replacement or host bind mount.
+      const source = readFileSync(join(INSTALLER_ASSETS, 'scripts/maintenance/state-operation.mjs'), 'utf8')
+        .replaceAll("from './", "from 'file:///opt/ours/docker/");
+      const module = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+      const helper = readFileSync(join(INSTALLER_ASSETS, 'scripts/maintenance/recover-notifications.mjs'), 'utf8')
+        .replace("'./state-operation.mjs'", JSON.stringify(module));
+      const result = await compose({ ...record, workDir: active }, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'node', 'state-operation', '--input-type=module', '-e', helper], {
+        input, env: { OURS_MAINTENANCE_IMAGE: `${candidate.project}:maintenance`, OURS_STATE_DOMAIN: 'server', OURS_LIVE_ROOT: '/storage/state' },
+      });
+      const recovered = JSON.parse(result.stdout);
+      if (!recovered || Object.keys(recovered).join(',') !== 'stateUpdated' || typeof recovered.stateUpdated !== 'boolean') throw new Error('Invalid Notifications recovery result');
+      return recovered.stateUpdated;
     },
     async publishServerBuild(record, candidate) {
       const previous = join(candidate.root, 'previous-runtime');

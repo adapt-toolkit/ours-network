@@ -37,11 +37,12 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
   const operation = argv[0];
   const paired = domain === 'daemon' && ['backup', 'restore', 'reset'].includes(operation);
   const commonTree = domain === 'server' || paired;
-  if (compatible && !['restore', 'update'].includes(operation)) fail('compatibility attestation applies only to update or restore');
-  if (domain === 'server' && !['backup', 'restore', 'update', 'rebuild'].includes(operation)) fail('full-server scope supports only backup, restore, update and rebuild');
+  const recovery = operation === 'recover-notifications' && domain === 'server' && compatible;
+  if (compatible && !['restore', 'update'].includes(operation) && !recovery) fail('compatibility attestation applies only to update or restore');
+  if (domain === 'server' && !['backup', 'restore', 'update', 'rebuild'].includes(operation) && !recovery) fail('full-server scope supports only backup, restore, update and rebuild');
   if (operation === 'rebuild' && domain !== 'server') fail('rebuild selects the complete server');
   const adopt = operation === 'init' && argv[2] === '--adopt-existing';
-  const valid = (['init', 'update', 'rebuild'].includes(operation) && argv.length === 2) || (adopt && argv.length === 3) || (['backup', 'restore'].includes(operation) && argv.length === 3) || (operation === 'reset' && argv.length === 3 && argv[2] === '--confirm');
+  const valid = ((['init', 'update', 'rebuild'].includes(operation) || recovery) && argv.length === 2) || (adopt && argv.length === 3) || (['backup', 'restore'].includes(operation) && argv.length === 3) || (operation === 'reset' && argv.length === 3 && argv[2] === '--confirm');
   if (!valid) fail('usage: init DOMAIN | backup DOMAIN LABEL | restore DOMAIN LABEL | reset DOMAIN --confirm | update DOMAIN');
   const uid = process.getuid(), gid = process.getgid();
   if (!uid || !gid) fail('state maintenance requires a non-root UID and GID');
@@ -184,6 +185,52 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
     try { if (!sameInode(fs.fstatSync(fd), fs.fstatSync(check))) fail('domain state changed while acquiring its lock'); }
     finally { fs.closeSync(check); }
     let records;
+    if (recovery) {
+      // Only the installer supplies the retained transition's previous and
+      // candidate records. Never infer compatibility from a mixed live tree.
+      const previous = readRecords(selected('OURS_PREVIOUS_BUILD_ROOT'), false);
+      const expected = readRecords(selected('OURS_EXPECTED_BUILD_ROOT'), false);
+      if (!sameRecords(target, expected)) fail('recovery runtime differs from the retained candidate');
+      const core = APPLICATIONS.map(name => readRecords(join(live, name, PROVENANCE)));
+      const oldCore = core.every(records => sameRecords(records, previous));
+      const newCore = core.every(records => sameRecords(records, target));
+      if (!newCore && !(env.OURS_RECOVERY_PHASE === 'prepared' && oldCore)) fail('recovery core provenance differs from the retained candidate');
+      for (const name of ['mcp', 'credentials']) privateStat(join(live, name), true, 0o700);
+      const notifications = join(live, 'notifications'), marker = join(notifications, PROVENANCE);
+      if (!exists(notifications)) return { stateUpdated: newCore };
+      privateStat(notifications, true, 0o700);
+      if (!exists(marker)) { scanSource(notifications, { uid, gid }); return { stateUpdated: newCore }; }
+      privateStat(marker, true, 0o700);
+      if (!fs.readdirSync(marker).length) { scanSource(notifications, { uid, gid }); return { stateUpdated: newCore }; }
+      const retained = readRecords(marker);
+      if (newCore && sameRecords(retained, target)) return { stateUpdated: true }; // Already repaired, including retries after exchange.
+      if (!sameRecords(retained, previous)) fail('recovery notification provenance differs from the retained previous build');
+      if (!newCore) return { stateUpdated: false }; // Prepared journal with untouched state: use the regular state operation.
+      prepare(); layout();
+      const archive = labelPath(`pre-notifications-recovery-${new Date().toISOString().replace(/[-:.]/g, '')}-${randomBytes(4).toString('hex')}`);
+      checkpoints.beforeBackup?.();
+      await createArchive(notifications, archive, { domain: 'notifications', uid, gid, provenance: previous });
+      checkpoints.afterBackup?.();
+      const staging = join(maintenance, `recovery-${randomBytes(12).toString('hex')}`);
+      try {
+        const entries = scanSource(live, { uid, gid });
+        copyTree(live, staging);
+        // Ordinary maintenance emits private copies; recovery retains every
+        // accepted payload mode and timestamp outside the replaced marker.
+        for (const entry of entries.reverse()) {
+          const path = entry.name === 'state' ? staging : join(staging, entry.name.slice(6));
+          fs.chmodSync(path, Number(entry.st.mode) & 0o777);
+          setMtimeNs(path, entry.st.mtimeNs);
+        }
+        const replacement = join(staging, 'notifications', PROVENANCE);
+        fs.rmSync(replacement, { recursive: true }); mkdir(replacement);
+        for (const name of recordNames(target)) writeRecord(join(replacement, name), target[name]);
+        setMtimeNs(dirname(replacement), fs.lstatSync(notifications, { bigint: true }).mtimeNs);
+        validateTree(staging, target);
+        replace(staging);
+      } finally { if (exists(staging)) fs.rmSync(staging, { recursive: true }); }
+      return { stateUpdated: true };
+    }
     if (domain === 'server') { records = readRecords(join(live, 'daemon', PROVENANCE)); validateTree(live, records); }
     else if (paired) { records = readRecords(join(live, 'daemon', PROVENANCE)); privateStat(join(live, 'mcp'), true, 0o700); }
     else if (operation !== 'init') records = readRecords(join(live, PROVENANCE));
