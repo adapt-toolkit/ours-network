@@ -314,6 +314,24 @@ build. `server status` reports the pending phase; `server stop` remains availabl
 Other mutations refuse until activation completes. There is no automatic rollback
 of application state after publication.
 
+For Docker updates interrupted by the Notifications provenance omission in older
+installers, use an installer containing the recovery helper and resume with
+`ours-install server update --mode docker --state-dir /path/to/installation --compatible`.
+Retain any original `--sources` input; do not substitute a newer candidate.
+This uses the compatibility attestation saved in the pending update. Passing the
+flag again cannot authorize a transition that did not originally record it.
+The helper requires the four core markers to match the retained candidate and
+Notifications to match its retained previous build, including every recorded
+context, lockfile and dependency-tree byte. It preserves a Notifications-only
+backup with the original provenance, repairs that marker atomically with the
+complete state tree, and resumes preparation and the original running subset.
+It also recognizes a completed state exchange whose journal still says `prepared`;
+untouched source state continues through normal migration. Missing retained
+evidence, arbitrary mixed generations, unsafe files and unclean service exits
+remain errors. Keep the installation, candidate and backups intact on refusal.
+An `all update` requires a running daemon for client verification, so complete
+this server recovery first, then repeat `all update` to refresh clients.
+
 
 New builds retain `build-context.json` alongside their original lockfile and dependency
 tree. The context binds the original record bytes to verified vendor tar names,

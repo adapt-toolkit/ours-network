@@ -19,6 +19,7 @@ export async function serverBuildTransition(record, args, effects) {
     effects.writeJson(path, JSON.stringify(record, null, 2) + '\n');
   };
   let transition = record.buildTransition;
+  const resuming = !!transition;
   if (!transition) {
     const candidate = await stage('Prepare the updated runtime', () => effects.prepareServerBuild(record, args));
     try {
@@ -41,10 +42,22 @@ export async function serverBuildTransition(record, args, effects) {
   // A failed readiness check can leave some new services running. Every retry
   // excludes those writers again and retains the original requested running set.
   await stage('Stop services before updating stored state', () => effects.retireServerBuildRuntime(record));
+  const recover = resuming && record.mode === 'docker' && transition.operation === 'update' && transition.compatible;
+  if (recover && transition.phase === 'prepared'
+    && await stage('Verify and recover retained Notifications provenance', () => effects.recoverServerBuildNotifications(record, candidate, 'prepared'))) {
+    transition = { ...transition, phase: 'state-updated' };
+    save(transition);
+  }
   if (transition.phase === 'prepared') {
     await stage('Update stored state while retaining identities and credentials', () => effects.updateServerBuildState(record, candidate, transition.compatible, transition.operation));
     transition = { ...transition, phase: 'state-updated' };
     save(transition);
+  }
+  // Old installers omitted Notifications from the already completed state
+  // operation. The shipped helper validates both retained generations before
+  // repairing that one domain; the candidate and all lifecycle guards remain.
+  if (recover) {
+    await stage('Verify and recover retained Notifications provenance', () => effects.recoverServerBuildNotifications(record, candidate, transition.phase));
   }
   if (transition.phase === 'state-updated') {
     await stage('Activate the prepared runtime', () => effects.publishServerBuild(record, candidate));
