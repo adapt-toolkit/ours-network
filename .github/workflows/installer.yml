@@ -27,6 +27,10 @@ jobs:
         env:
           OURS_TEST_DOCKER: "1"
         run: node --test packages/installer/test/gateway-docker.test.mjs
+      - name: Verify Notifications recovery under the read-only state-operation contract
+        env:
+          OURS_TEST_DOCKER: "1"
+        run: node --test packages/installer/test/notifications-recovery-docker.test.mjs
       - name: Verify non-root Docker runtime permissions
         run: node scripts/verify-docker-runtime-permissions.mjs
       - name: Verify legacy Docker import and persistent management runtime

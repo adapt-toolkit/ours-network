@@ -4,7 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runStateOperation } from './state-operation.mjs';
 
-const root = fs.mkdtempSync(join(tmpdir(), 'ours-notifications-recovery-'));
+// The shipped state-operation service is read_only without a /tmp tmpfs, and
+// retained Compose definitions cannot gain one. /dev/shm stays a writable
+// in-memory mount there, so evidence never enters the stored-state volume.
+function scratch() {
+  for (const base of [tmpdir(), '/dev/shm']) {
+    try { return fs.mkdtempSync(join(base, 'ours-notifications-recovery-')); }
+    catch (error) { if (!['EROFS', 'EACCES', 'ENOENT'].includes(error.code)) throw error; }
+  }
+  throw new Error('No writable private scratch directory for recovery evidence');
+}
+const root = scratch();
 fs.chmodSync(root, 0o700);
 try {
   const evidence = JSON.parse(fs.readFileSync(0, 'utf8'));

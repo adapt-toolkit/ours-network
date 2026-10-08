@@ -141,6 +141,27 @@ test('retained helper stdin transport admits exact records without argument-size
   assert.equal(result.stdout, '300000');
 });
 
+// The shipped state-operation service is read_only without a /tmp tmpfs (issue #56 follow-up).
+test('retained helper stages evidence in memory when the temporary directory is not writable', { skip: process.platform !== 'linux' || process.getuid() === 0 || !fs.existsSync('/dev/shm') }, async t => {
+  const f = fixture(t), encode = path => Object.fromEntries(Object.entries(readBuildRecords(path)).map(([n, bytes]) => [n, bytes.toString('base64')]));
+  const input = JSON.stringify({ phase: 'runtime-activated', previous: encode(f.previous), target: encode(f.target) });
+  const helper = new URL('../assets/scripts/maintenance/recover-notifications.mjs', import.meta.url);
+  const staged = () => fs.readdirSync('/dev/shm').filter(name => name.startsWith('ours-notifications-recovery-'));
+  const before = staged();
+  for (const TMPDIR of [join(f.root, 'read-only-tmp'), join(f.root, 'missing-tmp')]) {
+    if (TMPDIR.endsWith('read-only-tmp')) fs.mkdirSync(TMPDIR, { mode: 0o500 });
+    assert.throws(() => fs.mkdtempSync(join(TMPDIR, 'probe-')), /EACCES|ENOENT/);
+    const result = JSON.parse(execFileSync(process.execPath, [helper.pathname], { input, env: { ...f.env, TMPDIR }, encoding: 'utf8' }));
+    assert.deepEqual(result, { stateUpdated: true });
+    assert.deepEqual(staged(), before);
+  }
+  assert.doesNotThrow(() => initializeBuildMarker(join(f.live, 'notifications/.ours-provenance'), readBuildRecords(f.target)));
+  assert.equal(fs.readdirSync(join(f.root, 'backups')).length, 1);
+  // Rejected evidence still fails closed and leaves no staged records behind.
+  assert.throws(() => execFileSync(process.execPath, [helper.pathname], { input: JSON.stringify({ phase: 'unknown', previous: {}, target: {} }), env: { ...f.env, TMPDIR: join(f.root, 'missing-tmp') }, stdio: 'pipe' }));
+  assert.deepEqual(staged(), before);
+});
+
 for (const state of ['absent', 'empty', 'current']) test(`recovery preserves supported ${state} Notifications markers`, async t => {
   const f = fixture(t), marker = join(f.live, 'notifications/.ours-provenance');
   fs.rmSync(marker, { recursive: true });
