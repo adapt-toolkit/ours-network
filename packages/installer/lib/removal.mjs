@@ -117,7 +117,10 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       found.client = { root: clientRoot, instanceId: profile.expectedInstanceId, integrations: profile.installer?.integrations ?? [], path: join(clientRoot, 'profile.json') };
     } else keep('apps', `Saved Ours connection ${clientRoot}`, 'its connection file is missing or cannot be read, so it is not provably this installation\'s and is left in place; remove it yourself if no Ours installation uses it', true);
   }
-  found.clientTombstones = [...new Set([...(journal?.clientInstanceIds ?? []), ...(found.client?.instanceId ? [found.client.instanceId] : [])])]
+  // Recorded client tombstones are found from the retry record itself, so a retired
+  // connection stays discoverable after any number of failed retries.
+  found.clientTombstones = [...new Set([...(journal?.clientInstanceIds ?? []), ...(journal?.tombstones ?? []).filter(t => t.kind === 'client').map(t => t.instanceId),
+    ...(found.client?.instanceId ? [found.client.instanceId] : [])])]
     .map(id => tombstone(clientRoot, 'client', id)).filter(Boolean);
 
   // Downloaded client programs.
@@ -198,6 +201,9 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     if (market || plugin || configTables.length || cache) codex = { plugin, marketplace: market ? { path: market.marketplaceSource?.source ?? market.root } : null, configPath: codexConfigPath, configTables, cache };
   } catch {
     if (configTables.length) keep('apps', 'Ours plugin in Codex', 'the codex command is not available to remove it; run: codex plugin remove ours@ours-codex-marketplace', true);
+    // A partly finished removal can leave only the cached plugin; without the codex
+    // command its source cannot be checked, so it is reported, not deleted.
+    else if (effects.stat(join(codexDir, 'plugins', 'cache', CODEX_MARKETPLACE))?.type === 'dir') keep('apps', `Codex's copy of the Ours plugin ${join(codexDir, 'plugins', 'cache', CODEX_MARKETPLACE)}`, 'the codex command is not available to confirm where it came from; make codex available and run the removal again, or delete that folder yourself', true);
   }
   found.codex = codex;
 
@@ -698,10 +704,12 @@ export async function runRemoval(argv, effects) {
     installations: found.installations.filter(item => item.project === projectForRoot(item.root)).map(({ record: _record, ownedImages: _owned, engine, images: retained, tombstone: _tombstone, ...item }) => {
       const images = { ...(retained ?? {}), ...Object.assign({}, ...Object.values(engine ?? {}).map(e => e.images ?? {})) };
       return { ...item, ...(Object.keys(images).length ? { images } : {}) };
-    }),
-    clientInstanceIds: found.client?.instanceId ? [found.client.instanceId] : [],
-    generations: plan.steps.filter(s => s.id.startsWith('generation:')).map(s => s.id.slice('generation:'.length)),
-    fleet: plan.steps.some(s => s.group === 'fleet'), legacy: plan.steps.some(s => s.group === 'legacy'), installer: plan.steps.some(s => s.id === 'installer'),
+    }).concat((journal?.installations ?? []).filter(retained => !found.installations.some(item => item.root === retained.root))),
+    // Retained identities are never dropped when the record is rewritten.
+    clientInstanceIds: [...new Set([...(journal?.clientInstanceIds ?? []), ...(found.client?.instanceId ? [found.client.instanceId] : [])])],
+    generations: [...new Set([...(journal?.generations ?? []), ...plan.steps.filter(s => s.id.startsWith('generation:')).map(s => s.id.slice('generation:'.length))])],
+    fleet: Boolean(journal?.fleet) || plan.steps.some(s => s.group === 'fleet'), legacy: Boolean(journal?.legacy) || plan.steps.some(s => s.group === 'legacy'),
+    installer: Boolean(journal?.installer) || plan.steps.some(s => s.id === 'installer'),
     tombstones: journal?.tombstones ?? [],
   };
   effects.writeJson(journalPath, JSON.stringify(record, null, 2) + '\n');

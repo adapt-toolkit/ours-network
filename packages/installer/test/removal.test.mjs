@@ -214,3 +214,44 @@ test('F5: with the real port checks, a live listener answering HTTP 503 keeps th
   await new Promise(done => setTimeout(done, 50));
   assert.equal(await __testables.portState(port), 'refused');
 });
+
+test('F7: a retired connection stays discoverable through repeated failed retries, and a later retry finishes it', async () => {
+  const client = `${home}/.ours-client`;
+  const tomb = tombstoneFor(client, A);
+  const journal = { schema: 1, startedAt: 'x', installations: [], clientInstanceIds: [A], generations: [], fleet: false, legacy: false, installer: false,
+    tombstones: [{ kind: 'client', instanceId: A, id: '7:300' }] };
+  const files = { [`${home}/.ours-removal.json`]: { type: 'file', mode: 0o600, text: JSON.stringify(journal) }, [tomb]: { type: 'dir', id: '7:300' }, [`${tomb}/credential`]: { type: 'file', text: 'state' } };
+  let busy = 2;
+  const f = fakeEffects(files, { askLine: async () => 'remove ours' });
+  const removeDir = f.effects.removeDir;
+  f.effects.removeDir = path => { if (path === tomb && busy > 0) { busy -= 1; throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); } removeDir(path); };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.equal(await runRemoval([], f.effects), 1, `failed attempt ${attempt + 1} stays unfinished`);
+    const kept = JSON.parse(files[`${home}/.ours-removal.json`].text);
+    assert.deepEqual(kept.clientInstanceIds, [A]);
+    assert.deepEqual(kept.tombstones, journal.tombstones);
+    assert.ok(files[tomb]);
+  }
+  assert.equal(await runRemoval([], f.effects), 0, 'the next retry finishes');
+  assert.equal(files[tomb], undefined);
+  assert.equal(files[`${home}/.ours-removal.json`], undefined);
+});
+
+test('F6: a remaining Ours Codex cache without the codex command keeps the removal unfinished', async () => {
+  const journal = { schema: 1, startedAt: 'x', installations: [], clientInstanceIds: [], generations: [], fleet: false, legacy: false, installer: false };
+  const cache = `${home}/.codex/plugins/cache/ours-codex-marketplace`;
+  const files = { [`${home}/.ours-removal.json`]: { type: 'file', mode: 0o600, text: JSON.stringify(journal) },
+    [`${home}/.codex/config.toml`]: { type: 'file', text: '[profiles.mine]\nmodel = "x"\n' }, [cache]: { type: 'dir', mode: 0o755 } };
+  const f = fakeEffects(files, { askLine: async () => 'remove ours' });
+  assert.equal(await runRemoval([], f.effects), 1);
+  assert.ok(files[cache] && files[`${home}/.ours-removal.json`]);
+  assert.ok(!f.log.some(([kind]) => kind === 'removeDir'));
+  // Once codex is available and lists no foreign source, the cached copy is removed.
+  const g = fakeEffects(files, { askLine: async () => 'remove ours', run: async (command, args) => {
+    if (command === 'npm') return { stdout: '/x\n' };
+    if (command === 'codex') return { stdout: JSON.stringify({ marketplaces: [] }) };
+    throw new Error(`${command} unavailable`);
+  } });
+  assert.equal(await runRemoval([], g.effects), 0);
+  assert.equal(files[cache], undefined);
+});
