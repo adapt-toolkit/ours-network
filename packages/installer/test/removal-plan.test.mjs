@@ -258,10 +258,11 @@ test('installation and connection folders are retired only with their own record
   const root = '/home/u/.ours-install';
   const tomb = tombstoneFor(root, A);
   assert.equal(tomb, `/home/u/.ours-install.ours-removing-${A}`);
-  const found = { installations: [install(root, A, { tombstone: tomb })], otherInstallations: [], generations: [], client: { root: `${home}/.ours-client`, instanceId: A }, clientTombstones: [tombstoneFor(`${home}/.ours-client`, A)] };
+  const found = { installations: [install(root, A, { tombstone: { path: tomb, fileId: '7:1' } })], otherInstallations: [], generations: [], client: { root: `${home}/.ours-client`, instanceId: A }, clientTombstones: [{ path: tombstoneFor(`${home}/.ours-client`, A), fileId: '7:2' }] };
   const { steps } = planRemoval(found, { home });
   const rootStep = steps.find(s => s.id === `root:${root}`);
-  assert.deepEqual([rootStep.type, rootStep.recordFile, rootStep.recordField, rootStep.expectInstance, rootStep.tombstone], ['retire', 'installation.json', 'instanceId', A, tomb]);
+  assert.deepEqual([rootStep.type, rootStep.kind, rootStep.recordFile, rootStep.recordField, rootStep.expectInstance, rootStep.tombstone], ['retire', 'root', 'installation.json', 'instanceId', A, tomb]);
+  assert.equal(steps.find(s => s.id === `tombstone:${tomb}`).fileId, '7:1', 'a tombstone is removed only with its recorded identity');
   assert.equal(steps.find(s => s.id === 'client').type, 'retire');
   assert.ok(steps.some(s => s.id === `tombstone:${tomb}`) && steps.some(s => s.id === `tombstone:${home}/.ours-client.ours-removing-${A}`));
   const retained = planRemoval({ ...found, installations: [install(root, A, { record: null, tombstone: null })], clientTombstones: [] }, { home });

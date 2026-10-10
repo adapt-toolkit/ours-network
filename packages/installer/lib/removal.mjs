@@ -72,7 +72,14 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
   const found = { installations: [], otherInstallations: [], kept: [], generations: [], npm: null, legacy: null };
   // A residual is something of Ours that is left because it can no longer be proven; it keeps the removal unfinished.
   const keep = (group, label, reason, residual = false) => found.kept.push({ group, label, reason, ...(residual ? { residual: true } : {}) });
-  const tombstone = (path, instanceId) => (effects.stat(tombstoneFor(path, instanceId))?.type === 'dir' ? tombstoneFor(path, instanceId) : null);
+  // A folder at a tombstone name counts only when this removal recorded moving it there.
+  const tombstone = (path, kind, instanceId) => {
+    const at = tombstoneFor(path, instanceId), st = effects.stat(at);
+    if (!st) return null;
+    if (journal?.tombstones?.some(t => t.kind === kind && t.instanceId === instanceId && t.id === st.id)) return { path: at, fileId: st.id };
+    keep('data', `Folder ${at}`, 'it is named like a folder Ours moves aside while removing it, but this removal did not put it there, so it is left in place; check it and remove it yourself if it is not yours', true);
+    return null;
+  };
 
   // Managed installations.
   const homeEntries = effects.list(home) ?? [];
@@ -87,7 +94,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       // Partly removed earlier: finish engine items from the retry record. A folder
       // still there without its record is no longer provably the installation.
       if (retained) {
-        found.installations.push({ ...retained, record: null, tombstone: tombstone(root, retained.instanceId) });
+        found.installations.push({ ...retained, record: null, tombstone: tombstone(root, 'root', retained.instanceId) });
         if (effects.stat(root)) keep('data', `Folder ${root}`, 'it no longer holds the Ours installation record it had when the removal started, so it is left in place; check it and remove it yourself if it is not yours', true);
       }
       else if (stateDirs.includes(root)) keep('data', root, 'no Ours installation record was found there');
@@ -95,9 +102,9 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     }
     let record;
     try { record = validateInstallation(json(text), root); if (record.containerBinding || record.containerEngine) validateContainerEngine(record); }
-    catch { keep('data', `Folder ${root}`, 'its Ours installation record is not valid, so nothing in it is removed automatically'); continue; }
+    catch { keep('data', `Folder ${root}`, 'its Ours installation record is damaged, so nothing in it is removed automatically; repair or remove the folder yourself, then run the removal again', true); continue; }
     if (retained && retained.instanceId !== record.instanceId) { keep('data', `Folder ${root}`, 'it now holds a different Ours installation than the unfinished removal recorded'); continue; }
-    const item = { ...journalInstallation(record), ...(retained?.candidateProjects?.length ? { candidateProjects: [...new Set([...retained.candidateProjects, ...journalInstallation(record).candidateProjects])] } : {}), ...(retained?.images ? { images: retained.images } : {}), record, tombstone: tombstone(root, record.instanceId) };
+    const item = { ...journalInstallation(record), ...(retained?.candidateProjects?.length ? { candidateProjects: [...new Set([...retained.candidateProjects, ...journalInstallation(record).candidateProjects])] } : {}), ...(retained?.images ? { images: retained.images } : {}), record, tombstone: tombstone(root, 'root', record.instanceId) };
     item.ownedImages = json(effects.readText(join(root, 'owned-images.json')) ?? '')?.images ?? null;
     (selected(root) ? found.installations : found.otherInstallations).push(item);
   }
@@ -111,7 +118,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     } else keep('apps', `Saved Ours connection ${clientRoot}`, 'its connection file is missing or cannot be read, so it is not provably this installation\'s and is left in place; remove it yourself if no Ours installation uses it', true);
   }
   found.clientTombstones = [...new Set([...(journal?.clientInstanceIds ?? []), ...(found.client?.instanceId ? [found.client.instanceId] : [])])]
-    .map(id => tombstone(clientRoot, id)).filter(Boolean);
+    .map(id => tombstone(clientRoot, 'client', id)).filter(Boolean);
 
   // Downloaded client programs.
   const installRoot = join(home, '.ours-client-install');
@@ -149,7 +156,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       packages.push({ name: `@ours.network/${name}`, path, link: st.type === 'symlink', target: st.type === 'symlink' ? effects.realpath(path) : path });
     }
     found.npm = { prefix, root, bins, packages, scope: effects.stat(join(root, '@ours.network'))?.type === 'dir' ? join(root, '@ours.network') : null };
-  } catch { keep('programs', 'Global npm commands', 'npm is not available to check them'); }
+  } catch { keep('programs', 'Global npm commands', 'npm is not available to check them', true); }
 
   // Claude Code and Codex registrations.
   const claudeSettingsPath = join(home, '.claude', 'settings.json');
@@ -172,7 +179,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     }
   } catch {
     if (settingsEntries.length || effects.stat(join(home, '.claude/plugins/cache/ours-network')))
-      keep('apps', 'Ours plugin in Claude Code', 'the claude command is not available to remove it; inside Claude Code run: /plugin uninstall ours@ours.network, then /plugin marketplace remove ours.network');
+      keep('apps', 'Ours plugin in Claude Code', 'the claude command is not available to remove it; inside Claude Code run: /plugin uninstall ours@ours.network, then /plugin marketplace remove ours.network', true);
   }
   found.claude = claude;
 
@@ -180,7 +187,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
   const codexConfigPath = join(codexDir, 'config.toml');
   const codexText = effects.readText(codexConfigPath);
   const scanned = codexText === null ? { removed: [] } : removeTomlTables(codexText, parts => isOursCodexTable(parts, CODEX_PLUGIN, CODEX_MARKETPLACE));
-  if (scanned === null) keep('apps', `Ours entries in ${codexConfigPath}`, 'the file could not be read safely, so it is not edited; remove the [plugins."ours@ours-codex-marketplace"] and [marketplaces.ours-codex-marketplace] sections yourself');
+  if (scanned === null) keep('apps', `Ours entries in ${codexConfigPath}`, 'the file could not be read safely, so it is not edited; remove the [plugins."ours@ours-codex-marketplace"] and [marketplaces.ours-codex-marketplace] sections yourself', true);
   const configTables = scanned?.removed ?? [];
   let codex = null;
   try {
@@ -190,7 +197,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     const cache = effects.stat(join(codexDir, 'plugins', 'cache', CODEX_MARKETPLACE))?.type === 'dir' ? join(codexDir, 'plugins', 'cache', CODEX_MARKETPLACE) : null;
     if (market || plugin || configTables.length || cache) codex = { plugin, marketplace: market ? { path: market.marketplaceSource?.source ?? market.root } : null, configPath: codexConfigPath, configTables, cache };
   } catch {
-    if (configTables.length) keep('apps', 'Ours plugin in Codex', 'the codex command is not available to remove it; run: codex plugin remove ours@ours-codex-marketplace');
+    if (configTables.length) keep('apps', 'Ours plugin in Codex', 'the codex command is not available to remove it; run: codex plugin remove ours@ours-codex-marketplace', true);
   }
   found.codex = codex;
 
@@ -245,7 +252,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       const text = effects.readText(path);
       if (text === null || !text.includes(markers.start)) continue;
       if (stripManagedBlock(text, markers).action === 'strip') legacy.blocks.push({ path, markers });
-      else keep('legacy', `Ours section in ${path}`, 'it has no closing marker; remove it by hand so nothing you wrote after it is lost');
+      else keep('legacy', `Ours section in ${path}`, 'it has no closing marker; remove it by hand so nothing you wrote after it is lost', true);
     }
     for (const dir of [join(skillsDir, 'ours'), join(skillsDir, 'writing-agent-bios'), join(hermesDir, 'skills', 'communication', 'ours'), join(hermesDir, 'skills', 'communication', 'writing-agent-bios')]) {
       if (effects.stat(dir)?.type === 'dir') legacy.skillDirs.push(dir);
@@ -377,14 +384,21 @@ async function executeStep(step, effects, context) {
         const { dir, port, unitPath, cliStartedIt } = step.service;
         if (unitPath && effects.stat(unitPath)) await attempt(['ours-daemon', 'uninstall-service', '--yes', '--state-dir', dir, '--config', join(dir, 'config.json')]);
         if (cliStartedIt) await attempt(['ours-daemon', 'stop', '--state-dir', dir, '--config', join(dir, 'config.json')]);
-        let running = true;
-        for (let i = 0; i < 10 && running; i++) {
-          const probe = await effects.probe(port);
-          running = Boolean(probe?.ok && resolve(probe.stateDir) === dir);
-          if (running) await effects.sleep?.(1000);
+        // Stopped only when the port refuses connections, or answers as a different
+        // Ours daemon folder. Timeouts, errors and odd replies are not proof.
+        let state = 'unknown';
+        for (let i = 0; i < 10 && state !== 'stopped'; i++) {
+          const port_ = await effects.portState(port);
+          if (port_ === 'refused') state = 'stopped';
+          else if (port_ === 'open') {
+            const probe = await effects.probe(port);
+            state = probe?.ok && typeof probe.stateDir === 'string' && resolve(probe.stateDir) !== dir ? 'stopped' : probe?.ok ? 'running' : 'unknown';
+          } else state = 'unknown';
+          if (state !== 'stopped') await effects.sleep?.(1000);
         }
         const reason = () => errors.length ? ` (${[...new Set(errors)].join('; ')})` : '';
-        if (running) throw new Error(`the earlier daemon for ${dir} is still running on port ${port}${reason()}; stop that process, then run the removal again`);
+        if (state === 'running') throw new Error(`the earlier daemon for ${dir} is still running on port ${port}${reason()}; stop that process, then run the removal again`);
+        if (state !== 'stopped') throw new Error(`it could not be confirmed that the earlier daemon for ${dir} has stopped: port ${port} still accepts connections or does not answer clearly${reason()}; stop whatever uses that port, then run the removal again`);
         if (unitPath && effects.stat(unitPath)) throw new Error(`its boot service ${unitPath} is still installed${reason()}; ${unitHelp(unitPath)}`);
         return;
       }
@@ -552,13 +566,33 @@ async function executeStep(step, effects, context) {
       if (reason) throw new Error(`${step.path} ${reason}`);
       const record = json(effects.readText(join(step.path, step.recordFile)) ?? '');
       if (!record || record[step.recordField] !== step.expectInstance) throw new Error('it no longer holds the Ours record it had when checked, so it was left in place');
-      if (effects.stat(step.tombstone)) {
+      const occupied = effects.stat(step.tombstone);
+      if (occupied) {
+        // Only a folder this removal itself moved there earlier may be cleared.
+        const recorded = context.journal?.tombstones?.some(t => t.kind === step.kind && t.instanceId === step.expectInstance && t.id === occupied.id);
+        if (!recorded) throw new Error(`${step.tombstone} already exists and was not put there by this removal; both folders were left in place`);
         const leftover = unsafeTreeReason(step.tombstone, guard);
         if (leftover) throw new Error(`${step.tombstone} ${leftover}`);
         effects.removeDir(step.tombstone);
       }
+      // Record the folder's identity before moving it, so a retry can prove the tombstone.
+      const own = effects.stat(step.path);
+      if (!own?.id) throw new Error('its identity could not be read, so it was left in place');
+      if (context.journal) {
+        context.journal.tombstones = [...(context.journal.tombstones ?? []).filter(t => !(t.kind === step.kind && t.instanceId === step.expectInstance)), { kind: step.kind, instanceId: step.expectInstance, id: own.id }];
+        context.saveJournal?.();
+      }
       effects.renamePath(step.path, step.tombstone);
       effects.removeDir(step.tombstone);
+      return;
+    }
+    case 'tombstone': {
+      const st = effects.stat(step.path);
+      if (!st) return;
+      if (st.id !== step.fileId) throw new Error('it changed since it was checked; it was left in place');
+      const reason = unsafeTreeReason(step.path, { home, stat: effects.stat, realpath: effects.realpath, uid: effects.uid });
+      if (reason) throw new Error(`${step.path} ${reason}`);
+      effects.removeDir(step.path);
       return;
     }
     case 'empty-dir': {
@@ -571,9 +605,9 @@ async function executeStep(step, effects, context) {
 }
 
 /** Run the plan in order; a step waits for the steps it depends on. */
-export async function executeRemoval(plan, effects, { journal } = {}) {
+export async function executeRemoval(plan, effects, { journal, saveJournal } = {}) {
   const results = new Map();
-  const context = { npmRoot: null };
+  const context = { npmRoot: null, journal, saveJournal };
   try { context.npmRoot = (await effects.run('npm', ['root', '--global'])).stdout.trim(); } catch { /* checked per step */ }
   const ordered = [...plan.steps.filter(s => !s.last), ...plan.steps.filter(s => s.last)];
   let index = 0;
@@ -668,13 +702,15 @@ export async function runRemoval(argv, effects) {
     clientInstanceIds: found.client?.instanceId ? [found.client.instanceId] : [],
     generations: plan.steps.filter(s => s.id.startsWith('generation:')).map(s => s.id.slice('generation:'.length)),
     fleet: plan.steps.some(s => s.group === 'fleet'), legacy: plan.steps.some(s => s.group === 'legacy'), installer: plan.steps.some(s => s.id === 'installer'),
+    tombstones: journal?.tombstones ?? [],
   };
   effects.writeJson(journalPath, JSON.stringify(record, null, 2) + '\n');
   let release = () => {};
   try { release = await effects.holdInstallationLocks(found.installations.map(i => i.root)); }
   catch (error) { effects.out(warn(`${error.message}. Nothing was removed.`)); return EXIT_REFUSED; }
   let results;
-  try { results = await executeRemoval(plan, effects, { journal: record }); }
+  const saveJournal = () => effects.writeJson(journalPath, JSON.stringify(record, null, 2) + '\n');
+  try { results = await executeRemoval(plan, effects, { journal: record, saveJournal }); }
   finally { release(); }
   // Fresh check: only what is actually gone counts as removed.
   const after = planRemoval(await discoverFootprint(effects, { stateDirs: options.stateDirs, journal: record }), { home: effects.home });

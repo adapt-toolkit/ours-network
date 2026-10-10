@@ -125,7 +125,7 @@ export function otherOursProjects(text, removing, { composeOnly = false } = {}) 
 export function validateJournal(value, { home }) {
   const fail = message => { throw new Error(`Unfinished removal record is invalid (${message}); it was left untouched. Remove ${join(home, JOURNAL)} yourself only after checking what remains.`); };
   if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema !== 1) fail('schema');
-  const keys = ['schema', 'startedAt', 'installations', 'clientInstanceIds', 'generations', 'fleet', 'legacy', 'installer'];
+  const keys = ['schema', 'startedAt', 'installations', 'clientInstanceIds', 'generations', 'fleet', 'legacy', 'installer', 'tombstones'];
   if (Object.keys(value).some(key => !keys.includes(key))) fail('unexpected field');
   if (!Array.isArray(value.installations) || !Array.isArray(value.clientInstanceIds) || !Array.isArray(value.generations)) fail('lists');
   for (const item of value.installations) {
@@ -144,6 +144,9 @@ export function validateJournal(value, { home }) {
   if (value.clientInstanceIds.some(id => !UUID.test(id))) fail('client identity');
   if (value.generations.some(id => !GENERATION.test(id))) fail('generation identity');
   for (const key of ['fleet', 'legacy', 'installer']) if (typeof value[key] !== 'boolean') fail(key);
+  // Folders this removal moved aside, identified by device and inode (kept by a rename).
+  if (value.tombstones !== undefined && (!Array.isArray(value.tombstones) || value.tombstones.some(t => !t || Object.keys(t).sort().join(',') !== 'id,instanceId,kind'
+    || !['root', 'client'].includes(t.kind) || !UUID.test(t.instanceId ?? '') || !/^\d+:\d+$/.test(t.id ?? '')))) fail('tombstone identity');
   return value;
 }
 
@@ -272,7 +275,7 @@ export function planRemoval(found, { home }) {
     // Owner records: valid (owner IDs), absent (made before owner records) or invalid (damaged: never removed).
     const owners = generation.owners ?? { state: 'absent' };
     const label = `Downloaded Ours programs ${generation.path}`;
-    if (owners.state === 'invalid') { kept.push({ group: 'programs', label, reason: `their owner record ${generation.path}/owners.json is damaged, so they are left in place; remove the folder yourself if no Ours installation uses it` }); continue; }
+    if (owners.state === 'invalid') { kept.push({ group: 'programs', label, residual: true, reason: `their owner record ${generation.path}/owners.json is damaged, so they are left in place; remove the folder yourself if no Ours installation uses it` }); continue; }
     const ownedHere = owners.state === 'valid'
       ? owners.instances.length > 0 && owners.instances.every(id => removedInstances.has(id) || clientInstances.has(id))
       : !othersRemain && (clientBound || !found.client);
@@ -321,7 +324,7 @@ export function planRemoval(found, { home }) {
   if (tool) {
     const ids = new Set([...removedInstances, ...clientInstances]);
     const label = `Ours tool records ${tool.root}`;
-    if (!tool.valid) kept.push({ group: 'apps', label, reason: 'its record file could not be read, so nothing in it is removed automatically' });
+    if (!tool.valid) kept.push({ group: 'apps', label, residual: true, reason: 'its record file could not be read, so nothing in it is removed automatically' });
     else if (ids.size) {
       const ourSessions = tool.sessions.filter(id => ids.has(id));
       const ourRows = tool.instances.filter(id => ids.has(id));
@@ -387,14 +390,14 @@ export function planRemoval(found, { home }) {
 
   // Directories last: downloads after everything that pointed into them, roots after their services.
   for (const generation of generations) add({ id: `generation:${generation.id}`, group: 'programs', label: `Downloaded Ours programs ${generation.path}`, type: 'tree', path: generation.path, after: beforeDownloads });
-  if (clientBound) add({ id: 'client', group: 'data', label: `Saved Ours connection and credential ${found.client.root}`, type: 'retire', path: found.client.root, recordFile: 'profile.json', recordField: 'expectedInstanceId', expectInstance: found.client.instanceId, tombstone: tombstoneFor(found.client.root, found.client.instanceId), after: beforeDownloads });
-  for (const path of found.clientTombstones ?? []) add({ id: `tombstone:${path}`, group: 'data', label: `Partly removed Ours connection ${path}`, type: 'tree', path, after: beforeDownloads });
+  if (clientBound) add({ id: 'client', group: 'data', label: `Saved Ours connection and credential ${found.client.root}`, type: 'retire', kind: 'client', path: found.client.root, recordFile: 'profile.json', recordField: 'expectedInstanceId', expectInstance: found.client.instanceId, tombstone: tombstoneFor(found.client.root, found.client.instanceId), after: beforeDownloads });
+  for (const tomb of found.clientTombstones ?? []) add({ id: `tombstone:${tomb.path}`, group: 'data', label: `Partly removed Ours connection ${tomb.path}`, type: 'tombstone', path: tomb.path, fileId: tomb.fileId, after: beforeDownloads });
   const clientInstall = join(home, '.ours-client-install');
   if (found.clientInstallEmptyAfter && generations.length) add({ id: 'client-install', group: 'programs', label: `Ours downloads folder ${clientInstall}`, type: 'empty-dir', path: clientInstall, after: generations.map(g => `generation:${g.id}`) });
   for (const item of found.installations) {
     const after = [`services:${item.root}`, ...(item.mode === 'docker' ? [item.project, ...(item.candidateProjects ?? [])].map(p => `containers:${p}`) : [])];
-    if (item.record) add({ id: `root:${item.root}`, group: 'data', label: `Ours installation folder ${item.root}`, type: 'retire', path: item.root, recordFile: 'installation.json', recordField: 'instanceId', expectInstance: item.instanceId, tombstone: tombstoneFor(item.root, item.instanceId), after });
-    if (item.tombstone) add({ id: `tombstone:${item.tombstone}`, group: 'data', label: `Partly removed Ours installation folder ${item.tombstone}`, type: 'tree', path: item.tombstone, after });
+    if (item.record) add({ id: `root:${item.root}`, group: 'data', label: `Ours installation folder ${item.root}`, type: 'retire', kind: 'root', path: item.root, recordFile: 'installation.json', recordField: 'instanceId', expectInstance: item.instanceId, tombstone: tombstoneFor(item.root, item.instanceId), after });
+    if (item.tombstone) add({ id: `tombstone:${item.tombstone.path}`, group: 'data', label: `Partly removed Ours installation folder ${item.tombstone.path}`, type: 'tombstone', path: item.tombstone.path, fileId: item.tombstone.fileId, after });
   }
 
   if (found.legacy?.remove) {
@@ -420,9 +423,15 @@ export function describePlan({ steps, kept }) {
     lines.push(title + ':');
     for (const item of items) lines.push(`  - ${item.label}`);
   }
-  if (kept.length) {
+  const attention = kept.filter(item => item.residual);
+  const preserved = kept.filter(item => !item.residual);
+  if (attention.length) {
+    lines.push('Ours items that cannot be removed automatically (they need your attention):');
+    for (const item of attention) lines.push(`  - ${item.label} — ${item.reason}`);
+  }
+  if (preserved.length) {
     lines.push('Kept (not created by this installer, shared, or still in use):');
-    for (const item of kept) lines.push(`  - ${item.label} — ${item.reason}`);
+    for (const item of preserved) lines.push(`  - ${item.label} — ${item.reason}`);
   }
   return lines;
 }

@@ -22,6 +22,7 @@ import { homedir, userInfo, platform as osPlatform, release as osRelease, arch a
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
+import { connect as netConnect } from 'node:net';
 import { clientPackageNames, maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
 import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
 import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress } from './gateway.mjs';
@@ -40,6 +41,17 @@ import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeB
 import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
 
 /** GET http://127.0.0.1:<port>/state-dir — the unauthenticated identity probe. */
+/** Whether anything accepts TCP connections on a loopback port: 'refused', 'open', or 'unknown' (timeout or other error). */
+function portState(port, { timeoutMs = 1500 } = {}) {
+  return new Promise(done => {
+    const socket = netConnect({ host: '127.0.0.1', port });
+    const finish = state => { socket.destroy(); done(state); };
+    socket.setTimeout(timeoutMs, () => finish('unknown'));
+    socket.once('connect', () => finish('open'));
+    socket.once('error', error => finish(error?.code === 'ECONNREFUSED' ? 'refused' : 'unknown'));
+  });
+}
+
 async function probePort(port, { timeoutMs = 1500 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -368,8 +380,8 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     /** lstat as a plain record; null when absent. Never follows a link. */
     stat: (path) => {
       try {
-        const st = lstatSync(path);
-        return { type: st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other', uid: st.uid, mode: st.mode & 0o7777, nlink: st.nlink, size: st.size };
+        const st = lstatSync(path, { bigint: true });
+        return { type: st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other', uid: Number(st.uid), mode: Number(st.mode & 0o7777n), nlink: Number(st.nlink), size: Number(st.size), id: `${st.dev}:${st.ino}` };
       } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
     },
     realpath: (path) => { try { return realpathSync(path); } catch { return null; } },
@@ -426,6 +438,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     brokerUrl: env.OURS_BROKER_URL ?? 'wss://broker1.ours.network',
     now: () => Date.now(),
     probe: (port) => probePort(port),
+    portState: (port) => portState(port),
     isTaken: (port) => portTakenSync(port),
     readJson: readJsonFile,
     readProfile: readHostProfileFile,
@@ -503,7 +516,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
   return Object.assign(effects, networkEffects(effects));
 }
 
-export const __testables = { probePort, portTakenSync, readJsonFile, readTextFile, readHostProfileFile, verifyHostProfile, installedVersionOf, packageDependenciesOf, resolvePackageVersion, codexMarketplace, hasClaudePlugin, knownStateDirsIn };
+export const __testables = { probePort, portState, portTakenSync, readJsonFile, readTextFile, readHostProfileFile, verifyHostProfile, installedVersionOf, packageDependenciesOf, resolvePackageVersion, codexMarketplace, hasClaudePlugin, knownStateDirsIn };
 
 // -----------------------------------------------------------------------------
 // THE PAIR
