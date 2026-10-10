@@ -1,6 +1,7 @@
 import { hostname } from 'node:os';
 import { serverBase } from './gateway.mjs';
 import { join, resolve, isAbsolute, dirname } from 'node:path';
+import { PRODUCTS, PLUGIN_ONLY, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
 
 const scopes = ['all', 'server', 'client'];
 const integrations = ['codex', 'claude-code', 'fleet'];
@@ -11,7 +12,7 @@ const valueFlags = new Map(Object.entries({
   '--config': 'config', '--sources': 'sources', '--migrate-from': 'migrateFrom', '--port': 'port', '--cowork-port': 'coworkPort', '--messenger-port': 'messengerPort',
 }));
 const boolFlags = new Map([['--compatible', 'compatible'], ['--dry-run', 'dryRun'], ['--migrate', 'migrate'], ['--disable-fleet-agents-setup', 'disableFleetAgentsSetup']]);
-const allowed = new Set([...valueFlags.values(), ...boolFlags.values(), 'interactive', 'explicitPorts']);
+const allowed = new Set([...valueFlags.values(), ...boolFlags.values(), 'interactive', 'explicitPorts', 'product']);
 const defaults = { port: 3050, coworkPort: 3052, messengerPort: 8420 };
 const paths = ['stateDir', 'config', 'sources', 'fleetSettingsPath', 'migrateFrom'];
 const nonempty = value => typeof value === 'string' && value.trim().length > 0 && !/[\x00-\x1f\x7f]/.test(value);
@@ -62,6 +63,20 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
     if (!options.integrations?.includes?.('fleet')) throw new Error('--fleet-task-workflow requires the fleet integration');
     if (options.disableFleetAgentsSetup) throw new Error('--fleet-task-workflow conflicts with --disable-fleet-agents-setup: no agents are configured by this run');
     options.fleetTaskWorkflowAgents = [...agents];
+  }
+  if (options.product !== undefined) {
+    if (!PRODUCTS.includes(options.product)) throw new Error('Product must be workspace or plugin-only');
+    if (options.product === PLUGIN_ONLY) {
+      if (!server) throw new Error('--plugin-only installs the daemon on this computer; it cannot be combined with client scope');
+      if (options.mode !== undefined && !['docker'].includes(options.mode)) throw new Error('--plugin-only runs the daemon in Docker or Podman; native packages are not supported for it');
+      if (options.integrations?.some?.(name => !PLUGIN_ONLY_INTEGRATIONS.includes(name))) throw new Error('--plugin-only connects Claude Code and/or Codex; Fleet is part of the complete workspace');
+      for (const [key, flag] of [['fleetSettingsPath', '--fleet-settings'], ['fleetTaskWorkflowAgents', '--fleet-task-workflow'], ['disableFleetAgentsSetup', '--disable-fleet-agents-setup'],
+        ['name', '--name'], ['surname', '--surname'], ['migrateFrom', '--migrate-from'], ['serverUrl', '--server-url']]) {
+        if (options[key] !== undefined && options[key] !== false) throw new Error(`${flag} belongs to the complete workspace and cannot be combined with --plugin-only`);
+      }
+      if (options.explicitPorts?.some?.(key => key !== 'port')) throw new Error('--plugin-only uses one port; --cowork-port and --messenger-port do not apply');
+      options.mode ??= 'docker';
+    }
   }
   const missing = [];
   if (server) for (const [key, flag] of [['mode', '--mode'], ['stateDir', '--state-dir'], ...(options.migrateFrom === undefined ? [['identityName', '--identity-name']] : [])]) if (!nonempty(options[key])) missing.push(flag);
@@ -135,6 +150,10 @@ export function parseSetupArgs(argv, { home, validate = true } = {}) {
     if (!arg.startsWith('-')) { positional.push(arg); continue; }
     const equal = arg.indexOf('=');
     const flag = equal < 0 ? arg : arg.slice(0, equal);
+    if (flag === '--plugin-only') {
+      if (equal >= 0) throw new Error(`${flag} takes no value`);
+      put('product', PLUGIN_ONLY); continue;
+    }
     if (boolFlags.has(flag)) {
       if (equal >= 0) throw new Error(`${flag} takes no value`);
       put(boolFlags.get(flag), true); continue;

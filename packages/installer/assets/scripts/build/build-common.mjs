@@ -8,7 +8,15 @@ export const SOURCE_ROOT = resolve(process.env.OURS_SOURCE_ROOT || '/src');
 export const OUT = join(ROOT, 'docker/vendor');
 export const CONFIG = JSON.parse(readFileSync(join(ROOT, 'sources.json'), 'utf8'));
 // Notifications joined the server set later; retained selections without it still build.
-export const SELECTED = new Set((process.env.OURS_BUILD_PACKAGES || ['sdk,cli,daemon,tg-connector,cowork,messenger-server', ...(CONFIG.packages?.['@ours.network/notifications'] ? ['notifications'] : [])].join(',')).split(',').map(name => '@ours.network/' + name));
+// A plugin-only server selection names only sdk, cli and daemon, and builds only those.
+const APPLICATIONS = ['tg-connector', 'cowork', 'messenger-server', 'notifications'];
+export const SELECTED = new Set((process.env.OURS_BUILD_PACKAGES || ['sdk', 'cli', 'daemon',
+  ...APPLICATIONS.filter(name => name !== 'notifications' || CONFIG.packages?.['@ours.network/notifications'])
+    .filter(name => !isDaemonOnly(CONFIG) || CONFIG.packages?.['@ours.network/' + name])].join(',')).split(',').map(name => '@ours.network/' + name));
+function isDaemonOnly(config) {
+  const names = Object.keys(config.packages ?? {}).sort().join(',');
+  return names === '@ours.network/cli,@ours.network/daemon,@ours.network/sdk';
+}
 export const inheritedLock = process.env.OURS_INSTALLER_LOCK_FD === '3' ? [3] : [];
 export const run = (args, cwd) => execFileSync(args[0], args.slice(1), { cwd, stdio: ['inherit', 'inherit', 'inherit', ...inheritedLock] });
 export const capture = (args, cwd, env = process.env) => execFileSync(args[0], args.slice(1), { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit', ...inheritedLock] });

@@ -182,6 +182,8 @@ test('interactive answers and equivalent CLI presets execute the same server wor
     return fallback;
   };
   manual.effects.select = async (_question, choices, fallback) => {
+    // The goal-first welcome screen offers the original scope form under "Other setups".
+    if (choices.some(choice => choice.value === 'advanced')) return 'advanced';
     if (choices.some(choice => choice.value === 'server')) return 'server';
     if (choices.some(choice => choice.value === 'custom')) return 'custom';
     return fallback;

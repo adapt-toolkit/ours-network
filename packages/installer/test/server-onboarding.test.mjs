@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createServerOnboarding } from '../lib/server-onboarding.mjs';
+import { createServerOnboarding, retainedCredentialRefused } from '../lib/server-onboarding.mjs';
 
 const rootRow = { name: 'Existing Human', cid: 'existing-cid', kind: 'root', temp: null, session: 'other-live' };
 function fixture(t, rows = [[]]) {
@@ -275,4 +275,35 @@ test('Messenger profile handoff uses the gateway origin for a Docker gateway ins
   f.record.gateway={version:1,serverUrl:'https://ours.example.test/team'};
   await f.helper().serverEnsureHumanProfile(f.record,{name:'Ada',surname:'Lovelace'});
   assert.equal(selections[1].origin,'https://ours.example.test');
+});
+
+test('a saved credential counts as refused only when this server answers 401 or 403', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'ours-refused-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const credentialPath = join(root, 'credential');
+  writeFileSync(credentialPath, 'saved-token\n', { mode: 0o600 });
+  const profile = { endpoint: 'http://127.0.0.1:3050/daemon', credentialPath };
+  const seen = [];
+  const answer = status => async (url, init) => { seen.push([url, init.headers['x-ours-api-token']]); return { status }; };
+  assert.equal(await retainedCredentialRefused(profile, { fetchImpl: answer(401) }), true);
+  assert.equal(await retainedCredentialRefused(profile, { fetchImpl: answer(403) }), true);
+  assert.deepEqual(seen[0], ['http://127.0.0.1:3050/daemon/version', 'saved-token']);
+  for (const status of [200, 404, 500, 502]) assert.equal(await retainedCredentialRefused(profile, { fetchImpl: answer(status) }), false, String(status));
+  assert.equal(await retainedCredentialRefused(profile, { fetchImpl: async () => { throw new Error('ECONNREFUSED'); } }), false, 'unreachable is not proof');
+  assert.equal(await retainedCredentialRefused({ ...profile, credentialPath: join(root, 'absent') }, { fetchImpl: answer(401) }), false);
+});
+
+test('a rerun replaces a saved credential this server refuses, and keeps one it accepts', async t => {
+  const f = fixture(t);
+  const first = await f.helper().prepareLocalClient(f.record, ['codex']);
+  f.effects.readManagedClientProfile = () => JSON.parse(readFileSync(first.configPath, 'utf8'));
+  f.effects.credentialRefused = async () => false;
+  const kept = await f.helper().prepareLocalClient(f.record, ['codex']);
+  assert.equal(kept.profile.credentialPath, first.profile.credentialPath);
+  assert.equal(f.calls.filter(c => c.operation === 'access-issue').length, 1);
+  f.effects.credentialRefused = async profile => { assert.equal(profile.credentialPath, first.profile.credentialPath); return true; };
+  const replaced = await f.helper().prepareLocalClient(f.record, ['codex']);
+  assert.notEqual(replaced.profile.credentialPath, first.profile.credentialPath);
+  assert.equal(f.calls.filter(c => c.operation === 'access-issue').length, 2);
+  assert.match(f.messages.join('\n'), /no longer accepted/);
 });

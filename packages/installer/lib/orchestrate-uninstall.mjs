@@ -91,7 +91,12 @@ export async function runUninstall(argv, effects) {
       effects.out(warn('Managed server uninstall does not support legacy component/profile selections. Nothing was changed; use an explicit server uninstall with those selectors cleared.'));
       return EXIT_REFUSED;
     }
-    if (purge) { effects.out(warn('Managed server uninstall retains identities and volumes; --purge is not supported.')); return EXIT_REFUSED; }
+    // Complete removal, including identities and volumes, is the separate,
+    // confirmed `ours-install remove`; --purge selects exactly that for this root.
+    if (purge) {
+      const { runRemoval } = await import('./removal.mjs');
+      return runRemoval(['--state-dir', dir, ...(args.dryRun ? ['--dry-run'] : [])], effects);
+    }
     if (args.dryRun) { effects.out(info('[dry-run] would stop and remove managed server services, retaining all stored data.')); return EXIT_OK; }
     const { runServerCommand } = await import('./orchestrate.mjs');
     return runServerCommand({ role: 'server', operation: 'uninstall', stateDir: dir }, effects);

@@ -13,6 +13,14 @@ import { daemonOwner } from './daemon-owner.mjs';
 
 const PROVENANCE = '.ours-provenance';
 const APPLICATIONS = ['daemon', 'telegram', 'cowork', 'messenger'];
+/** The installation's applications; plugin-only installations select only the daemon. */
+export function selectedApplications(env = process.env) {
+  const raw = env.OURS_SERVER_APPLICATIONS;
+  if (raw === undefined || raw === '') return APPLICATIONS;
+  const selected = raw.split(',');
+  if (selected[0] !== 'daemon' || new Set(selected).size !== selected.length || selected.some(name => !APPLICATIONS.includes(name))) fail('invalid OURS_SERVER_APPLICATIONS selection');
+  return selected;
+}
 const exists = path => { try { fs.lstatSync(path); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } };
 const canonical = path => exists(path) ? fs.realpathSync(path) : join(canonical(dirname(path)), basename(path));
 const sameRecords = (a, b) => recordNames(a).length === recordNames(b).length && recordNames(a).every(name => a[name].equals(b[name]));
@@ -26,11 +34,13 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
     if (!value || resolve(value) !== value || canonical(value) !== value) fail(`${name} must select an absolute canonical path`);
     return value;
   };
+  const applications = selectedApplications(env);
   const state = selected('OURS_STATE_ROOT'), live = selected('OURS_LIVE_ROOT'), build = selected('OURS_BUILD_ROOT');
   if ([state, build].some(path => path === live || path.startsWith(live + '/'))) fail('maintenance and build records must be outside live application state');
   const backups = join(state, 'backups'), maintenance = join(state, '.maintenance');
   const domain = argv[1];
   if (![...APPLICATIONS, 'server'].includes(domain)) fail('select server, daemon, telegram, cowork or messenger');
+  if (domain !== 'server' && !applications.includes(domain)) fail(`${domain} is not part of this installation`);
   if (Object.hasOwn(env, 'OURS_STATE_DOMAIN') && env.OURS_STATE_DOMAIN !== domain) fail('selected volume domain does not match operation');
   const compatible = argv.at(-1) === '--compatible';
   if (compatible) argv = argv.slice(0, -1);
@@ -76,6 +86,7 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
   }
   function prepare() {
     if (!['server', 'cowork'].includes(domain) && !paired) return;
+    if (!applications.includes('cowork')) return;
     if (!env.OURS_COWORK_CLI_PATH || !env.OURS_COWORK_CONFIG) fail('Cowork maintenance requires its selected executable and configuration');
     owner([env.OURS_COWORK_CLI_PATH, '--json', 'prepare-backup'], { OURS_COWORK_CONFIG: env.OURS_COWORK_CONFIG });
   }
@@ -88,7 +99,7 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
     } catch (e) { fs.closeSync(fd); throw e; }
   }
   function validateTree(tree, records) {
-    const roots = domain === 'server' ? APPLICATIONS.map(name => join(tree, name)) : [tree];
+    const roots = domain === 'server' ? applications.map(name => join(tree, name)) : [tree];
     // Notifications shares Messenger's service, but owns a separate state directory.
     // Older installations/backups may contain only its empty mount placeholder.
     // Include every retained notification generation in full-server maintenance.
@@ -152,7 +163,7 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
         fs.chmodSync(path, 0o600);
       }
     }
-    if (['server', 'cowork'].includes(domain)) bindConfig(join(tree, domain === 'server' ? 'cowork/config.json' : 'config.json'), env.OURS_COWORK_CONFIG, ['version', 'stateDir', 'rest']);
+    if (['server', 'cowork'].includes(domain) && applications.includes('cowork')) bindConfig(join(tree, domain === 'server' ? 'cowork/config.json' : 'config.json'), env.OURS_COWORK_CONFIG, ['version', 'stateDir', 'rest']);
   }
   function retainAuthority(staging) {
     if (!['daemon', 'server'].includes(domain)) return;
@@ -161,7 +172,7 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
     owner([daemonOwner(env), 'config', 'access-retain', '--config', env.OURS_DAEMON_CONFIG, '--target-state-dir', daemon, '--json']);
     if (!commonTree) return;
     const credentials = join(live, 'credentials'), destination = join(staging, 'credentials');
-    for (const name of ['telegram', 'cowork', 'messenger']) if (!privateStat(join(credentials, name, 'daemon-token'), false, 0o600).size) fail('current managed credential is empty');
+    for (const name of applications.filter(name => name !== 'daemon')) if (!privateStat(join(credentials, name, 'daemon-token'), false, 0o600).size) fail('current managed credential is empty');
     fs.rmSync(destination, { recursive: true }); copyTree(credentials, destination);
   }
   function replace(staging) {
@@ -191,7 +202,7 @@ export async function runStateOperation(argv, env = process.env, checkpoints = {
       const previous = readRecords(selected('OURS_PREVIOUS_BUILD_ROOT'), false);
       const expected = readRecords(selected('OURS_EXPECTED_BUILD_ROOT'), false);
       if (!sameRecords(target, expected)) fail('recovery runtime differs from the retained candidate');
-      const core = APPLICATIONS.map(name => readRecords(join(live, name, PROVENANCE)));
+      const core = applications.map(name => readRecords(join(live, name, PROVENANCE)));
       const oldCore = core.every(records => sameRecords(records, previous));
       const newCore = core.every(records => sameRecords(records, target));
       if (!newCore && !(env.OURS_RECOVERY_PHASE === 'prepared' && oldCore)) fail('recovery core provenance differs from the retained candidate');

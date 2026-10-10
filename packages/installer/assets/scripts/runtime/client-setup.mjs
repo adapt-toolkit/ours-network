@@ -7,12 +7,18 @@ import {
   realpathSync, renameSync, unlinkSync, writeFileSync, readdirSync, chmodSync, chownSync,
 } from 'node:fs';
 
-const DELIVERY_FILES = [
-  '/credentials/telegram/daemon-token',
-  '/credentials/cowork/daemon-token',
-  '/credentials/messenger/daemon-token',
-];
 const fail = (message) => { throw new Error(message); };
+/** Applications of this installation; plugin-only installations have only the daemon. */
+const APPLICATIONS = (() => {
+  const all = ['daemon', 'telegram', 'cowork', 'messenger'];
+  const raw = process.env.OURS_SERVER_APPLICATIONS;
+  if (raw === undefined || raw === '') return all;
+  const selected = raw.split(',');
+  if (selected[0] !== 'daemon' || new Set(selected).size !== selected.length || selected.some(name => !all.includes(name))) fail('Invalid OURS_SERVER_APPLICATIONS selection');
+  return selected;
+})();
+const CONSUMERS = APPLICATIONS.filter(name => name !== 'daemon');
+const DELIVERY_FILES = CONSUMERS.map(name => `/credentials/${name}/daemon-token`);
 let diagnosticStage = 'validation';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -153,11 +159,11 @@ function prepare() {
   process.umask(0o077);
   validateCommon();
   for (const path of ['/storage/state', '/storage/state/mcp', '/storage/state/credentials',
-    ...['telegram', 'cowork', 'messenger'].map(name => `/storage/state/credentials/${name}`),
+    ...CONSUMERS.map(name => `/storage/state/credentials/${name}`),
     '/storage/backups', '/storage/.maintenance']) ensureDirectory(path);
   const coworkPort = Number(process.env.OURS_COWORK_REST_PORT);
   if (!Number.isSafeInteger(coworkPort) || coworkPort < 1 || coworkPort > 65535) fail('Configure a valid cowork REST port');
-  for (const domain of ['daemon', 'telegram', 'cowork', 'messenger']) {
+  for (const domain of APPLICATIONS) {
     const data = `/storage/state/${domain}`;
     ensureDirectory(data);
     // access-init owns the fresh-state check; no installer files enter daemon
@@ -173,14 +179,16 @@ function prepare() {
       fail('Existing daemon configuration differs; use the supported maintenance workflow');
     }
   } else atomicJson(path, expected);
-  const coworkPath = '/storage/state/cowork/config.json';
-  const cowork = composeConfig('cowork');
-  if (!existingPrivate(coworkPath, false)) atomicJson(coworkPath, cowork);
-  else {
-    const config = jsonObject(coworkPath);
-    if (config.version !== 1 || config.stateDir !== cowork.stateDir || config.rest?.enabled !== true || config.rest?.host !== '0.0.0.0') fail('Existing cowork configuration conflicts with Compose');
+  if (APPLICATIONS.includes('cowork')) {
+    const coworkPath = '/storage/state/cowork/config.json';
+    const cowork = composeConfig('cowork');
+    if (!existingPrivate(coworkPath, false)) atomicJson(coworkPath, cowork);
+    else {
+      const config = jsonObject(coworkPath);
+      if (config.version !== 1 || config.stateDir !== cowork.stateDir || config.rest?.enabled !== true || config.rest?.host !== '0.0.0.0') fail('Existing cowork configuration conflicts with Compose');
+    }
   }
-  prepareNotifications();
+  if (APPLICATIONS.includes('messenger')) prepareNotifications();
   console.log('OURS persistent volumes are ready');
 }
 
@@ -258,7 +266,10 @@ function exactKeys(value, allowed, label) {
 try {
   const operation = process.argv[2];
   if (operation === 'prepare') prepare();
-  else if (operation === 'telegram-input') { prepare(); await telegramInput(); }
+  else if (operation === 'telegram-input') {
+    if (!APPLICATIONS.includes('telegram')) fail('This installation has no Telegram connector');
+    prepare(); await telegramInput();
+  }
   else if (['access-init', 'access-issue', 'access-replace'].includes(operation)) access(operation, process.argv[3]);
   else fail('usage: client-setup.mjs prepare | telegram-input | access-init | access-issue [OUTPUT] | access-replace');
 } catch (error) {

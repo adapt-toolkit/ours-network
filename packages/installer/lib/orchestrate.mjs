@@ -41,6 +41,7 @@ import { configJournal, reportRollback } from './journal.mjs';
 import { detectDaemons, planDaemonSelection, resolveSelection } from './detect.mjs';
 import { detectPlatform, resolveChannel } from './logic.mjs';
 import { daemonEnv } from './effects.mjs';
+import { productOf, serverRole, PRODUCT_LABELS } from './product.mjs';
 import {
   buildClaudeMarketplace, buildCodexMarketplace, marketplaceJson, marketplacePaths,
   validateChannelVersion,
@@ -1377,6 +1378,7 @@ async function executeServerCommand(args, effects) {
     record = validateInstallation(record, args.stateDir);
     if (args.containerEngine && args.containerEngine !== (record.containerEngine ?? 'docker')) throw new Error('Conflicting container engine; explicit migration is required');
     if (args.mode && args.mode !== record.mode) throw new Error('Conflicting runtime mode; retained installation was not changed');
+    if (args.product && args.product !== productOf(record)) throw new Error(`This installation is ${PRODUCT_LABELS[productOf(record)].toLowerCase()}; it is kept as it is. Use a separate empty directory for the other kind of installation.`);
     if (args.operation !== 'update' && args.sources && (record.sourcePolicyHash
       ? effects.sourcePolicyHash(args.sources) !== record.sourcePolicyHash
       : effects.readText(args.sources) !== effects.readText(record.sourcesPath))) throw new Error('Conflicting source selection; use explicit server update');
@@ -1417,7 +1419,7 @@ async function executeServerCommand(args, effects) {
   if ((!existing || args.operation === 'update') && !record.buildTransition) {
     args.resolvedSources = await installStage('Package selection', 'Resolve the selected server packages before installation.', async () => {
       const policy = args.sourcePolicy ?? (args.sources ? effects.readJson(args.sources) : effects.packagedSourcePolicy());
-      return effects.resolveSourcePolicy(policy, 'server');
+      return effects.resolveSourcePolicy(policy, serverRole(record));
     });
   }
   if (!existing && args.sources) record.sourcePolicyHash = effects.sourcePolicyHash(args.sources);
