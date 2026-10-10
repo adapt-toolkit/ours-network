@@ -106,6 +106,10 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     if (retained && retained.instanceId !== record.instanceId) { keep('data', `Folder ${root}`, 'it now holds a different Ours installation than the unfinished removal recorded'); continue; }
     const item = { ...journalInstallation(record), ...(retained?.candidateProjects?.length ? { candidateProjects: [...new Set([...retained.candidateProjects, ...journalInstallation(record).candidateProjects])] } : {}), ...(retained?.images ? { images: retained.images } : {}), record, tombstone: tombstone(root, 'root', record.instanceId) };
     item.ownedImages = json(effects.readText(join(root, 'owned-images.json')) ?? '')?.images ?? null;
+    // An update interrupted before it recorded its transition still recorded the
+    // images it built: their candidate projects are part of this installation.
+    const recordedCandidates = Object.keys(item.ownedImages ?? {}).map(tag => tag.split(':')[0]).filter(project => /^ours-build[0-9a-f]{32}$/.test(project));
+    item.candidateProjects = [...new Set([...(item.candidateProjects ?? []), ...recordedCandidates])];
     (selected(root) ? found.installations : found.otherInstallations).push(item);
   }
 
