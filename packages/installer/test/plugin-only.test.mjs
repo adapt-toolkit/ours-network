@@ -57,3 +57,13 @@ test('the plugin-only Compose overlay publishes only the client prefix and mount
   assert.doesNotMatch(text, /telegram|cowork|messenger|credentials/);
   assert.equal(text.match(/OURS_SERVER_APPLICATIONS: daemon/g).length, 4);
 });
+
+test('custom agent app guidance names the exact server, the required session id and the pinned package', async () => {
+  const { customHarnessGuidance } = await import('../lib/welcome.mjs');
+  const text = customHarnessGuidance({ version: '1.2.0-nightly.13', profilePath: '/home/u/.ours-client/profile.json', marketplace: '/home/u/.ours-client-install/aaaaaaaaaaaaaaaa/marketplaces/claude-code' }).join('\n');
+  assert.match(text, /arguments: \/home\/u\/\.ours-client-install\/aaaaaaaaaaaaaaaa\/marketplaces\/claude-code\/plugins\/ours\/bin\/proxy\.mjs/);
+  assert.match(text, /CLAUDE_CODE_SESSION_ID = a value unique to each agent session/);
+  assert.match(text, /@ours\.network\/claude-code@1\.2\.0-nightly\.13/);
+  assert.match(text, /cannot use Ours this way/);
+  assert.doesNotMatch(text, /no extra settings are needed/);
+});

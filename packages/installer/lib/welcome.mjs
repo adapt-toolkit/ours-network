@@ -197,18 +197,23 @@ export async function collectWelcome(effects) {
 
 /** Exact, verified guidance for an agent app the installer cannot configure itself. */
 export function customHarnessGuidance({ version, profilePath, marketplace }) {
+  const folder = marketplace ? `${marketplace}/plugins/ours` : null;
   return [
     'Connect another agent app:',
-    `  Ours ships its tools as a Claude Code plugin, npm package @ours.network/claude-code@${version}`,
-    `  (https://www.npmjs.com/package/@ours.network/claude-code/v/${version}). It contains an MCP server`,
-    '  (stdio: node bin/proxy.mjs, after npm install in the package folder) and the "ours" skill in skills/ours.',
-    ...(marketplace ? [`  The same plugin is already prepared on this computer: ${marketplace}/plugins/ours`] : []),
-    `  It connects to Ours on this computer through ${profilePath}; no extra settings are needed.`,
-    '  Ask your agent:',
-    `    "Install the Ours plugin for yourself from npm package @ours.network/claude-code@${version}. If you can load`,
-    '     Claude Code plugins, add it as a plugin. Otherwise add its MCP server (node bin/proxy.mjs, stdio) to your',
-    '     MCP settings and use skills/ours/SKILL.md as your instructions for the Ours tools."',
-    '  Use this exact version: the public GitHub marketplace adapt-toolkit/ours-claude-marketplace currently',
-    '  selects an older plugin that does not work with this release. Not every agent app can run MCP servers.',
+    '  Ours provides its tools as an MCP server (stdio) plus instructions for the agent. Any agent app that can',
+    '  run a local stdio MCP server can use them; apps that cannot run MCP servers cannot use Ours this way.',
+    ...(folder ? [
+      `  Ready on this computer: ${folder}`,
+      '  Add this MCP server in the agent app\'s settings:',
+      `    command: node   arguments: ${folder}/bin/proxy.mjs`,
+      '    environment: CLAUDE_CODE_SESSION_ID = a value unique to each agent session (for example a new UUID).',
+      '    Without it the Ours tools refuse to act, because they keep each session\'s identity separate.',
+      `  Give the agent ${folder}/skills/ours/SKILL.md as its instructions for the Ours tools.`,
+    ] : []),
+    `  It connects to Ours on this computer through ${profilePath}; no other settings are needed.`,
+    `  The same plugin is published as npm package @ours.network/claude-code@${version}`,
+    `  (https://www.npmjs.com/package/@ours.network/claude-code/v/${version}); after npm install in its folder it is used`,
+    '  the same way. Use this exact version: the public GitHub marketplace adapt-toolkit/ours-claude-marketplace',
+    '  currently selects an older plugin that does not work with this release.',
   ];
 }
