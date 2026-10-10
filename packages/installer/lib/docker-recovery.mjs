@@ -2,6 +2,7 @@ import { readFileSync, lstatSync, realpathSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteConfig } from './config.mjs';
 import { engineName, runContainer } from './container-engine.mjs';
+import { isPluginOnly } from './product.mjs';
 
 const assets = new URL('../assets/', import.meta.url);
 const files = ['scripts/runtime/recover.mjs', 'scripts/runtime/dependency-ready.mjs',
@@ -23,11 +24,15 @@ export function refreshDockerRecovery(record) {
     atomicWriteConfig(marker, 'required\n'); changed = true;
     atomicWriteConfig(path, bytes.toString());
   };
-  for (const name of files) replace(name, readFileSync(new URL(name, assets)));
+  // Plugin-only daemons also serve the client prefix from the image.
+  const selected = isPluginOnly(record) ? [...files, 'scripts/runtime/daemon-client-prefix.mjs'] : files;
+  for (const name of selected) replace(name, readFileSync(new URL(name, assets)));
   const dockerfile = join(record.workDir, 'Dockerfile'); owned(dockerfile);
   const text = readFileSync(dockerfile, 'utf8');
   const line = 'COPY --chmod=644 scripts/runtime/recover.mjs scripts/runtime/dependency-ready.mjs /opt/ours/docker/';
   if (!text.includes('scripts/runtime/recover.mjs')) replace('Dockerfile', Buffer.from(text.replace('FROM node:24 AS maintenance', `${line}\nFROM node:24 AS maintenance`)));
+  const prefixLine = 'COPY --chmod=644 scripts/runtime/daemon-client-prefix.mjs /opt/ours/docker/daemon-client-prefix.mjs';
+  if (isPluginOnly(record) && !readFileSync(dockerfile, 'utf8').includes(prefixLine)) replace('Dockerfile', Buffer.from(readFileSync(dockerfile, 'utf8').replace('FROM node:24 AS maintenance', `${prefixLine}\nFROM node:24 AS maintenance`)));
   return changed || existsSync(marker);
 }
 

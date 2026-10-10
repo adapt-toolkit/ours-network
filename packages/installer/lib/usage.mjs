@@ -2,10 +2,20 @@
 export const USAGE = `ours-install — interactive setup with optional CLI presets.
 
   ours-install
-    Opens the console form. Choose all (server + clients), server, or client;
-    runtime, installation directory, identity, integrations and Fleet settings.
+    Asks what you would like to do: add collaboration tools to the agent apps
+    you already use, install the complete Ours workspace, connect to a workspace
+    on another computer, or another setup. When Ours is already installed it
+    offers Update (recommended), Repair, Remove or Cancel instead, keeping the
+    installation's product, runtime and connected apps. Your existing agent
+    configuration, skills, plugins and settings are kept.
     Full setup runs the server in Docker or Podman, which provide the gateway local clients need.
     Native mode is offered for server-only setup. Windows uses WSL.
+
+  Collaboration tools only (one Ours service in Docker, plugins for Claude Code and Codex):
+    ours-install --plugin-only --state-dir ~/.ours-install --identity-name "Your Name" --integrations claude-code,codex
+
+  Remove Ours completely (lists everything first; asks you to type "remove ours"):
+    ours-install remove [--state-dir PATH] [--dry-run]
 
   Install now, configure Fleet agents in the App after linking:
     ours-install --username alex --name Alex --surname Taylor --disable-fleet-agents-setup
@@ -24,6 +34,8 @@ export const USAGE = `ours-install — interactive setup with optional CLI prese
   Update a retained installation, preserving its identities:
     ours-install all update --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json --compatible
 
+  --plugin-only             collaboration tools only: the daemon service and the Claude Code/Codex
+                            plugins; no workspace apps, Fleet, Telegram or gateway (Docker or Podman)
   --scope all|server|client   preset which parts to configure (default all)
   --action install|update    equivalent to the positional operation
   --mode docker|native      packages is also accepted for native mode

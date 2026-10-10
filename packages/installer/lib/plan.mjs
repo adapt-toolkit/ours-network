@@ -1,5 +1,6 @@
 import { validateContainerEngine } from './container-engine.mjs';
 import { gatewayAddress } from './gateway.mjs';
+import { PRODUCTS } from './product.mjs';
 // ours-install v3 — daemon creation and boot-service installation.
 //
 // Pure planning code, like lib/target.mjs: the orchestrator
@@ -283,7 +284,11 @@ export function planDaemonSteps(target, { cliVersionChanged = false, cliStartedI
 export const SERVER_PACKAGES = ['sdk', 'cli', 'daemon', 'tg-connector', 'cowork', 'messenger-server'].map(n => `@ours.network/${n}`);
 /** Selected when the policy names it; retained policies from before it existed stay valid. */
 export const NOTIFICATIONS_PACKAGE = '@ours.network/notifications';
-const serverPackages = manifest => [...SERVER_PACKAGES, ...(manifest?.packages?.[NOTIFICATIONS_PACKAGE] ? [NOTIFICATIONS_PACKAGE] : [])];
+/** Plugin-only installations select only these; no application packages. */
+export const DAEMON_PACKAGES = ['sdk', 'cli', 'daemon'].map(n => `@ours.network/${n}`);
+const serverPackages = (manifest, role = 'server') => role === 'daemon' ? DAEMON_PACKAGES
+  : [...SERVER_PACKAGES, ...(manifest?.packages?.[NOTIFICATIONS_PACKAGE] ? [NOTIFICATIONS_PACKAGE] : [])];
+const serverRoles = ['server', 'daemon'];
 export const SERVER_DEPENDENCIES = {
   daemon: [], telegram: ['daemon'], cowork: ['daemon'], messenger: ['daemon'],
 };
@@ -299,7 +304,7 @@ export function maintenanceServices(record, domain) {
 
 /** Validate exact supplied selections, without rewriting the source authority. */
 export function selectSourcePackages(manifest, role, clients = []) {
-  const names = role === 'server' ? serverPackages(manifest) : clients.map(n => `@ours.network/${n}`);
+  const names = serverRoles.includes(role) ? serverPackages(manifest, role) : clients.map(n => `@ours.network/${n}`);
   const result = {};
   for (const name of names) {
     const selected = manifest?.packages?.[name];
@@ -317,7 +322,7 @@ export function selectSourcePackages(manifest, role, clients = []) {
 /** Resolve a packaged compatibility policy into a role-filtered exact selection. */
 export async function resolveSourcePolicy(manifest, role, clients = [], resolveNpm) {
   const release = releaseBinding(manifest);
-  const names = role === 'server' ? serverPackages(manifest) : clients.map(name => `@ours.network/${name}`);
+  const names = serverRoles.includes(role) ? serverPackages(manifest, role) : clients.map(name => `@ours.network/${name}`);
   const packages = {};
   const sourceNames = new Set();
   for (const name of names) {
@@ -371,6 +376,11 @@ export function validateInstallation(record, root) {
     || !Array.isArray(record.services) || record.services[0] !== 'daemon' || new Set(record.services).size !== record.services.length || record.services.some(s => !SERVER_SERVICES.includes(s) && !(s === 'gateway' && record.gateway?.version === 1))) {
     throw new Error('Invalid or conflicting installation selection');
   }
+  if (record.product !== undefined && (!PRODUCTS.includes(record.product) || record.product === 'workspace'
+    || record.schema !== 2 || record.mode !== 'docker' || record.gateway !== undefined
+    || JSON.stringify(record.services) !== JSON.stringify(['daemon']))) {
+    throw new Error('Invalid plugin-only installation selection');
+  }
   if (record.gateway !== undefined && (record.schema !== 2 || record.mode !== 'docker' || record.gateway?.version !== 1
     || Object.keys(record.gateway).some(key => !['version', 'serverUrl'].includes(key)) || record.services.at(-1) !== 'gateway')) {
     throw new Error('Invalid gateway installation selection');
@@ -414,7 +424,7 @@ export function validateInstallation(record, root) {
       throw new Error('Invalid server build transition');
     }
     validateInstallation(candidate, candidate.root);
-    for (const key of ['schema', 'mode', 'containerEngine', 'containerBinding', 'instanceId', 'services', 'gateway', 'port', 'coworkPort', 'messengerPort', 'messengerIdentity', 'uid', 'gid']) {
+    for (const key of ['schema', 'mode', 'product', 'containerEngine', 'containerBinding', 'instanceId', 'services', 'gateway', 'port', 'coworkPort', 'messengerPort', 'messengerIdentity', 'uid', 'gid']) {
       if (JSON.stringify(candidate[key]) !== JSON.stringify(record[key])) throw new Error('Conflicting server build candidate');
     }
   }

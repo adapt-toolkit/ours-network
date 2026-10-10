@@ -17,15 +17,16 @@ import { engineName, bindPodman, runContainer, nativeBuildCommands } from './con
 import { publishClientCli } from './client-cli.mjs';
 import { commandFailure } from './diagnostics.mjs';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
+import { connect as netConnect } from 'node:net';
 import { clientPackageNames, maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
 import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
 import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress } from './gateway.mjs';
-import { createServerOnboarding } from './server-onboarding.mjs';
+import { createServerOnboarding, retainedCredentialRefused } from './server-onboarding.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
@@ -33,10 +34,24 @@ import { qualifyDockerRuntime, refreshDockerPolicyCopy } from './docker-runtime-
 import { refreshDockerRecovery, recoveryCompose, reconcileDockerRecovery } from './docker-recovery.mjs';
 import { reportBootReadiness } from './boot-readiness.mjs';
 import { classifyStateDir } from './detect.mjs';
+import { isPluginOnly, serverRole, pluginOnlyCompose, PLUGIN_ONLY_COMPOSE } from './product.mjs';
+import { OWNERS_FILE, OWNED_IMAGES_FILE, addOwner, ownedImagesRecord, changedImages } from './ownership.mjs';
+import { IMAGE_TARGETS } from './removal-plan.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
 import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
 
 /** GET http://127.0.0.1:<port>/state-dir — the unauthenticated identity probe. */
+/** Whether anything accepts TCP connections on a loopback port: 'refused', 'open', or 'unknown' (timeout or other error). */
+function portState(port, { timeoutMs = 1500 } = {}) {
+  return new Promise(done => {
+    const socket = netConnect({ host: '127.0.0.1', port });
+    const finish = state => { socket.destroy(); done(state); };
+    socket.setTimeout(timeoutMs, () => finish('unknown'));
+    socket.once('connect', () => finish('open'));
+    socket.once('error', error => finish(error?.code === 'ECONNREFUSED' ? 'refused' : 'unknown'));
+  });
+}
+
 async function probePort(port, { timeoutMs = 1500 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -338,6 +353,40 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
         closeSync(fd);
       }
     },
+    /**
+     * Removal holds the installation lock of every root it removes for the
+     * whole run, so no installer operation can start inside a root being deleted.
+     */
+    async holdInstallationLocks(roots) {
+      const { tryLock } = await import('../assets/scripts/maintenance/state-native.mjs');
+      const held = [];
+      try {
+        for (const root of roots) {
+          if (!existsSync(root)) continue;
+          privateDirectory(root);
+          const path = join(root, '.operation.lock');
+          const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+          held.push(fd);
+          const stat = fstatSync(fd);
+          if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) || stat.nlink !== 1) throw new Error(`Unsafe installation lock in ${root}`);
+          if (!tryLock(fd)) throw new Error(`Another installer operation is active in ${root}; try again when it has finished`);
+        }
+      } catch (error) {
+        for (const fd of held) closeSync(fd);
+        throw error;
+      }
+      return () => { for (const fd of held) { try { closeSync(fd); } catch { /* released */ } } };
+    },
+    /** lstat as a plain record; null when absent. Never follows a link. */
+    stat: (path) => {
+      try {
+        const st = lstatSync(path, { bigint: true });
+        return { type: st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other', uid: Number(st.uid), mode: Number(st.mode & 0o7777n), nlink: Number(st.nlink), size: Number(st.size), id: `${st.dev}:${st.ino}` };
+      } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
+    },
+    realpath: (path) => { try { return realpathSync(path); } catch { return null; } },
+    list: (path) => { try { return readdirSync(path); } catch { return null; } },
+    uid: process.getuid?.() ?? -1,
     home,
     env,
     version,
@@ -352,6 +401,9 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     // pure planner already gated four ways, and this deletes exactly that.
     removeDir: (path) => { rmSync(resolve(path), { recursive: true, force: true }); },
     removeFile: (path) => { rmSync(resolve(path), { force: true }); },
+    removeEmptyDir: (path) => { rmdirSync(resolve(path)); },
+    renamePath: (from, to) => { renameSync(resolve(from), resolve(to)); },
+    sleep: (ms) => new Promise(done => setTimeout(done, ms)),
     copyDir: (source, destination) => {
       mkdirSync(dirname(resolve(destination)), { recursive: true, mode: 0o700 });
       cpSync(resolve(source), resolve(destination), {
@@ -386,6 +438,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     brokerUrl: env.OURS_BROKER_URL ?? 'wss://broker1.ours.network',
     now: () => Date.now(),
     probe: (port) => probePort(port),
+    portState: (port) => portState(port),
     isTaken: (port) => portTakenSync(port),
     readJson: readJsonFile,
     readProfile: readHostProfileFile,
@@ -463,7 +516,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
   return Object.assign(effects, networkEffects(effects));
 }
 
-export const __testables = { probePort, portTakenSync, readJsonFile, readTextFile, readHostProfileFile, verifyHostProfile, installedVersionOf, packageDependenciesOf, resolvePackageVersion, codexMarketplace, hasClaudePlugin, knownStateDirsIn };
+export const __testables = { probePort, portState, portTakenSync, readJsonFile, readTextFile, readHostProfileFile, verifyHostProfile, installedVersionOf, packageDependenciesOf, resolvePackageVersion, codexMarketplace, hasClaudePlugin, knownStateDirsIn };
 
 // -----------------------------------------------------------------------------
 // THE PAIR
@@ -560,6 +613,7 @@ export function networkEffects(effects) {
     ...(record.gateway ? ['--file', join(record.workDir, 'docker-compose.gateway.yaml')] : []),
     ...(existsSync(join(record.workDir, 'compose.recovery.json')) ? ['--file', join(record.workDir, 'compose.recovery.json')] : []),
     ...(engineName(record) === 'podman' ? ['--file', join(record.workDir, 'compose.podman.json')] : []),
+    ...(isPluginOnly(record) ? ['--file', join(record.workDir, PLUGIN_ONLY_COMPOSE)] : []),
     '--project-name', record.project, ...args,
   ];
   const container = (record, args, options = {}) => runContainer(effects, record, args, options);
@@ -647,6 +701,7 @@ export function networkEffects(effects) {
     }
   };
   return {
+    credentialRefused: profile => retainedCredentialRefused(profile),
     ...createServerOnboarding(effects, { compose, localEnv, bin }),
     sourcePolicyHash(path) {
       return createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -673,7 +728,7 @@ export function networkEffects(effects) {
         return version;
       });
     },
-    newInstallation(root, mode, { containerEngine } = {}) {
+    newInstallation(root, mode, { containerEngine, product } = {}) {
       if (existsSync(root)) {
         privateDirectory(root);
         if (readdirSync(root).some(name => name !== '.operation.lock')) throw new Error('Installation root is not empty and has no selection record');
@@ -681,7 +736,10 @@ export function networkEffects(effects) {
       const instanceId = env.OURS_DAEMON_ID || randomUUID();
       if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(instanceId)) throw new Error('OURS_DAEMON_ID must be a lowercase UUID');
       const project = `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
-      return { schema: 2, root, mode, ...(containerEngine ? { containerEngine } : {}), instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services: [...SERVER_SERVICES, ...(mode === 'docker' ? ['gateway'] : [])], ...(mode === 'docker' ? { gateway: { version: 1 } } : {}), port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
+      if (isPluginOnly(product ?? 'workspace') && mode !== 'docker') throw new Error('Collaboration tools for existing agent apps run in Docker or Podman');
+      const services = isPluginOnly(product ?? 'workspace') ? ['daemon'] : [...SERVER_SERVICES, ...(mode === 'docker' ? ['gateway'] : [])];
+      const gateway = mode === 'docker' && !isPluginOnly(product ?? 'workspace');
+      return { schema: 2, root, mode, ...(isPluginOnly(product ?? 'workspace') ? { product } : {}), ...(containerEngine ? { containerEngine } : {}), instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services, ...(gateway ? { gateway: { version: 1 } } : {}), port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
     },
     async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName, explicitPorts } = {}) {
       if (!existing && operation === 'install' && Number.isInteger(record.port)) selectServerPorts(record, portTakenSync, explicitPorts, effects.out);
@@ -748,7 +806,7 @@ export function networkEffects(effects) {
         await effects.run(effects.platform.platform === 'linux' ? 'systemctl' : 'launchctl', effects.platform.platform === 'linux' ? ['--user', 'show-environment'] : ['print', `gui/${process.getuid()}`]);
         if (operation === 'install') {
           for (const command of ['node', 'npm']) await effects.run(command, ['--version']);
-          const packages = selectSourcePackages(sourceManifest ?? effects.readJson(existing ? record.sourcesPath : sourcePath), 'server');
+          const packages = selectSourcePackages(sourceManifest ?? effects.readJson(existing ? record.sourcesPath : sourcePath), serverRole(record));
           if (Object.values(packages).some(selection => selection.source)) {
             // Native dependencies in source builds still use their own toolchains.
             for (const command of ['python3', 'git', 'make', 'cc']) await effects.run(command, ['--version']);
@@ -768,7 +826,7 @@ export function networkEffects(effects) {
     },
     async initializeSelection(record, manifest, { retainConfig = false } = {}) {
       if (typeof manifest === 'string') manifest = JSON.parse(readFileSync(manifest, 'utf8'));
-      selectSourcePackages(manifest, 'server');
+      selectSourcePackages(manifest, serverRole(record));
       const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
       ensurePrivateDirectory(record.root);
       if (record.schema === 2) {
@@ -841,6 +899,9 @@ export function networkEffects(effects) {
       if (!existsSync(materialized)) writePrivateNew(materialized, retained);
       else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
       if (record.mode === 'docker') {
+        // Image IDs before this run builds anything: only what it creates or changes becomes proof.
+        const imagesBefore = runtimeOnly ? null : await effects.imageIds(record);
+        if (isPluginOnly(record)) atomicWriteConfig(join(record.workDir, PLUGIN_ONLY_COMPOSE), pluginOnlyCompose());
         if (engineName(record) === 'podman') atomicWriteConfig(join(record.workDir, 'compose.podman.json'), JSON.stringify({ services: Object.fromEntries(record.services.map(name => [name, { restart: 'unless-stopped' }])) }));
         const rebuildPrivateScripts = refreshDockerPolicyCopy(record);
         const rebuildRecovery = refreshDockerRecovery(record);
@@ -864,6 +925,9 @@ export function networkEffects(effects) {
         }
         if (runtimeOnly) return;
         await effects.prepareServerVolumes(record);
+        // Volume preparation may build the maintenance image; record after it.
+        const imagesAfter = await effects.imageIds(record);
+        await effects.recordOwnedImages(record, changedImages(imagesBefore, imagesAfter));
       } else {
         if (!existsSync(join(record.workDir, '.packages-ready'))) {
           const sourceRoot = join(record.root, `build-${randomUUID()}`);
@@ -903,7 +967,7 @@ export function networkEffects(effects) {
           ? Buffer.from(`${JSON.stringify(args.resolvedSources, null, 2)}\n`)
           : readFileSync(args.sources))
         : readFileSync(record.sourcesPath);
-      selectSourcePackages(JSON.parse(sources), 'server');
+      selectSourcePackages(JSON.parse(sources), serverRole(record));
       privateDirectory(record.root);
       const root = mkdtempSync(join(record.root, '.build-'));
       const candidate = { ...record, root, workDir: join(root, 'runtime'), sourcesPath: join(root, 'sources.json'),
@@ -915,6 +979,9 @@ export function networkEffects(effects) {
         await effects.prepareInstallation(candidate, { runtimeOnly: true });
         if (candidate.mode === 'docker') {
           await compose(candidate, ['build', 'state-operation']);
+          // The candidate's project name is new for this build: every image under it was
+          // built now. Record them with the installation so removal can prove them.
+          await effects.recordOwnedImages(record, await effects.imageIds(candidate));
           await effects.copyDockerBuildRecords(candidate, candidate.workDir);
         }
         // npm emits readable build records; maintenance consumes private copies.
@@ -941,6 +1008,15 @@ export function networkEffects(effects) {
       const stage = mkdtempSync(join(directory, '.records-'));
       const name = `${record.project}-records`;
       let created = false;
+      // An interrupted earlier run can leave its stopped helper behind; clear only that.
+      const stale = await container(record, ['container', 'inspect', name], { allowCodes: [1] });
+      const [value] = stale.code === 0 ? (() => { try { return JSON.parse(stale.stdout); } catch { return []; } })() : [];
+      if (value) {
+        const helper = value?.State?.Running === false && JSON.stringify(value?.Config?.Entrypoint) === JSON.stringify(['/bin/true'])
+          && value?.Config?.Image === `${record.project}:runtime`;
+        if (!helper) throw new Error(`A container named ${name} exists and is not this installer's stopped build-record helper; remove or rename it, then run the installer again`);
+        await container(record, ['rm', name]);
+      }
       try {
         await container(record, ['create', '--name', name, '--entrypoint', '/bin/true', `${record.project}:runtime`]);
         created = true;
@@ -1037,7 +1113,10 @@ export function networkEffects(effects) {
     },
     async publishServerBuild(record, candidate) {
       const previous = join(candidate.root, 'previous-runtime');
+      const built = {};
       if (record.mode === 'docker') {
+        const proven = effects.ownedImages(record);
+        const before = await effects.imageIds(record);
         for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
           const retained = `${candidate.project}:previous-${target}`;
           const found = await container(record, ['image', 'inspect', retained], { allowCodes: [1] });
@@ -1045,7 +1124,14 @@ export function networkEffects(effects) {
             const current = await container(record, ['image', 'inspect', `${record.project}:${target}`], { allowCodes: [1] });
             if (current.code === 0) await container(record, ['tag', `${record.project}:${target}`, retained]);
           }
+          // A retained copy is proven only when the image it copies already was.
+          const tag = `${record.project}:${target}`;
+          if (before[tag] && proven[tag] === before[tag]) built[retained] = before[tag];
         }
+        // The candidate project name is a random per-build name kept in the private
+        // record; its images were built by this update.
+        Object.assign(built, Object.fromEntries(Object.entries(await effects.imageIds(candidate, ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]))
+          .map(([tag, id]) => [`${record.project}:${tag.slice(candidate.project.length + 1)}`, id])));
       }
       if (!existsSync(previous)) {
         privateDirectory(record.workDir);
@@ -1064,6 +1150,27 @@ export function networkEffects(effects) {
         }
       }
       atomicWriteConfig(record.sourcesPath, readFileSync(candidate.sourcesPath));
+      if (record.mode === 'docker') await effects.recordOwnedImages(record, built);
+    },
+    /** Current image IDs of this project's tags (only those that exist). */
+    async imageIds(record, targets = IMAGE_TARGETS) {
+      const images = {};
+      for (const target of targets) {
+        const tag = `${record.project}:${target}`;
+        const found = await container(record, ['image', 'inspect', '--format', '{{.Id}}', tag], { allowCodes: [1] });
+        if (found.code === 0 && /^sha256:[0-9a-f]{64}$/.test(found.stdout.trim())) images[tag] = found.stdout.trim();
+      }
+      return images;
+    },
+    ownedImages(record) {
+      const path = join(record.root, OWNED_IMAGES_FILE);
+      try { const value = JSON.parse(readFileSync(path, 'utf8')); return value?.schema === 1 && value.images && typeof value.images === 'object' ? value.images : {}; } catch { return {}; }
+    },
+    /** Add the IDs of images this run built; never adopts a tag it did not produce. */
+    async recordOwnedImages(record, built) {
+      const path = join(record.root, OWNED_IMAGES_FILE);
+      const next = ownedImagesRecord(existsSync(path) ? readFileSync(path, 'utf8') : null, built);
+      if (next) atomicWriteConfig(path, next);
     },
     async validateServerBuildState(record) {
       if (record.mode === 'docker') {
@@ -1299,6 +1406,19 @@ export function networkEffects(effects) {
       } else await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
       effects.out('Managed services removed; installation selection, stored identities, credentials and volumes retained.');
     },
+    /**
+     * Stop a managed installation's services before its complete removal.
+     * Docker writers stop through Compose; containers are removed by project
+     * label afterwards. Native services are retired through their owners, which
+     * also removes their boot registrations.
+     */
+    async serverStopForRemoval(record) {
+      if (record.mode === 'docker') {
+        if (existsSync(record.workDir)) await effects.serverLifecycle(record, 'stop');
+        return;
+      }
+      await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
+    },
     async serverLifecycle(record, operation, selected = record.services) {
       record = buildRuntime(record);
       if (record.mode === 'docker') {
@@ -1436,6 +1556,14 @@ export function networkEffects(effects) {
       // This directory retains active executables, not disposable download cache.
       ensurePrivateDirectory(join(home, '.ours-client-install'));
       ensurePrivateDirectory(root);
+      // Record which installation this acquisition serves, for complete removal.
+      let owner = null;
+      try { owner = readHostProfileFile(configPath)?.expectedInstanceId ?? null; } catch { /* not yet imported */ }
+      const ownersPath = join(root, OWNERS_FILE);
+      try {
+        const ownerRecord = owner ? addOwner(existsSync(ownersPath) ? readFileSync(ownersPath, 'utf8') : null, owner) : null;
+        if (ownerRecord) atomicWriteConfig(ownersPath, ownerRecord);
+      } catch (error) { effects.out?.(`! ${error.message}; complete removal will leave ${root} in place and say so.`); }
       const retained = join(root, 'sources.json');
       const bytes = readFileSync(sourcesPath);
       if (!existsSync(retained)) writePrivateNew(retained, bytes);

@@ -121,3 +121,21 @@ test('a prepared local profile hands its notification producer credential to the
   await runClientCommand({ operation: 'install' }, f.effects);
   assert.deepEqual(seen, [producer, undefined]);
 });
+
+test('an update moves the Codex plugin source from an earlier download folder, and never replaces a foreign one', async () => {
+  const runs = [];
+  const moved = fixture();
+  moved.effects.codexMarketplace = async () => ({ name: 'ours-codex-marketplace', marketplaceSource: { sourceType: 'local', source: `${moved.effects.home}/.ours-client-install/aaaaaaaaaaaaaaaa/marketplaces/codex` } });
+  moved.effects.run = async (cmd, args) => { runs.push([cmd, ...args].join(' ')); return { ok: true, code: 0 }; };
+  assert.equal(await runClientCommand({ operation: 'install' }, moved.effects), 0);
+  const codex = runs.filter(line => line.startsWith('codex plugin'));
+  assert.deepEqual(codex.slice(0, 2), ['codex plugin marketplace remove ours-codex-marketplace', 'codex plugin marketplace add /private/marketplace']);
+
+  const foreign = fixture();
+  const foreignRuns = [];
+  foreign.effects.codexMarketplace = async () => ({ name: 'ours-codex-marketplace', marketplaceSource: { sourceType: 'local', source: '/home/me/my-own-market' } });
+  foreign.effects.run = async (cmd, args) => { foreignRuns.push([cmd, ...args].join(' ')); return { ok: true, code: 0 }; };
+  assert.equal(await runClientCommand({ operation: 'install' }, foreign.effects), 2);
+  assert.ok(!foreignRuns.some(line => line.startsWith('codex plugin marketplace')), foreignRuns.join('\n'));
+  assert.match(foreign.effects.recorder.out.join('\n'), /did not create\. It was left unchanged/);
+});

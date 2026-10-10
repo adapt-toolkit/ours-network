@@ -101,11 +101,21 @@ export function bindDockerLayout(staging, options) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 }
 
+/** The installation's applications: all four, or the daemon alone for collaboration tools. */
+export function selectedComponents(env = process.env) {
+  const raw = env.OURS_SERVER_APPLICATIONS;
+  if (raw === undefined || raw === '') return COMPONENTS;
+  const selected = raw.split(',');
+  if (selected[0] !== 'daemon' || new Set(selected).size !== selected.length || selected.some(name => !COMPONENTS.includes(name))) throw new Error('invalid OURS_SERVER_APPLICATIONS selection');
+  return selected;
+}
+
 /** Offline validation also covers components intentionally left stopped. */
 export function validateDockerLayout(tree, options) {
+  const components = options.components ?? COMPONENTS;
   validateBuildRecordSet(options.provenance);
   scanSource(tree, options);
-  for (const component of COMPONENTS) {
+  for (const component of components) {
     if (fs.readdirSync(join(tree, component, '.ours-provenance')).sort().join() !== recordNames(options.provenance).sort().join()) throw new Error('Mixed component provenance');
     for (const name of recordNames(options.provenance)) {
       if (!privateBytes(join(tree, component, '.ours-provenance', name), options).equals(options.provenance[name])) {
@@ -123,11 +133,11 @@ export function validateDockerLayout(tree, options) {
   if (daemon.stateDir !== DAEMON_STATE || daemon.port !== 3050
     || (daemon.networkMcp !== undefined && (daemon.networkMcp?.applicationConfigPath !== join(MCP_STATE, 'config.json')
       || JSON.stringify(daemon.networkMcp?.profile) !== JSON.stringify(profile)))
-    || objectAt(join(tree, 'cowork/config.json'), options).stateDir !== '/var/lib/ours-cowork') {
+    || (components.includes('cowork') && objectAt(join(tree, 'cowork/config.json'), options).stateDir !== '/var/lib/ours-cowork')) {
     throw new Error('Converted Docker deployment configuration is inconsistent');
   }
   if (fs.existsSync(join(tree, 'mcp/config.json'))) objectAt(join(tree, 'mcp/config.json'), options);
-  for (const path of ['daemon/daemon-token', ...COMPONENTS.filter(name => name !== 'daemon').map(name => `credentials/${name}/daemon-token`)]) {
+  for (const path of ['daemon/daemon-token', ...components.filter(name => name !== 'daemon').map(name => `credentials/${name}/daemon-token`)]) {
     if (!privateBytes(join(tree, path), options).length) throw new Error('Converted managed credential is empty');
   }
 }
@@ -214,13 +224,14 @@ export async function runDockerLayoutCommand(argv, env = process.env) {
     cli: daemonOwner({ OURS_DAEMON_BIN_DIR: '/opt/ours/node_modules/.bin', ...env }),
     configPath: env.OURS_DAEMON_CONFIG || '/var/lib/ours/config.json',
     provenance: readBuildRecords(build),
+    components: selectedComponents(env),
   };
   if (!options.uid || !options.gid) throw new Error('Conversion requires a non-root owner');
   if (operation === 'cleanup') {
     console.log(JSON.stringify({ emptyVolumes: cleanupDockerSource(source, options) }));
     return;
   }
-  try {
+  if (options.components.includes('cowork')) try {
     execFileSync(env.OURS_COWORK_CLI_PATH || '/opt/ours/node_modules/.bin/ours-cowork', ['--json', 'prepare-backup'], {
       env: { ...env, OURS_COWORK_CONFIG: env.OURS_COWORK_CONFIG || '/var/lib/ours-cowork/config.json',
         OURS_COWORK_STATE_DIR: env.OURS_COWORK_STATE_DIR || '/var/lib/ours-cowork' },

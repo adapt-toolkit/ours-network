@@ -41,6 +41,7 @@ import { configJournal, reportRollback } from './journal.mjs';
 import { detectDaemons, planDaemonSelection, resolveSelection } from './detect.mjs';
 import { detectPlatform, resolveChannel } from './logic.mjs';
 import { daemonEnv } from './effects.mjs';
+import { productOf, serverRole, PRODUCT_LABELS } from './product.mjs';
 import {
   buildClaudeMarketplace, buildCodexMarketplace, marketplaceJson, marketplacePaths,
   validateChannelVersion,
@@ -931,6 +932,29 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
     let manual = plan.manual;
     if (exactSuite?.localPackages?.[plan.name]) {
       const registration = await effects.prepareClientMarketplace(plan.name, exactSuite.localPackages[plan.name]);
+      // Codex refuses to re-add a marketplace name from a new folder. An update
+      // moves it to a new download folder: replace only a registration that
+      // points into an earlier download folder of this installer.
+      if (plan.name === 'codex') {
+        const current = await effects.codexMarketplace?.();
+        const source = current?.marketplaceSource;
+        if (current && !(source?.sourceType === 'local' && source?.source === registration)) {
+          const earlier = source?.sourceType === 'local' && typeof source.source === 'string'
+            && /^[0-9a-f]{16}\/marketplaces\/codex$/.test(source.source.slice(join(effects.home, '.ours-client-install').length + 1))
+            && source.source.startsWith(join(effects.home, '.ours-client-install') + '/');
+          if (!earlier) {
+            const where = source?.source ?? 'another source';
+            effects.out(warn(`Codex already has a plugin source named ours-codex-marketplace from ${where}, which this installer did not create. It was left unchanged. Remove it with: codex plugin marketplace remove ours-codex-marketplace, then run the installer again.`));
+            rows.push({ ...row, state: 'failed', failedCommand: ['codex', 'plugin', 'marketplace', 'add', registration], failedStep: `Register ${plan.label} marketplace`, detail: `a different ours-codex-marketplace source (${where}) is registered` });
+            continue;
+          }
+          const moved = await attempt(effects, false, 'codex plugin marketplace remove ours-codex-marketplace (earlier download folder)', () => effects.run('codex', ['plugin', 'marketplace', 'remove', 'ours-codex-marketplace'], { env: profileEnv(target) }), clientDiagnostic);
+          if (!moved.ok) {
+            rows.push({ ...row, state: 'failed', failedCommand: ['codex', 'plugin', 'marketplace', 'remove', 'ours-codex-marketplace'], failedStep: `Move ${plan.label} marketplace`, detail: clientDiagnostic(moved.error) });
+            continue;
+          }
+        }
+      }
       const steps = plan.name === 'codex'
         ? [['codex', 'plugin', 'marketplace', 'add', registration], ['codex', 'plugin', 'add', 'ours@ours-codex-marketplace']]
         : [['claude', 'plugin', 'marketplace', 'add', registration], ['claude', 'plugin', await effects.hasClaudePlugin() ? 'update' : 'install', 'ours@ours.network']];
@@ -1377,6 +1401,7 @@ async function executeServerCommand(args, effects) {
     record = validateInstallation(record, args.stateDir);
     if (args.containerEngine && args.containerEngine !== (record.containerEngine ?? 'docker')) throw new Error('Conflicting container engine; explicit migration is required');
     if (args.mode && args.mode !== record.mode) throw new Error('Conflicting runtime mode; retained installation was not changed');
+    if (args.product && args.product !== productOf(record)) throw new Error(`This installation is ${PRODUCT_LABELS[productOf(record)].toLowerCase()}; it is kept as it is. Use a separate empty directory for the other kind of installation.`);
     if (args.operation !== 'update' && args.sources && (record.sourcePolicyHash
       ? effects.sourcePolicyHash(args.sources) !== record.sourcePolicyHash
       : effects.readText(args.sources) !== effects.readText(record.sourcesPath))) throw new Error('Conflicting source selection; use explicit server update');
@@ -1417,7 +1442,7 @@ async function executeServerCommand(args, effects) {
   if ((!existing || args.operation === 'update') && !record.buildTransition) {
     args.resolvedSources = await installStage('Package selection', 'Resolve the selected server packages before installation.', async () => {
       const policy = args.sourcePolicy ?? (args.sources ? effects.readJson(args.sources) : effects.packagedSourcePolicy());
-      return effects.resolveSourcePolicy(policy, 'server');
+      return effects.resolveSourcePolicy(policy, serverRole(record));
     });
   }
   if (!existing && args.sources) record.sourcePolicyHash = effects.sourcePolicyHash(args.sources);

@@ -5,6 +5,7 @@ import { join, resolve, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { installationPaths } from './plan.mjs';
 import { validateHostProfile } from './target.mjs';
+import { isPluginOnly, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
 /** Read by Fleet beside the profile credential; bound to one server installation. */
 export const NOTIFICATIONS_PRODUCER_FILE = 'notifications-producer.json';
 
@@ -23,6 +24,17 @@ function privatePath(path, directory = false) {
   }
   return stat;
 }
+/** True only when this server answers the saved credential with 401/403; unreachable is not proof. */
+export async function retainedCredentialRefused(profile, { fetchImpl = fetch, timeoutMs = 5000 } = {}) {
+  let token;
+  try { token = readFileSync(profile.credentialPath, 'utf8').trim(); } catch { return false; }
+  if (!token) return false;
+  try {
+    const response = await fetchImpl(`${profile.endpoint}/version`, { redirect: 'error', signal: AbortSignal.timeout(timeoutMs), headers: { 'x-ours-api-token': token } });
+    return response.status === 401 || response.status === 403;
+  } catch { return false; }
+}
+
 function validateRecord(record) {
   if (!record || !['packages', 'docker'].includes(record.mode) || typeof record.root !== 'string'
       || !isAbsolute(record.root) || resolve(record.root) !== record.root
@@ -213,12 +225,14 @@ else { await request('identity/profile', selection.human); process.stdout.write(
       validateRecord(record);
       if (!Array.isArray(integrations) || new Set(integrations).size !== integrations.length
           || integrations.some(name => !['codex', 'claude-code', 'fleet'].includes(name))) throw new Error('Client integrations must select codex, claude-code and/or fleet');
+      if (isPluginOnly(record) && integrations.some(name => !PLUGIN_ONLY_INTEGRATIONS.includes(name))) throw new Error('Collaboration tools connect Claude Code and Codex; Fleet is part of the complete workspace');
       if (fleetSettingsPath !== undefined) {
         if (typeof fleetSettingsPath !== 'string' || !isAbsolute(fleetSettingsPath) || resolve(fleetSettingsPath) !== fleetSettingsPath) throw new Error('Fleet settings path must be absolute');
         const settings = JSON.parse(readFileSync(fleetSettingsPath, 'utf8'));
         if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Fleet settings must be a JSON object');
       }
-      const serverUrl = record.gateway ? gatewayAddress(record).base : undefined;
+      // Plugin-only clients reach the daemon's own client prefix on the published loopback port.
+      const serverUrl = record.gateway ? gatewayAddress(record).base : isPluginOnly(record) ? `http://127.0.0.1:${record.port}` : undefined;
       const endpoint = serverUrl ? `${serverUrl}/daemon` : `http://127.0.0.1:${record.port}`;
       const current = effects.readManagedClientProfile();
       if (current && (current.endpoint !== endpoint || current.expectedInstanceId !== record.instanceId)) throw new Error('Managed client already selects another server; no credential was issued');
@@ -230,16 +244,20 @@ else { await request('identity/profile', selection.human); process.stdout.write(
       const published = join(root, 'issued-' + randomUUID());
       const credential = join(stage, 'credential');
       try {
-        if (!current) {
+        // After `server access-replace` the retained credential is refused by this
+        // same server; a repeat setup replaces it rather than keeping a dead one.
+        const replace = current && effects.credentialRefused ? await effects.credentialRefused(current) : false;
+        if (replace) effects.out?.('The saved client credential is no longer accepted by this server; issuing a replacement.');
+        if (!current || replace) {
           effects.out?.('Issuing a separate local client credential with the retained server authority.');
           try { await effects.serverAccess(record, 'access-issue', { output: credential }); }
           catch (cause) { throw new Error('Client credential issuance failed; existing profiles were retained', { cause }); }
         }
-        const retainedCredential = current?.credentialPath ?? credential;
+        const retainedCredential = current && !replace ? current.credentialPath : credential;
         const stat = privatePath(retainedCredential);
         if (stat.size > 4096 || !readFileSync(retainedCredential, 'utf8').trim()) throw new Error('Issued client credential is empty or invalid');
         const profile = {
-          ...validateHostProfile({ ...(serverUrl ? { serverUrl } : {}), endpoint, expectedInstanceId: record.instanceId, credentialPath: current?.credentialPath ?? join(published, 'credential') }),
+          ...validateHostProfile({ ...(serverUrl ? { serverUrl } : {}), endpoint, expectedInstanceId: record.instanceId, credentialPath: current && !replace ? current.credentialPath : join(published, 'credential') }),
           installer: { integrations: [...integrations], ...(fleetSettingsPath !== undefined ? { fleetSettingsPath } : {}) },
         };
         writeFileSync(join(stage, 'profile.json'), JSON.stringify(profile, null, 2) + '\n', { flag: 'wx', mode: 0o600 });

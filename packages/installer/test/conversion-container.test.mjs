@@ -38,3 +38,20 @@ test('conversion container uses named sources and switches owner mounts after pu
     assert.deepEqual(fs.readdirSync(root), []);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('a collaboration-tools installation validates only its daemon state after an update', async () => {
+  const root = fs.mkdtempSync(join(tmpdir(), 'ours-conversion-plugin-only-'));
+  const effects = realEffects({ env: {}, home: root });
+  const definitions = [];
+  effects.run = async (_command, args) => { definitions.push(JSON.parse(fs.readFileSync(args[args.indexOf('--file') + 1]))); return { code: 0, stdout: '' }; };
+  try {
+    const base = { root, project: 'ours-fixture', uid: 1000, gid: 1000, instanceId: '12345678-1234-1234-1234-123456789abc' };
+    await effects.runDockerConversion({ ...base, product: 'plugin-only', services: ['daemon'] }, { target: 'ours-fixture_server-storage' }, 'validate');
+    await effects.runDockerConversion({ ...base, services: ['daemon', 'telegram', 'cowork', 'messenger', 'gateway'] }, { target: 'ours-fixture_server-storage' }, 'validate');
+    const [plugin, workspace] = definitions.map(value => value.services['state-operation']);
+    assert.deepEqual(plugin.volumes.map(v => v.target).sort(), ['/storage', '/var/lib/ours']);
+    assert.equal(plugin.environment.OURS_SERVER_APPLICATIONS, 'daemon');
+    assert.ok(workspace.volumes.some(v => v.target === '/var/lib/ours-cowork'), 'the workspace keeps its full validation');
+    assert.equal(workspace.environment.OURS_SERVER_APPLICATIONS, '');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

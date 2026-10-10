@@ -12,6 +12,9 @@ import { USAGE } from './usage.mjs';
 import { validateIdentityName } from './server-onboarding.mjs';
 import { validateFleetSettings } from './fleet-settings.mjs';
 import { installerFailure } from './diagnostics.mjs';
+import { productOf, isPluginOnly, serverRole, PRODUCT_LABELS, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
+import { collectWelcome, customHarnessGuidance, KEEPS_YOUR_SETUP } from './welcome.mjs';
+import { runRemoval } from './removal.mjs';
 
 const maintenance = new Set(['status', 'start', 'stop', 'restart', 'uninstall', 'rebuild', 'gateway-enable', 'access-issue', 'access-replace', 'backup', 'restore', 'reset']);
 
@@ -58,6 +61,10 @@ export async function prepareSetupPlan(options, effects) {
     const value = effects.readJson(join(options.stateDir, 'installation.json'));
     if (value) {
       plan.existing = validateInstallation(value, options.stateDir);
+      // The kind of installation is retained exactly; it is never widened or narrowed implicitly.
+      if (options.product !== undefined && options.product !== productOf(plan.existing))
+        throw new InstallUsageError(`This folder contains ${PRODUCT_LABELS[productOf(plan.existing)].toLowerCase()}. It is kept as it is; nothing was changed. Use a separate empty folder for the other kind of installation, or remove this one first.`);
+      plan.product = productOf(plan.existing);
       if (options.containerEngine && options.containerEngine !== (plan.existing.containerEngine ?? 'docker')) throw new InstallUsageError('Container engine conflicts with retained installation');
       if (options.mode !== plan.existing.mode) throw new InstallUsageError('The selected mode conflicts with the retained installation; choose its existing mode or a separate empty directory');
       for (const key of ['port', 'coworkPort', 'messengerPort']) {
@@ -71,9 +78,14 @@ export async function prepareSetupPlan(options, effects) {
     } else if (options.operation === 'update') {
       throw new InstallUsageError('Update requires an existing installation.json; choose install for a new installation');
     }
+    plan.product ??= options.product ?? 'workspace';
+    if (isPluginOnly(plan.product) && plan.integrations?.some(name => !PLUGIN_ONLY_INTEGRATIONS.includes(name)))
+      throw new InstallUsageError('Collaboration tools connect Claude Code and/or Codex; Fleet is part of the complete workspace. Nothing was changed.');
     // Reject a local client already attached to another server before changing the server.
     const saved = options.scope === 'all' ? effects.readManagedClientProfile() : null;
-    if (saved && (!plan.existing || saved.expectedInstanceId !== plan.existing.instanceId || saved.endpoint !== (plan.existing?.gateway ? gatewayAddress(plan.existing).base + '/daemon' : `http://127.0.0.1:${plan.port}`))) {
+    const savedEndpoint = plan.existing?.gateway ? gatewayAddress(plan.existing).base + '/daemon'
+      : isPluginOnly(plan.product) ? `http://127.0.0.1:${plan.port}/daemon` : `http://127.0.0.1:${plan.port}`;
+    if (saved && (!plan.existing || saved.expectedInstanceId !== plan.existing.instanceId || saved.endpoint !== savedEndpoint)) {
       throw new InstallUsageError('This user already has clients attached to a different server; their saved connection was not changed');
     }
   } else {
@@ -91,7 +103,7 @@ export async function prepareSetupPlan(options, effects) {
       const running = await effects.serverLifecycle(plan.existing, 'status', ['daemon']);
       if (!running.includes('daemon')) throw new InstallUsageError('Full-stack update requires the selected daemon to be running for client verification. Start it first, or use server update to preserve its stopped state.');
     }
-    if (options.scope !== 'client') await effects.resolveSourcePolicy(plan.sourcePolicy, 'server');
+    if (options.scope !== 'client') await effects.resolveSourcePolicy(plan.sourcePolicy, serverRole(plan.product));
     if (options.scope !== 'server') await effects.resolveSourcePolicy(plan.sourcePolicy, 'client', clientPackageNames(options.integrations));
   }
   return plan;
@@ -112,7 +124,7 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
   let clientPolicy = plan.sourcePolicy;
   if (plan.scope !== 'client') {
     effects.out(heading(plan.operation === 'update' ? 'Server update and identity restoration' : 'Server installation'));
-    const result = await server({ ...plan, role: 'server', operation: plan.operation, sourcePolicy: plan.sourcePolicy }, effects);
+    const result = await server({ ...plan, product: plan.product === 'workspace' ? undefined : plan.product, role: 'server', operation: plan.operation, sourcePolicy: plan.sourcePolicy }, effects);
     if (result !== 0) return result;
     const record = validateInstallation(effects.readJson(join(plan.stateDir, 'installation.json')), plan.stateDir);
     if (plan.name && plan.surname && plan.operation === 'install') {
@@ -140,10 +152,32 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
       preset: true, nonInteractive: !plan.interactive }, effects);
     if (result !== 0) return result;
   }
-  if (plan.disableFleetAgentsSetup && plan.integrations?.includes('fleet')) effects.out(info('Fleet is installed. Run ours-fleet setup-tunnel with the expiring one-use payload from the App command; a compatible Fleet prints the QR and connection code automatically. Configure agents and models in the App after linking.'));
+  if (plan.retainFleetConfiguration && plan.integrations?.includes('fleet')) effects.out(info('Fleet was updated; your existing Fleet agents and their configuration were kept. Restart running agents when convenient: ours-fleet restart'));
+  else if (plan.disableFleetAgentsSetup && plan.integrations?.includes('fleet')) effects.out(info('Fleet is installed. Run ours-fleet setup-tunnel with the expiring one-use payload from the App command; a compatible Fleet prints the QR and connection code automatically. Configure agents and models in the App after linking.'));
   effects.out(ok(`Requested ${plan.operation} completed. Existing identities were retained.`));
   if (plan.integrations?.includes('fleet') && !plan.disableFleetAgentsSetup) effects.out(info('Fleet is configured but stopped. Review its settings, then run ours-fleet doctor, ours-fleet config and ours-fleet up.'));
+  if (isPluginOnly(plan.product) && plan.scope === 'all') {
+    effects.out(info('Collaboration tools are ready. Restart Claude Code and start a new Codex session so they load the Ours tools; then ask your agent to create its Ours identity.'));
+    effects.out(info(KEEPS_YOUR_SETUP));
+  }
+  if (plan.customHarness) {
+    const release = plan.sourcePolicy?.release?.packages?.['@ours.network/claude-code'];
+    if (release?.version) for (const line of customHarnessGuidance({ version: release.version, profilePath: join(effects.home, '.ours-client', 'profile.json'),
+      marketplace: preparedClaudeMarketplace(effects) })) effects.out(info(line));
+    else effects.out(warn('This installer release does not pin an Ours plugin version, so no instructions for another agent app can be given safely.'));
+  }
+  if (plan.operation === 'install' || plan.operation === 'update') effects.out(info('To remove Ours completely later, run: ours-install remove'));
   return 0;
+}
+
+/** The exact local Claude Code marketplace this run prepared, when Claude Code was selected. */
+function preparedClaudeMarketplace(effects) {
+  const root = join(effects.home, '.ours-client-install');
+  for (const name of effects.list?.(root) ?? []) {
+    const path = join(root, name, 'marketplaces', 'claude-code');
+    if (effects.exists?.(join(path, 'plugins', 'ours', 'bin', 'proxy.mjs'))) return path;
+  }
+  return null;
 }
 
 /** The sole executable entry: manual answers and CLI presets share one plan/executor. */
@@ -152,21 +186,30 @@ export async function runSetup(argv, effects) {
     if (argv.includes('--help') || argv.includes('-h')) { effects.out(USAGE); return 0; }
     if (argv.length === 1 && ['--version', '-V'].includes(argv[0])) { effects.out(effects.version ?? 'unknown'); return 0; }
     if (argv[0] === 'server' && maintenance.has(argv[1])) return await runServerCommand(parseNetworkArgs(argv), effects);
+    if (argv[0] === 'remove' || argv[0] === 'uninstall') return await runRemoval(argv.slice(1), effects);
     if (!argv.length && effects.env?.OURS_ASSUME_YES) throw new InstallUsageError('OURS_ASSUME_YES cannot fill an interactive setup plan. Supply complete CLI presets for unattended installation.');
-    if (!argv.length) { effects.out(banner()); effects.out(heading('Interactive setup')); }
     let options;
-    if (argv.length) {
+    let extra = {};
+    const welcome = !argv.length || (argv.length === 1 && argv[0] === 'update' && effects.interactive && !effects.env?.OURS_ASSUME_YES);
+    if (welcome) {
+      effects.out(banner());
+      const choice = await collectWelcome(effects, { update: argv[0] === 'update' });
+      if (choice.action === 'cancel') { effects.out(info('Nothing was changed.')); return 0; }
+      if (choice.action === 'remove') return await runRemoval([], effects);
+      if (choice.action === 'setup') { options = choice.options; extra = { customHarness: choice.customHarness, retainFleetConfiguration: choice.retainFleetConfiguration }; }
+      else options = await collectSetupOptions(effects, { ...choice.presets });
+    } else if (argv.length) {
       const presets = parseSetupArgs(argv, { home: effects.home, validate: false });
       try { options = validateSetupOptions(presets, { interactive: false }); }
       catch (error) {
         if (!effects.interactive || effects.env?.OURS_ASSUME_YES || !/^Missing (required setup options|human profile option):/.test(error.message)) throw error;
         options = await collectSetupOptions(effects, presets);
       }
-    } else options = await collectSetupOptions(effects);
-    const plan = await prepareSetupPlan(options, effects);
+    }
+    const plan = { ...await prepareSetupPlan(options, effects), ...extra };
     return await executeSetupPlan(plan, effects);
   } catch (error) {
-    if (isCancel(error)) { effects.out(warn('Installation cancelled.')); return 130; }
+    if (isCancel(error) || error?.cancelled) { effects.out(warn(error?.cancelled ? error.message : 'Installation cancelled.')); return 130; }
     effects.out(warn(`ours-install: ${installerFailure(error, effects.env)}`));
     return 2;
   }
