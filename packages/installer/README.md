@@ -1,3 +1,87 @@
+## Start here: choose what you want
+
+Run `ours-install` with no options. It asks what you would like to do, in terms of goals:
+
+```
+  What would you like to do?
+  > (●) Add collaboration tools to my agent apps (Claude Code, Codex or another app)
+    ( ) Install the complete Ours workspace
+    ( ) Connect my agent apps to an Ours workspace that runs on another computer
+    ( ) Other setups (server only, custom ports or packages)
+```
+
+Your existing agent configuration, skills, plugins and custom settings stay as they are. Ours adds its own tools next to them; it does not replace or reconfigure your setup.
+
+**Collaboration tools** (`--plugin-only`) give the agent apps you already use their own secure Ours identity, so they can message other agents and people, share files and be woken when mail arrives. They install:
+
+- one container: the Ours daemon, published only on `127.0.0.1` (port 3050 by default); nothing else runs;
+- the Ours plugin in each selected app that was found on this computer: Claude Code and/or Codex;
+- the Ours command-line tools and the saved connection in `~/.ours-client`.
+
+No Cowork, Messenger, Telegram, Fleet or gateway containers are installed. Clients reach the daemon through a small prefix inside the daemon container that serves only `/daemon/…`, passes requests through unchanged (the daemon still checks every credential) and refuses every other path.
+
+```sh
+ours-install --plugin-only --state-dir ~/.ours-install --identity-name "Your Name" --integrations claude-code,codex
+```
+
+**The complete workspace** adds rooms per task where you invite other agents and people, task and progress tracking, access from your phone through the Ours App, persistent agents that keep working (Fleet), and orchestration of agents from several vendors.
+
+**Another agent app.** Choose "Another agent app" in the list. At the end the installer prints exact instructions for the version it installed: the prepared plugin folder, the MCP server command (`node <folder>/bin/proxy.mjs`, stdio), the skill file, and the npm package `@ours.network/claude-code@<version>`. The app must be able to run a local stdio MCP server and must set `CLAUDE_CODE_SESSION_ID` to a value unique to each agent session in that server's environment; without it the Ours tools refuse to act. Apps that cannot run MCP servers cannot use Ours this way. Do not use the public GitHub marketplace `adapt-toolkit/ours-claude-marketplace` with this release: it currently selects an older, incompatible plugin.
+
+### Updating
+
+When Ours is already installed, `ours-install` shows the installation and offers:
+
+```
+◆ Ours is already set up on this computer
+  • The complete Ours workspace — folder /home/me/.ours-install, running in Docker
+  What would you like to do?
+  > (●) Update Ours (recommended)
+    ( ) Repair: run setup again with the same choices
+    ( ) Remove Ours from this computer
+    ( ) Cancel
+```
+
+An update keeps the installation's product (collaboration tools or workspace), runtime, folder, identities, data, connected apps and their settings. It never adds workspace parts to a collaboration-tools installation; to switch, remove it first. An unfinished update or setup is offered as "Finish the earlier update or setup". Running the same setup again is safe: it keeps existing identities, and if the server's access credentials were replaced (`ours-install server access-replace`), it issues a fresh client credential.
+
+### Removing Ours completely
+
+```sh
+ours-install remove            # everything Ours created on this computer
+ours-install remove --dry-run  # only show the list
+ours-install remove --state-dir ~/.ours-install   # one installation
+```
+
+The command lists everything it found, grouped (services and containers; identities, keys, messages and settings; connections in your agent apps; persistent agents; programs and downloads; earlier installations), and what it keeps and why. Then it asks you to type `remove ours`. It runs only in a terminal; identities and their private keys exist nowhere else, so they are never deleted without a person confirming. Make a backup first if you may need them: `ours-install server backup server <label> --state-dir <folder>`.
+
+What it removes, and how it proves each item is Ours:
+
+| Item | Proof required |
+| --- | --- |
+| Containers | Compose project of the installation **and** a Compose project folder inside the installation folder (containers inherit image labels, so a label alone is not proof), or the installer's own helper names on its own image |
+| Images | the image ID recorded when this installer built it, or the image an owned container was created from; a name alone is never proof; only the name is removed (`docker image rm <tag>`, never by ID or with force) |
+| Volumes, network | the installation's Compose project label |
+| Build cache | only the record whose description is the installer's own npm cache mount (`id=/ours-dist-2-npm`), pruned by its record ID (`docker buildx prune --filter id=…`); kept while another Ours installation uses the engine |
+| Installation and connection folders | their own record (`installation.json` / `profile.json`) still names the installation; the folder is renamed aside, then deleted |
+| Downloaded programs | the owner record of each download folder; a damaged record keeps the folder |
+| Claude Code / Codex | the Ours plugin and plugin source (through their own CLIs), their Ours entries in `settings.json` / `config.toml`, and their cached copy of the Ours plugin, only when the source points into Ours downloads |
+| Ours tool records `~/.ours-mcp` | only the rows and session folders of the removed installation |
+| Persistent agents (Fleet) | services that reference this Ours connection, Fleet configuration and state set up by this client |
+| Earlier installations | old daemon and connector services, verified stopped first; marked plugin sections and old skills |
+
+It keeps Docker, Node.js, npm, Claude Code and Codex, your other settings, skills and plugins, shared images such as `node:24`, other build cache records, containers and images it cannot prove, and the temporary session guards in `/tmp/ours-<uid>` that every Ours tool session of your user shares.
+
+If something cannot be removed, the summary says exactly what and why, the command exits with status 1 and keeps a small retry record (`~/.ours-removal.json`, identities only). Fix the reason and run `ours-install remove` again; it continues where it stopped:
+
+```
+◆ Removal summary
+  ! Some Ours items could not be removed yet:
+  !   - Container images of ours-235c4591528dc8a6 — ours-235c4591528dc8a6:runtime is still used by container user-made, which Ours did not create; remove that container if you no longer need it
+  • Fix the reason shown, then run ours-install remove again; it continues from where it stopped.
+```
+
+Running it when nothing is left changes nothing and says so.
+
 ## Install first, connect the App afterwards
 
 ```sh

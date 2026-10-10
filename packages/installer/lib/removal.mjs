@@ -224,7 +224,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       if (effects.stat(join(daemonDir, 'config.json'))) {
         const config = io.readJson(join(daemonDir, 'config.json'));
         const unit = unitNameForStateDir(daemonDir);
-        legacy.services.push({ kind: 'daemon', label: 'Stop the earlier Ours daemon and its boot service', dir: daemonDir,
+        legacy.services.push({ kind: 'daemon', label: 'Earlier Ours daemon and its boot service', dir: daemonDir,
           port: Number.isInteger(config?.port) ? config.port : 3050, cliStartedIt: Boolean(effects.stat(join(daemonDir, 'ours-cli-daemon.json'))),
           unitPath: unit.ok ? join(home, '.config', 'systemd', 'user', unit.unit) : null });
       }
@@ -236,7 +236,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       // Only a boot service that serves this earlier folder; verified gone afterwards.
       const unitPath = join(home, '.config', 'systemd', 'user', unitName);
       if (effects.stat(unitPath)?.type === 'file' && (effects.readText(unitPath) ?? '').includes(dir)) {
-        legacy.services.push({ kind: 'connector', label: `Stop the earlier ${service} boot service`, command: [service, 'uninstall-service'], unitPath, dir });
+        legacy.services.push({ kind: 'connector', label: `Earlier ${service} boot service`, command: [service, 'uninstall-service'], unitPath, dir });
       }
     }
     const hermesDir = effects.env?.HERMES_DIR || join(home, '.hermes');
