@@ -1,4 +1,5 @@
 import { runContainer } from './container-engine.mjs';
+import { isPluginOnly } from './product.mjs';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -64,7 +65,8 @@ export async function runDockerConversion(record, selected, operation, label, ef
     }
   } else {
     addMount('storage', '/var/lib/ours', 'state/daemon', true);
-    addMount('storage', '/var/lib/ours-cowork', 'state/cowork', false);
+    // A collaboration-tools installation has no Cowork state to mount.
+    if (!isPluginOnly(record)) addMount('storage', '/var/lib/ours-cowork', 'state/cowork', false);
   }
   const definition = {
     services: {
@@ -74,7 +76,7 @@ export async function runDockerConversion(record, selected, operation, label, ef
         network_mode: 'none', read_only: true, cap_drop: ['ALL'],
         security_opt: ['no-new-privileges:true'], tmpfs: ['/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777'],
         entrypoint: ['node', '/opt/ours/docker/docker-layout-conversion.mjs'],
-        environment: { HOME: '/tmp', OURS_DAEMON_ID: record.instanceId },
+        environment: { HOME: '/tmp', OURS_DAEMON_ID: record.instanceId, OURS_SERVER_APPLICATIONS: isPluginOnly(record) ? 'daemon' : '' },
         volumes: mounts,
       },
     },

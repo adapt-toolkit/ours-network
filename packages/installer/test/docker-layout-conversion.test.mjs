@@ -122,3 +122,11 @@ test('Docker layout staging separates complete MCP state and preserves original 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('layout validation follows the application selection: the daemon alone, or all four', async () => {
+  const { selectedComponents } = await import('../assets/scripts/maintenance/docker-layout-conversion.mjs');
+  assert.deepEqual(selectedComponents({}), ['daemon', 'telegram', 'cowork', 'messenger']);
+  assert.deepEqual(selectedComponents({ OURS_SERVER_APPLICATIONS: '' }), ['daemon', 'telegram', 'cowork', 'messenger']);
+  assert.deepEqual(selectedComponents({ OURS_SERVER_APPLICATIONS: 'daemon' }), ['daemon']);
+  for (const bad of ['cowork', 'daemon,daemon', 'daemon,gateway']) assert.throws(() => selectedComponents({ OURS_SERVER_APPLICATIONS: bad }), /invalid/);
+});
