@@ -364,7 +364,15 @@ async function executeStep(step, effects, context) {
       // Run the earlier tools' own stop commands, then verify: an error from a
       // command is only a failure when the service is in fact still there.
       const errors = [];
-      const attempt = async command => { try { await effects.run(command[0], command.slice(1), { timeout: 120_000 }); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); } };
+      // One short line per failed command; a missing program is said plainly.
+      const attempt = async command => {
+        try { await effects.run(command[0], command.slice(1), { timeout: 120_000 }); }
+        catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          errors.push(/ENOENT/.test(text) || error?.code === 'ENOENT' ? `the ${command[0]} command is not installed` : `${command.slice(0, 2).join(' ')} failed: ${text.split('\n').find(line => line.trim()) ?? 'no reason given'}`.slice(0, 200));
+        }
+      };
+      const unitHelp = path => `run: systemctl --user disable --now ${basename(path)}, then delete ${path}`;
       if (step.service.kind === 'daemon') {
         const { dir, port, unitPath, cliStartedIt } = step.service;
         if (unitPath && effects.stat(unitPath)) await attempt(['ours-daemon', 'uninstall-service', '--yes', '--state-dir', dir, '--config', join(dir, 'config.json')]);
@@ -375,12 +383,13 @@ async function executeStep(step, effects, context) {
           running = Boolean(probe?.ok && resolve(probe.stateDir) === dir);
           if (running) await effects.sleep?.(1000);
         }
-        if (running) throw new Error(`the earlier daemon for ${dir} is still running on port ${port}${errors.length ? ` (${errors.join('; ')})` : ''}; stop it, then run the removal again`);
-        if (unitPath && effects.stat(unitPath)) throw new Error(`its boot service ${unitPath} is still installed${errors.length ? ` (${errors.join('; ')})` : ''}`);
+        const reason = () => errors.length ? ` (${[...new Set(errors)].join('; ')})` : '';
+        if (running) throw new Error(`the earlier daemon for ${dir} is still running on port ${port}${reason()}; stop that process, then run the removal again`);
+        if (unitPath && effects.stat(unitPath)) throw new Error(`its boot service ${unitPath} is still installed${reason()}; ${unitHelp(unitPath)}`);
         return;
       }
       if (effects.stat(step.service.unitPath)) await attempt(step.service.command);
-      if (effects.stat(step.service.unitPath)) throw new Error(`its boot service ${step.service.unitPath} is still installed${errors.length ? ` (${errors.join('; ')})` : ''}`);
+      if (effects.stat(step.service.unitPath)) throw new Error(`its boot service ${step.service.unitPath} is still installed${errors.length ? ` (${[...new Set(errors)].join('; ')})` : ''}; ${unitHelp(step.service.unitPath)}`);
       return;
     }
     case 'fleet-down': {
