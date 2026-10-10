@@ -19,7 +19,8 @@
 //     removed generation.
 // Anything else that looks related is listed as KEPT with the reason.
 
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { validateContainerEngine } from './container-engine.mjs';
 import { PRODUCTS } from './product.mjs';
 
@@ -98,6 +99,16 @@ export function ownedContainer(value, { root, project }) {
   return (name === `${project}-records` || name.startsWith(`${project}-issue-`)) && String(value?.Config?.Image ?? '').startsWith(`${project}:`);
 }
 
+/** The Compose project a managed root was created with; binds a recorded root to its project. */
+export const projectForRoot = root => `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
+
+/**
+ * Where a verified folder is moved immediately before it is deleted. Only this
+ * installer creates such a name, after checking the folder's own record, so an
+ * interrupted deletion is finished from here and never from an unproven folder.
+ */
+export const tombstoneFor = (path, instanceId) => join(dirname(path), `${basename(path)}.ours-removing-${instanceId}`);
+
 /** Strict journal validation: only identities, never free-form deletion paths. */
 export function validateJournal(value, { home }) {
   const fail = message => { throw new Error(`Unfinished removal record is invalid (${message}); it was left untouched. Remove ${join(home, JOURNAL)} yourself only after checking what remains.`); };
@@ -107,7 +118,7 @@ export function validateJournal(value, { home }) {
   if (!Array.isArray(value.installations) || !Array.isArray(value.clientInstanceIds) || !Array.isArray(value.generations)) fail('lists');
   for (const item of value.installations) {
     if (!item || typeof item.root !== 'string' || !isAbsolute(item.root) || resolve(item.root) !== item.root
-      || !UUID.test(item.instanceId ?? '') || !PROJECT.test(item.project ?? '') || !['docker', 'packages'].includes(item.mode)
+      || !UUID.test(item.instanceId ?? '') || !PROJECT.test(item.project ?? '') || item.project !== projectForRoot(item.root) || !['docker', 'packages'].includes(item.mode)
       || !Array.isArray(item.candidateProjects ?? []) || (item.candidateProjects ?? []).some(p => !/^ours-build[0-9a-f]{32}$/.test(p))) fail('installation identity');
     if (item.images !== undefined) {
       const projects = [item.project, ...(item.candidateProjects ?? [])];
@@ -124,22 +135,90 @@ export function validateJournal(value, { home }) {
   return value;
 }
 
-/** Remove whole TOML tables whose header satisfies `match`; every other byte is kept. */
+/**
+ * Parse one TOML table header line into its key parts, or null when the line is
+ * not a well-formed header. Handles [a.b], [[a.b]], quoted and escaped keys.
+ */
+function parseTomlHeader(line) {
+  let i = 0;
+  const skip = () => { while (line[i] === ' ' || line[i] === '\t') i++; };
+  skip();
+  if (line[i] !== '[') return null;
+  const array = line[i + 1] === '[';
+  i += array ? 2 : 1;
+  const parts = [];
+  for (;;) {
+    skip();
+    if (line[i] === '"') {
+      let j = i + 1, raw = '';
+      while (j < line.length && line[j] !== '"') { if (line[j] === '\\') { raw += line[j] + (line[j + 1] ?? ''); j += 2; } else raw += line[j++]; }
+      if (line[j] !== '"') return null;
+      try { parts.push(JSON.parse(`"${raw}"`)); } catch { return null; }
+      i = j + 1;
+    } else if (line[i] === "'") {
+      const j = line.indexOf("'", i + 1);
+      if (j < 0) return null;
+      parts.push(line.slice(i + 1, j)); i = j + 1;
+    } else {
+      const m = /^[A-Za-z0-9_-]+/.exec(line.slice(i));
+      if (!m) return null;
+      parts.push(m[0]); i += m[0].length;
+    }
+    skip();
+    if (line[i] === '.') { i++; continue; }
+    break;
+  }
+  if (array ? line.slice(i, i + 2) !== ']]' : line[i] !== ']') return null;
+  i += array ? 2 : 1;
+  skip();
+  if (i < line.length && line[i] !== '#') return null;
+  return { parts, array };
+}
+
+/**
+ * Remove whole TOML tables whose header key parts satisfy `match`; every other
+ * byte is kept. Only real top-level headers count: lines inside multiline
+ * strings or multi-line arrays/inline tables are never headers. Returns null
+ * when the text cannot be scanned safely, so the caller edits nothing.
+ */
 export function removeTomlTables(text, match) {
-  const lines = text.split('\n');
   const out = [];
-  let skipping = false;
   const removed = [];
-  for (const line of lines) {
-    const header = /^\s*\[\[?([^\]]+)\]\]?\s*(?:#.*)?$/.exec(line);
-    if (header) {
-      skipping = match(header[1].trim());
-      if (skipping) { removed.push(header[1].trim()); continue; }
+  let skipping = false, multi = null, depth = 0;
+  for (const line of text.split('\n')) {
+    if (!multi && depth === 0 && /^\s*\[/.test(line)) {
+      const header = parseTomlHeader(line);
+      if (!header) return null;
+      skipping = match(header.parts);
+      if (skipping) removed.push(header.parts.map(p => /^[A-Za-z0-9_-]+$/.test(p) ? p : JSON.stringify(p)).join('.'));
+      else out.push(line);
+      continue;
+    }
+    // Follow strings, comments and brackets of value lines across line breaks.
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (multi) {
+        if (multi === '"""' && ch === '\\') { i++; continue; }
+        if (line.startsWith(multi, i)) { i += 2; while (line[i + 1] === multi[0]) i++; multi = null; }
+        continue;
+      }
+      if (ch === '#') break;
+      if (line.startsWith('"""', i) || line.startsWith("'''", i)) { multi = line.slice(i, i + 3); i += 2; continue; }
+      if (ch === '"') { i++; while (i < line.length && line[i] !== '"') { if (line[i] === '\\') i++; i++; } if (i >= line.length) return null; continue; }
+      if (ch === "'") { const j = line.indexOf("'", i + 1); if (j < 0) return null; i = j; continue; }
+      if (ch === '[' || ch === '{') depth++;
+      else if (ch === ']' || ch === '}') { depth--; if (depth < 0) return null; }
     }
     if (!skipping) out.push(line);
   }
+  if (multi || depth !== 0) return null;
   return { text: out.join('\n'), removed };
 }
+
+/** Header key parts of the Ours tables in a Codex config (and anything nested under them). */
+export const isOursCodexTable = (parts, plugin, marketplace) =>
+  (parts[0] === 'plugins' && parts[1] === plugin) || (parts[0] === 'marketplaces' && parts[1] === marketplace)
+  || (parts[0] === 'hooks' && parts[1] === 'state' && typeof parts[2] === 'string' && parts[2].startsWith(`${plugin}:`));
 
 /** Parse `docker buildx du --verbose` blocks into records. */
 export function parseBuildCache(text) {
@@ -169,7 +248,7 @@ export function planRemoval(found, { home }) {
   const kept = [...(found.kept ?? [])];
   const add = step => steps.push(step);
   const removedInstances = new Set(found.installations.map(i => i.instanceId));
-  const clientBound = found.client && (removedInstances.has(found.client.instanceId) || found.client.orphaned);
+  const clientBound = Boolean(found.client && removedInstances.has(found.client.instanceId));
   if (found.client && !clientBound) kept.push({ group: 'apps', label: `Saved Ours connection ${join(home, '.ours-client')}`, reason: 'it belongs to an Ours installation that is not being removed' });
   const clientInstances = new Set(clientBound ? [found.client.instanceId] : []);
   const othersRemain = found.otherInstallations?.length > 0;
@@ -178,10 +257,15 @@ export function planRemoval(found, { home }) {
   // record) only when no other Ours installation remains on this computer.
   const generations = [];
   for (const generation of found.generations ?? []) {
-    const owners = generation.owners;
-    const ownedHere = owners ? owners.length > 0 && owners.every(id => removedInstances.has(id) || clientInstances.has(id)) : !othersRemain && (clientBound || !found.client);
+    // Owner records: valid (owner IDs), absent (made before owner records) or invalid (damaged: never removed).
+    const owners = generation.owners ?? { state: 'absent' };
+    const label = `Downloaded Ours programs ${generation.path}`;
+    if (owners.state === 'invalid') { kept.push({ group: 'programs', label, reason: `their owner record ${generation.path}/owners.json is damaged, so they are left in place; remove the folder yourself if no Ours installation uses it` }); continue; }
+    const ownedHere = owners.state === 'valid'
+      ? owners.instances.length > 0 && owners.instances.every(id => removedInstances.has(id) || clientInstances.has(id))
+      : !othersRemain && (clientBound || !found.client);
     if (ownedHere) generations.push(generation);
-    else kept.push({ group: 'programs', label: `Downloaded Ours programs ${generation.path}`, reason: owners ? 'they are also used by another Ours installation' : 'their owner is not recorded and another Ours installation remains' });
+    else kept.push({ group: 'programs', label, reason: owners.state === 'valid' ? 'they are also used by another Ours installation' : 'their owner is not recorded and another Ours installation remains' });
   }
   const removedGeneration = path => generations.some(g => within(path, g.path));
   const legacyMarketplaces = join(home, '.ours', 'install', 'marketplaces');
@@ -240,6 +324,13 @@ export function planRemoval(found, { home }) {
   }
 
   // Older plugin installers wrote marked blocks and skills; only exact, closed blocks.
+  const legacyStops = [];
+  if (found.legacy?.remove) {
+    for (const service of found.legacy.services ?? []) {
+      const step = { id: `legacy-service:${service.dir}`, group: 'legacy', label: service.label, type: 'legacy-service', service };
+      legacyStops.push(step.id); add(step);
+    }
+  }
   for (const block of found.legacy?.blocks ?? []) add({ id: `block:${block.path}`, group: 'legacy', label: `Ours section in ${block.path}`, type: 'managed-block', path: block.path, markers: block.markers });
   for (const dir of found.legacy?.skillDirs ?? []) add({ id: `skills:${dir}`, group: 'legacy', label: `Ours skill ${dir}`, type: 'tree', path: dir, privateTree: false });
 
@@ -253,7 +344,7 @@ export function planRemoval(found, { home }) {
   for (const pkg of found.npm?.packages ?? []) {
     if (pkg.name === '@ours.network/install') continue;
     if (pkg.link && removedGeneration(pkg.target)) commandSteps.push({ id: `npm:${pkg.name}`, group: 'programs', label: `Global package ${pkg.name}`, type: 'npm-uninstall', name: pkg.name, expectTarget: pkg.target });
-    else if (!pkg.link && found.legacy?.remove) commandSteps.push({ id: `npm:${pkg.name}`, group: 'legacy', label: `Global package ${pkg.name}`, type: 'npm-uninstall', name: pkg.name });
+    else if (!pkg.link && found.legacy?.remove) commandSteps.push({ id: `npm:${pkg.name}`, group: 'legacy', label: `Global package ${pkg.name}`, type: 'npm-uninstall', name: pkg.name, after: legacyStops });
     else kept.push({ group: 'programs', label: `Global package ${pkg.name}`, reason: pkg.link ? 'it points outside the Ours downloads being removed' : 'it is not part of the installations being removed' });
   }
   for (const step of commandSteps) add(step);
@@ -265,7 +356,7 @@ export function planRemoval(found, { home }) {
     || (Array.isArray(value) ? value.length > 0 : typeof value === 'object' ? Object.keys(value).length > 0 : value > 0);
   for (const item of found.installations) {
     const tag = item.root;
-    if (item.record !== null) add({ id: `services:${tag}`, group: 'services', label: `Ours services of ${item.root}`, type: 'server-services', installation: item });
+    if (item.record) add({ id: `services:${tag}`, group: 'services', label: `Ours services of ${item.root}`, type: 'server-services', installation: item });
     if (item.mode === 'docker') {
       for (const project of [item.project, ...(item.candidateProjects ?? [])]) {
         const engine = item.engine?.[project] ?? {};
@@ -284,14 +375,18 @@ export function planRemoval(found, { home }) {
 
   // Directories last: downloads after everything that pointed into them, roots after their services.
   for (const generation of generations) add({ id: `generation:${generation.id}`, group: 'programs', label: `Downloaded Ours programs ${generation.path}`, type: 'tree', path: generation.path, after: beforeDownloads });
-  if (clientBound) add({ id: 'client', group: 'data', label: `Saved Ours connection and credential ${found.client.root}`, type: 'tree', path: found.client.root, expectInstance: found.client.instanceId, after: beforeDownloads });
+  if (clientBound) add({ id: 'client', group: 'data', label: `Saved Ours connection and credential ${found.client.root}`, type: 'retire', path: found.client.root, recordFile: 'profile.json', recordField: 'expectedInstanceId', expectInstance: found.client.instanceId, tombstone: tombstoneFor(found.client.root, found.client.instanceId), after: beforeDownloads });
+  for (const path of found.clientTombstones ?? []) add({ id: `tombstone:${path}`, group: 'data', label: `Partly removed Ours connection ${path}`, type: 'tree', path, after: beforeDownloads });
   const clientInstall = join(home, '.ours-client-install');
   if (found.clientInstallEmptyAfter && generations.length) add({ id: 'client-install', group: 'programs', label: `Ours downloads folder ${clientInstall}`, type: 'empty-dir', path: clientInstall, after: generations.map(g => `generation:${g.id}`) });
-  for (const item of found.installations.filter(i => i.record !== null)) add({ id: `root:${item.root}`, group: 'data', label: `Ours installation folder ${item.root}`, type: 'tree', path: item.root, expectInstance: item.instanceId, after: [`services:${item.root}`, ...(item.mode === 'docker' ? [item.project, ...(item.candidateProjects ?? [])].map(p => `containers:${p}`) : [])] });
+  for (const item of found.installations) {
+    const after = [`services:${item.root}`, ...(item.mode === 'docker' ? [item.project, ...(item.candidateProjects ?? [])].map(p => `containers:${p}`) : [])];
+    if (item.record) add({ id: `root:${item.root}`, group: 'data', label: `Ours installation folder ${item.root}`, type: 'retire', path: item.root, recordFile: 'installation.json', recordField: 'instanceId', expectInstance: item.instanceId, tombstone: tombstoneFor(item.root, item.instanceId), after });
+    if (item.tombstone) add({ id: `tombstone:${item.tombstone}`, group: 'data', label: `Partly removed Ours installation folder ${item.tombstone}`, type: 'tree', path: item.tombstone, after });
+  }
 
   if (found.legacy?.remove) {
-    for (const service of found.legacy.services ?? []) add({ id: `legacy-service:${service.label}`, group: 'legacy', label: service.label, type: 'command', command: service.command, tolerate: true });
-    for (const dir of found.legacy.dirs ?? []) add({ id: `legacy:${dir}`, group: 'legacy', label: `Earlier Ours data ${dir}`, type: 'tree', path: dir, privateTree: false, after: (found.legacy.services ?? []).map(s => `legacy-service:${s.label}`) });
+    for (const dir of found.legacy.dirs ?? []) add({ id: `legacy:${dir}`, group: 'legacy', label: `Earlier Ours data ${dir}`, type: 'tree', path: dir, privateTree: false, after: legacyStops });
   }
   if (found.npm?.packages?.some(p => p.name === '@ours.network/install') && found.removeInstaller) {
     add({ id: 'installer', group: 'programs', label: 'The ours-install command itself', type: 'npm-uninstall', name: '@ours.network/install', last: true });

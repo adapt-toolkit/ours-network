@@ -11,14 +11,14 @@
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { modify, applyEdits, parse as parseJsonc } from 'jsonc-parser';
-import { validateInstallation } from './plan.mjs';
+import { validateInstallation, unitNameForStateDir } from './plan.mjs';
 import { validateContainerEngine, runContainer } from './container-engine.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { stripManagedBlock, YAML_BLOCK, MD_BLOCK } from './uninstall.mjs';
 import { readOwners } from './ownership.mjs';
 import {
   JOURNAL, CONFIRMATION, IMAGE_TARGETS, CLAUDE_PLUGIN, CLAUDE_MARKETPLACE, CODEX_PLUGIN, CODEX_MARKETPLACE, FLEET_UNITS,
-  within, unsafeTreeReason, journalInstallation, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, ownedContainer,
+  within, unsafeTreeReason, journalInstallation, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, ownedContainer, isOursCodexTable, projectForRoot, tombstoneFor,
   planRemoval, describePlan,
 } from './removal-plan.mjs';
 import { ok, info, warn, heading, progress } from './ui.mjs';
@@ -70,7 +70,9 @@ function json(text) { try { return JSON.parse(text); } catch { return undefined;
 export async function discoverFootprint(effects, { stateDirs = [], journal = null } = {}) {
   const home = effects.home;
   const found = { installations: [], otherInstallations: [], kept: [], generations: [], npm: null, legacy: null };
-  const keep = (group, label, reason) => found.kept.push({ group, label, reason });
+  // A residual is something of Ours that is left because it can no longer be proven; it keeps the removal unfinished.
+  const keep = (group, label, reason, residual = false) => found.kept.push({ group, label, reason, ...(residual ? { residual: true } : {}) });
+  const tombstone = (path, instanceId) => (effects.stat(tombstoneFor(path, instanceId))?.type === 'dir' ? tombstoneFor(path, instanceId) : null);
 
   // Managed installations.
   const homeEntries = effects.list(home) ?? [];
@@ -82,8 +84,12 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     const text = effects.readText(join(root, 'installation.json'));
     const retained = journal?.installations?.find(i => i.root === root);
     if (text === null) {
-      // Partly removed earlier: finish from the retry record; a folder that is gone needs no step.
-      if (retained) found.installations.push({ ...retained, record: effects.stat(root) ? undefined : null });
+      // Partly removed earlier: finish engine items from the retry record. A folder
+      // still there without its record is no longer provably the installation.
+      if (retained) {
+        found.installations.push({ ...retained, record: null, tombstone: tombstone(root, retained.instanceId) });
+        if (effects.stat(root)) keep('data', `Folder ${root}`, 'it no longer holds the Ours installation record it had when the removal started, so it is left in place; check it and remove it yourself if it is not yours', true);
+      }
       else if (stateDirs.includes(root)) keep('data', root, 'no Ours installation record was found there');
       continue;
     }
@@ -91,7 +97,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     try { record = validateInstallation(json(text), root); if (record.containerBinding || record.containerEngine) validateContainerEngine(record); }
     catch { keep('data', `Folder ${root}`, 'its Ours installation record is not valid, so nothing in it is removed automatically'); continue; }
     if (retained && retained.instanceId !== record.instanceId) { keep('data', `Folder ${root}`, 'it now holds a different Ours installation than the unfinished removal recorded'); continue; }
-    const item = { ...journalInstallation(record), ...(retained?.candidateProjects?.length ? { candidateProjects: [...new Set([...retained.candidateProjects, ...journalInstallation(record).candidateProjects])] } : {}), record };
+    const item = { ...journalInstallation(record), ...(retained?.candidateProjects?.length ? { candidateProjects: [...new Set([...retained.candidateProjects, ...journalInstallation(record).candidateProjects])] } : {}), ...(retained?.images ? { images: retained.images } : {}), record, tombstone: tombstone(root, record.instanceId) };
     item.ownedImages = json(effects.readText(join(root, 'owned-images.json')) ?? '')?.images ?? null;
     (selected(root) ? found.installations : found.otherInstallations).push(item);
   }
@@ -100,11 +106,12 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
   const clientRoot = join(home, '.ours-client');
   if (effects.stat(clientRoot)) {
     const profile = json(effects.readText(join(clientRoot, 'profile.json')) ?? '');
-    if (profile && typeof profile.expectedInstanceId === 'string') {
+    if (profile && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(profile.expectedInstanceId ?? '')) {
       found.client = { root: clientRoot, instanceId: profile.expectedInstanceId, integrations: profile.installer?.integrations ?? [], path: join(clientRoot, 'profile.json') };
-    } else if (!found.otherInstallations.length && !stateDirs.length) found.client = { root: clientRoot, instanceId: null, orphaned: true, integrations: [] };
-    else keep('apps', clientRoot, 'its saved connection could not be read and another Ours installation remains');
+    } else keep('apps', `Saved Ours connection ${clientRoot}`, 'its connection file is missing or cannot be read, so it is not provably this installation\'s and is left in place; remove it yourself if no Ours installation uses it', true);
   }
+  found.clientTombstones = [...new Set([...(journal?.clientInstanceIds ?? []), ...(found.client?.instanceId ? [found.client.instanceId] : [])])]
+    .map(id => tombstone(clientRoot, id)).filter(Boolean);
 
   // Downloaded client programs.
   const installRoot = join(home, '.ours-client-install');
@@ -172,13 +179,14 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
   const codexDir = effects.env?.CODEX_HOME || join(home, '.codex');
   const codexConfigPath = join(codexDir, 'config.toml');
   const codexText = effects.readText(codexConfigPath);
-  const oursTable = header => header === `plugins."${CODEX_PLUGIN}"` || header === `marketplaces.${CODEX_MARKETPLACE}` || header.startsWith(`hooks.state."${CODEX_PLUGIN}:`);
-  const configTables = codexText === null ? [] : removeTomlTables(codexText, oursTable).removed;
+  const scanned = codexText === null ? { removed: [] } : removeTomlTables(codexText, parts => isOursCodexTable(parts, CODEX_PLUGIN, CODEX_MARKETPLACE));
+  if (scanned === null) keep('apps', `Ours entries in ${codexConfigPath}`, 'the file could not be read safely, so it is not edited; remove the [plugins."ours@ours-codex-marketplace"] and [marketplaces.ours-codex-marketplace] sections yourself');
+  const configTables = scanned?.removed ?? [];
   let codex = null;
   try {
     const listed = json((await effects.run('codex', ['plugin', 'marketplace', 'list', '--json'], { timeout: 30_000 })).stdout);
     const market = listed?.marketplaces?.find(m => m?.name === CODEX_MARKETPLACE);
-    const plugin = configTables.includes(`plugins."${CODEX_PLUGIN}"`);
+    const plugin = configTables.some(label => label.startsWith(`plugins.${JSON.stringify(CODEX_PLUGIN)}`));
     const cache = effects.stat(join(codexDir, 'plugins', 'cache', CODEX_MARKETPLACE))?.type === 'dir' ? join(codexDir, 'plugins', 'cache', CODEX_MARKETPLACE) : null;
     if (market || plugin || configTables.length || cache) codex = { plugin, marketplace: market ? { path: market.marketplaceSource?.source ?? market.root } : null, configPath: codexConfigPath, configTables, cache };
   } catch {
@@ -214,15 +222,22 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     if (effects.stat(daemonDir)?.type === 'dir' && !effects.stat(join(daemonDir, 'installation.json')) && (classifyStateDir(daemonDir, io).isDaemon || effects.stat(join(daemonDir, 'install')))) {
       legacy.dirs.push(daemonDir);
       if (effects.stat(join(daemonDir, 'config.json'))) {
-        legacy.services.push({ label: 'Earlier Ours daemon boot service', command: ['ours-daemon', 'uninstall-service', '--yes', '--state-dir', daemonDir, '--config', join(daemonDir, 'config.json')] });
-        legacy.services.push({ label: 'Earlier Ours daemon process', command: ['ours-daemon', 'stop', '--state-dir', daemonDir, '--config', join(daemonDir, 'config.json')] });
+        const config = io.readJson(join(daemonDir, 'config.json'));
+        const unit = unitNameForStateDir(daemonDir);
+        legacy.services.push({ kind: 'daemon', label: 'Stop the earlier Ours daemon and its boot service', dir: daemonDir,
+          port: Number.isInteger(config?.port) ? config.port : 3050, cliStartedIt: Boolean(effects.stat(join(daemonDir, 'ours-cli-daemon.json'))),
+          unitPath: unit.ok ? join(home, '.config', 'systemd', 'user', unit.unit) : null });
       }
     }
-    for (const [name, service] of [['.ours-telegram', 'ours-tg-connector'], ['.ours-cowork', 'ours-cowork']]) {
+    for (const [name, service, unitName] of [['.ours-telegram', 'ours-tg-connector', 'ours-telegram.service'], ['.ours-cowork', 'ours-cowork', 'ours-cowork.service']]) {
       const dir = join(home, name);
       if (effects.stat(dir)?.type !== 'dir') continue;
       legacy.dirs.push(dir);
-      if (service && found.npm?.packages?.some(p => p.name === `@ours.network/${service === 'ours-tg-connector' ? 'tg-connector' : 'cowork'}` && !p.link)) legacy.services.push({ label: `Earlier ${service} boot service`, command: [service, 'uninstall-service'] });
+      // Only a boot service that serves this earlier folder; verified gone afterwards.
+      const unitPath = join(home, '.config', 'systemd', 'user', unitName);
+      if (effects.stat(unitPath)?.type === 'file' && (effects.readText(unitPath) ?? '').includes(dir)) {
+        legacy.services.push({ kind: 'connector', label: `Stop the earlier ${service} boot service`, command: [service, 'uninstall-service'], unitPath, dir });
+      }
     }
     const hermesDir = effects.env?.HERMES_DIR || join(home, '.hermes');
     const skillsDir = effects.env?.SKILLS_DIR || join(home, '.agents', 'skills');
@@ -342,6 +357,29 @@ async function executeStep(step, effects, context) {
       catch (error) { if (!step.tolerate) throw error; }
       return;
     }
+    case 'legacy-service': {
+      // Run the earlier tools' own stop commands, then verify: an error from a
+      // command is only a failure when the service is in fact still there.
+      const errors = [];
+      const attempt = async command => { try { await effects.run(command[0], command.slice(1), { timeout: 120_000 }); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); } };
+      if (step.service.kind === 'daemon') {
+        const { dir, port, unitPath, cliStartedIt } = step.service;
+        if (unitPath && effects.stat(unitPath)) await attempt(['ours-daemon', 'uninstall-service', '--yes', '--state-dir', dir, '--config', join(dir, 'config.json')]);
+        if (cliStartedIt) await attempt(['ours-daemon', 'stop', '--state-dir', dir, '--config', join(dir, 'config.json')]);
+        let running = true;
+        for (let i = 0; i < 10 && running; i++) {
+          const probe = await effects.probe(port);
+          running = Boolean(probe?.ok && resolve(probe.stateDir) === dir);
+          if (running) await effects.sleep?.(1000);
+        }
+        if (running) throw new Error(`the earlier daemon for ${dir} is still running on port ${port}${errors.length ? ` (${errors.join('; ')})` : ''}; stop it, then run the removal again`);
+        if (unitPath && effects.stat(unitPath)) throw new Error(`its boot service ${unitPath} is still installed${errors.length ? ` (${errors.join('; ')})` : ''}`);
+        return;
+      }
+      if (effects.stat(step.service.unitPath)) await attempt(step.service.command);
+      if (effects.stat(step.service.unitPath)) throw new Error(`its boot service ${step.service.unitPath} is still installed${errors.length ? ` (${errors.join('; ')})` : ''}`);
+      return;
+    }
     case 'fleet-down': {
       await effects.run(step.bin, ['down'], { env: { OURS_CONFIG: join(home, '.ours-client', 'profile.json') }, timeout: 180_000, allowCodes: [1] });
       return;
@@ -375,7 +413,8 @@ async function executeStep(step, effects, context) {
     case 'codex-config': {
       const text = effects.readText(step.path);
       if (text === null) return;
-      const result = removeTomlTables(text, header => header === `plugins."${CODEX_PLUGIN}"` || header === `marketplaces.${CODEX_MARKETPLACE}` || header.startsWith(`hooks.state."${CODEX_PLUGIN}:`));
+      const result = removeTomlTables(text, parts => isOursCodexTable(parts, CODEX_PLUGIN, CODEX_MARKETPLACE));
+      if (result === null) throw new Error('the file changed and can no longer be read safely; it was not edited');
       if (result.removed.length) effects.writeText(step.path, result.text);
       return;
     }
@@ -487,15 +526,27 @@ async function executeStep(step, effects, context) {
     }
     case 'tree':
     case 'file': {
-      if (step.expectInstance) {
-        const record = json(effects.readText(join(step.path, step.id === 'client' ? 'profile.json' : 'installation.json')) ?? '');
-        const instance = step.id === 'client' ? record?.expectedInstanceId : record?.instanceId;
-        if (record && instance !== step.expectInstance) throw new Error('it now holds a different Ours installation');
-      }
       const reason = unsafeTreeReason(step.path, { home, stat: effects.stat, realpath: effects.realpath, uid: effects.uid, privateTree: step.privateTree !== false, file: step.type === 'file' });
       if (reason) throw new Error(`${step.path} ${reason}`);
       if (!effects.stat(step.path)) return;
       if (step.type === 'file') effects.removeFile(step.path); else effects.removeDir(step.path);
+      return;
+    }
+    case 'retire': {
+      // Verify the folder's own record, move it aside in one rename, then delete.
+      if (!effects.stat(step.path)) return;
+      const guard = { home, stat: effects.stat, realpath: effects.realpath, uid: effects.uid };
+      const reason = unsafeTreeReason(step.path, guard);
+      if (reason) throw new Error(`${step.path} ${reason}`);
+      const record = json(effects.readText(join(step.path, step.recordFile)) ?? '');
+      if (!record || record[step.recordField] !== step.expectInstance) throw new Error('it no longer holds the Ours record it had when checked, so it was left in place');
+      if (effects.stat(step.tombstone)) {
+        const leftover = unsafeTreeReason(step.tombstone, guard);
+        if (leftover) throw new Error(`${step.tombstone} ${leftover}`);
+        effects.removeDir(step.tombstone);
+      }
+      effects.renamePath(step.path, step.tombstone);
+      effects.removeDir(step.tombstone);
       return;
     }
     case 'empty-dir': {
@@ -567,6 +618,13 @@ export async function runRemoval(argv, effects) {
   const plan = planRemoval(found, { home: effects.home });
   // Only this command itself left: Ours is already removed; say so instead of asking.
   const onlyInstaller = plan.steps.every(step => step.id === 'installer' || step.id === 'npm-scope') && !journal;
+  const residualsFound = plan.kept.filter(item => item.residual);
+  if ((!plan.steps.length || onlyInstaller) && residualsFound.length) {
+    effects.out(warn('Some Ours items are left and cannot be removed automatically:'));
+    for (const item of residualsFound) effects.out(warn(`  - ${item.label} — ${item.reason}`));
+    effects.out(info(journal ? `Fix the reason shown, then run ours-install remove again. The list of what is left is kept in ${journalPath}.` : 'Fix the reason shown, then run ours-install remove again.'));
+    return EXIT_INCOMPLETE;
+  }
   if (!plan.steps.length || onlyInstaller) {
     for (const line of describePlan({ steps: [], kept: plan.kept })) effects.out(info(line));
     effects.out(ok(journal ? 'Nothing from Ours is left to remove. The removal is complete.' : 'Nothing from Ours was found on this computer. Nothing was changed.'));
@@ -591,7 +649,7 @@ export async function runRemoval(argv, effects) {
   // Retry record before the first change: only identities, never paths to delete.
   const record = {
     schema: 1, startedAt: journal?.startedAt ?? new Date(effects.now?.() ?? Date.now()).toISOString(),
-    installations: found.installations.map(({ record: _record, ownedImages: _owned, engine, images: retained, ...item }) => {
+    installations: found.installations.filter(item => item.project === projectForRoot(item.root)).map(({ record: _record, ownedImages: _owned, engine, images: retained, tombstone: _tombstone, ...item }) => {
       const images = { ...(retained ?? {}), ...Object.assign({}, ...Object.values(engine ?? {}).map(e => e.images ?? {})) };
       return { ...item, ...(Object.keys(images).length ? { images } : {}) };
     }),
@@ -610,8 +668,9 @@ export async function runRemoval(argv, effects) {
   const after = planRemoval(await discoverFootprint(effects, { stateDirs: options.stateDirs, journal: record }), { home: effects.home });
   const remaining = after.steps.filter(step => !(step.id === 'installer' && results.get('installer')?.state === 'done'));
   const failures = [...results.entries()].filter(([, r]) => r.state === 'failed');
+  const residuals = after.kept.filter(item => item.residual);
   effects.out(heading('Removal summary'));
-  if (!remaining.length && !failures.length) {
+  if (!remaining.length && !failures.length && !residuals.length) {
     effects.removeFile(journalPath);
     effects.out(ok('Ours has been removed from this computer.'));
     for (const item of after.kept) effects.out(info(`Kept: ${item.label} — ${item.reason}`));
@@ -621,6 +680,7 @@ export async function runRemoval(argv, effects) {
   effects.out(warn('Some Ours items could not be removed yet:'));
   for (const step of remaining) effects.out(warn(`  - ${step.label}${results.get(step.id)?.reason ? ` — ${results.get(step.id).reason}` : ''}`));
   for (const [id, r] of failures) if (!remaining.some(step => step.id === id)) effects.out(warn(`  - ${plan.steps.find(s => s.id === id)?.label ?? id} — ${r.reason}`));
+  for (const item of residuals) effects.out(warn(`  - ${item.label} — ${item.reason}`));
   effects.out(info(`Fix the reason shown, then run ours-install remove again; it continues from where it stopped. The list of what is left is kept in ${journalPath}.`));
   return EXIT_INCOMPLETE;
 }

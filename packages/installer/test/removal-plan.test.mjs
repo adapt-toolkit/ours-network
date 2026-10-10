@@ -2,15 +2,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  unsafeTreeReason, planRemoval, describePlan, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, within, journalInstallation, ownedContainer,
+  projectForRoot, tombstoneFor, unsafeTreeReason, planRemoval, describePlan, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, within, journalInstallation, ownedContainer, isOursCodexTable,
 } from '../lib/removal-plan.mjs';
 import { addOwner, ownedImagesRecord } from '../lib/ownership.mjs';
 
 const home = '/home/u';
 const A = '11111111-1111-1111-1111-111111111111';
 const B = '22222222-2222-2222-2222-222222222222';
-const install = (root, instanceId, extra = {}) => ({ root, instanceId, project: 'ours-aaaaaaaaaaaaaaaa', mode: 'docker', candidateProjects: [], ...extra });
-const gen = (id, owners = null, extra = {}) => ({ id, path: `${home}/.ours-client-install/${id}`, owners, ...extra });
+const install = (root, instanceId, extra = {}) => ({ root, instanceId, project: 'ours-aaaaaaaaaaaaaaaa', mode: 'docker', candidateProjects: [], record: {}, ...extra });
+// A retry-record entry: the project is bound to its root.
+const journalItem = (root, instanceId) => ({ root, instanceId, project: projectForRoot(root), mode: 'docker', candidateProjects: [] });
+const gen = (id, owners = null, extra = {}) => ({ id, path: `${home}/.ours-client-install/${id}`, owners: owners === null ? { state: 'absent' } : owners === 'invalid' ? { state: 'invalid' } : { state: 'valid', instances: owners }, ...extra });
 
 test('tree guard refuses root, home, its ancestors, links, foreign and shared trees', () => {
   const files = {
@@ -95,12 +97,15 @@ test('registrations pointing outside removed downloads are never removed', () =>
 });
 
 test('the retry record accepts only identities, never free-form paths', () => {
-  const good = { schema: 1, startedAt: 'x', installations: [install('/home/u/.ours-install', A)], clientInstanceIds: [A], generations: ['aaaaaaaaaaaaaaaa'], fleet: false, legacy: false, installer: true };
+  const good = { schema: 1, startedAt: 'x', installations: [journalItem('/home/u/.ours-install', A)], clientInstanceIds: [A], generations: ['aaaaaaaaaaaaaaaa'], fleet: false, legacy: false, installer: true };
   assert.equal(validateJournal(good, { home }), good);
   for (const bad of [
     { ...good, extra: 1 }, { ...good, schema: 2 }, { ...good, generations: ['../../etc'] },
     { ...good, installations: [{ ...good.installations[0], root: 'relative' }] },
     { ...good, installations: [{ ...good.installations[0], project: 'evil' }] },
+    // An arbitrary private folder cannot be named: the project must be the one derived from the root.
+    { ...good, installations: [{ ...good.installations[0], root: '/synthetic/home/unrelated-private-project', project: 'ours-123' }] },
+    { ...good, installations: [{ ...good.installations[0], root: '/synthetic/home/unrelated-private-project' }] },
     { ...good, installations: [{ ...good.installations[0], candidateProjects: ['ours-x'] }] },
     { ...good, clientInstanceIds: ['nope'] }, { ...good, fleet: 'yes' },
   ]) assert.throws(() => validateJournal(bad, { home }), /invalid/);
@@ -113,7 +118,7 @@ test('journal identity carries the candidate project of an interrupted update', 
 
 test('TOML table removal keeps every unrelated byte', () => {
   const text = '# mine\nmodel = "gpt-5"\n\n[profiles.mine]\napproval_policy = "never"\n\n[plugins."ours@ours-codex-marketplace"]\nenabled = true\n\n[hooks.state."ours@ours-codex-marketplace:hooks/hooks.json:session_start:0:0"]\ntrusted_hash = "x"\n\n[plugins."other@market"]\nenabled = true\n';
-  const match = h => h === 'plugins."ours@ours-codex-marketplace"' || h.startsWith('hooks.state."ours@ours-codex-marketplace:');
+  const match = parts => isOursCodexTable(parts, 'ours@ours-codex-marketplace', 'ours-codex-marketplace');
   const { text: out, removed } = removeTomlTables(text, match);
   assert.equal(removed.length, 2);
   assert.equal(out, '# mine\nmodel = "gpt-5"\n\n[profiles.mine]\napproval_policy = "never"\n\n[plugins."other@market"]\nenabled = true\n');
@@ -136,9 +141,12 @@ test('owner and image records only grow with valid identities', () => {
   assert.equal(addOwner(first, A), null);
   assert.deepEqual(JSON.parse(addOwner(first, B)).instances, [A, B]);
   assert.equal(addOwner(first, 'nope'), null);
-  assert.deepEqual(JSON.parse(addOwner('garbage', B)).instances, [B]);
+  assert.throws(() => addOwner('garbage', B), /damaged/, 'a damaged record is never replaced');
+  assert.throws(() => addOwner(JSON.stringify({ schema: 1, instances: ['x'] }), B), /damaged/);
   const images = ownedImagesRecord(null, { 'ours-a:runtime': 'sha256:' + '1'.repeat(64) });
   assert.equal(ownedImagesRecord(images, { 'ours-a:runtime': 'sha256:' + '1'.repeat(64) }), null);
+  assert.equal(ownedImagesRecord('{broken', { 'ours-a:runtime': 'sha256:' + '1'.repeat(64) }), null, 'a damaged image record is left as it is');
+  assert.equal(ownedImagesRecord(null, { 'busybox:latest': 'sha256:' + '1'.repeat(64), 'ours-a:runtime': 'latest' }), null);
   assert.ok(within('/a/b/c', '/a/b') && within('/a/b', '/a/b') && !within('/a/bc', '/a/b'));
 });
 
@@ -150,7 +158,7 @@ test('a rescan plans only engine items that still exist, and unknown ones conser
   const partial = { ...install('/home/u/.ours-install', A), record: undefined, engine: { [project]: { containers: 0, images: { [`${project}:runtime`]: 'sha256:' + '1'.repeat(64) }, volumes: null, networks: 0 } } };
   const { steps } = planRemoval({ ...base, installations: [partial], buildCache: null }, { home });
   const ids = steps.map(s => s.id);
-  assert.deepEqual(ids.sort(), [`images:${project}`, 'build-cache', `root:/home/u/.ours-install`, `services:/home/u/.ours-install`, `volumes:${project}`].sort());
+  assert.deepEqual(ids.sort(), [`images:${project}`, 'build-cache', `volumes:${project}`].sort(), 'without its record the folder itself is never planned');
   assert.deepEqual(steps.find(s => s.id === `images:${project}`).tags, { [`${project}:runtime`]: 'sha256:' + '1'.repeat(64) }, 'only the proven tag is removed');
   assert.ok(!planRemoval({ ...base, installations: [partial], buildCache: [] }, { home }).steps.some(s => s.id === 'build-cache'));
 });
@@ -171,7 +179,8 @@ test('a container is owned only when Compose ran it from inside this installatio
 });
 
 test('the retry record accepts proven image ids and engine bindings only in their exact forms', () => {
-  const item = { ...install('/home/u/.ours-install', A), images: { 'ours-aaaaaaaaaaaaaaaa:runtime': 'sha256:' + 'a'.repeat(64) } };
+  const bound = journalItem('/home/u/.ours-install', A);
+  const item = { ...bound, images: { [`${bound.project}:runtime`]: 'sha256:' + 'a'.repeat(64) } };
   const good = { schema: 1, startedAt: 'x', installations: [item], clientInstanceIds: [], generations: [], fleet: false, legacy: false, installer: false };
   assert.equal(validateJournal(good, { home }), good);
   for (const bad of [
@@ -196,4 +205,65 @@ test('Ours tool records: the whole folder only when every entry is this installa
   assert.ok(!invalid.steps.some(s => s.id.startsWith('tool')) && invalid.kept.some(k => /could not be read/.test(k.reason)));
   const orphan = planRemoval({ installations: [], otherInstallations: [], generations: [], toolState: tool() }, { home });
   assert.deepEqual(orphan.steps, [], 'without an installation being removed nothing in it is attributable');
+});
+
+test('a generation with a damaged owner record is never removed, even when nothing else remains', () => {
+  const found = { installations: [install('/home/u/.ours-install', A)], otherInstallations: [], generations: [gen('aaaaaaaaaaaaaaaa', 'invalid')], client: { root: `${home}/.ours-client`, instanceId: A } };
+  const { steps, kept } = planRemoval(found, { home });
+  assert.ok(!steps.some(s => s.id.startsWith('generation:')));
+  assert.ok(kept.some(k => /owner record .* is damaged/.test(k.reason)));
+});
+
+test('TOML removal ignores header-like lines inside strings and arrays, and reads quoted or escaped headers', () => {
+  const match = parts => isOursCodexTable(parts, 'ours@ours-codex-marketplace', 'ours-codex-marketplace');
+  const user = [
+    'note = """',
+    '[plugins."ours@ours-codex-marketplace"]',
+    'my notes about \\""" quoting',
+    '"""',
+    "raw = '''",
+    '[marketplaces.ours-codex-marketplace]',
+    "'''",
+    'matrix = [',
+    '  ["a"],',
+    '  [plugins]',
+    ']',
+    'inline = { x = "[plugins.\\"ours@ours-codex-marketplace\\"]" } # [x]',
+    '',
+  ].join('\n');
+  const ours = [
+    '[ plugins . "ours@ours-codex-marketplace" ]',
+    'enabled = true',
+    '',
+    "[marketplaces.'ours-codex-marketplace']",
+    'source = "/x"',
+    '',
+    '[hooks.state."ours\\u0040ours-codex-marketplace:hooks/hooks.json:session_start:0:0"]',
+    'trusted_hash = "x"',
+    '',
+    '[plugins."other@market"]',
+    'enabled = true',
+    '',
+  ].join('\n');
+  const { text, removed } = removeTomlTables(user + ours, match);
+  assert.equal(removed.length, 3);
+  assert.equal(text, user + '[plugins."other@market"]\nenabled = true\n');
+  // Only the multiline string: unchanged, nothing matched.
+  assert.deepEqual(removeTomlTables(user, match), { text: user, removed: [] });
+  // Text that cannot be scanned safely is never edited.
+  for (const broken of ['a = """\nunterminated', 'a = [\n1,', '[plugins."ours@ours-codex-marketplace"\nx=1', 'a = "open\n']) assert.equal(removeTomlTables(broken, match), null, broken);
+});
+
+test('installation and connection folders are retired only with their own record, via a tombstone', () => {
+  const root = '/home/u/.ours-install';
+  const tomb = tombstoneFor(root, A);
+  assert.equal(tomb, `/home/u/.ours-install.ours-removing-${A}`);
+  const found = { installations: [install(root, A, { tombstone: tomb })], otherInstallations: [], generations: [], client: { root: `${home}/.ours-client`, instanceId: A }, clientTombstones: [tombstoneFor(`${home}/.ours-client`, A)] };
+  const { steps } = planRemoval(found, { home });
+  const rootStep = steps.find(s => s.id === `root:${root}`);
+  assert.deepEqual([rootStep.type, rootStep.recordFile, rootStep.recordField, rootStep.expectInstance, rootStep.tombstone], ['retire', 'installation.json', 'instanceId', A, tomb]);
+  assert.equal(steps.find(s => s.id === 'client').type, 'retire');
+  assert.ok(steps.some(s => s.id === `tombstone:${tomb}`) && steps.some(s => s.id === `tombstone:${home}/.ours-client.ours-removing-${A}`));
+  const retained = planRemoval({ ...found, installations: [install(root, A, { record: null, tombstone: null })], clientTombstones: [] }, { home });
+  assert.ok(!retained.steps.some(s => s.id === `root:${root}`), 'a retried root without its record is never deleted');
 });

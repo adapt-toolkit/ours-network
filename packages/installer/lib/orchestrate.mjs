@@ -932,6 +932,29 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
     let manual = plan.manual;
     if (exactSuite?.localPackages?.[plan.name]) {
       const registration = await effects.prepareClientMarketplace(plan.name, exactSuite.localPackages[plan.name]);
+      // Codex refuses to re-add a marketplace name from a new folder. An update
+      // moves it to a new download folder: replace only a registration that
+      // points into an earlier download folder of this installer.
+      if (plan.name === 'codex') {
+        const current = await effects.codexMarketplace?.();
+        const source = current?.marketplaceSource;
+        if (current && !(source?.sourceType === 'local' && source?.source === registration)) {
+          const earlier = source?.sourceType === 'local' && typeof source.source === 'string'
+            && /^[0-9a-f]{16}\/marketplaces\/codex$/.test(source.source.slice(join(effects.home, '.ours-client-install').length + 1))
+            && source.source.startsWith(join(effects.home, '.ours-client-install') + '/');
+          if (!earlier) {
+            const where = source?.source ?? 'another source';
+            effects.out(warn(`Codex already has a plugin source named ours-codex-marketplace from ${where}, which this installer did not create. It was left unchanged. Remove it with: codex plugin marketplace remove ours-codex-marketplace, then run the installer again.`));
+            rows.push({ ...row, state: 'failed', failedCommand: ['codex', 'plugin', 'marketplace', 'add', registration], failedStep: `Register ${plan.label} marketplace`, detail: `a different ours-codex-marketplace source (${where}) is registered` });
+            continue;
+          }
+          const moved = await attempt(effects, false, 'codex plugin marketplace remove ours-codex-marketplace (earlier download folder)', () => effects.run('codex', ['plugin', 'marketplace', 'remove', 'ours-codex-marketplace'], { env: profileEnv(target) }), clientDiagnostic);
+          if (!moved.ok) {
+            rows.push({ ...row, state: 'failed', failedCommand: ['codex', 'plugin', 'marketplace', 'remove', 'ours-codex-marketplace'], failedStep: `Move ${plan.label} marketplace`, detail: clientDiagnostic(moved.error) });
+            continue;
+          }
+        }
+      }
       const steps = plan.name === 'codex'
         ? [['codex', 'plugin', 'marketplace', 'add', registration], ['codex', 'plugin', 'add', 'ours@ours-codex-marketplace']]
         : [['claude', 'plugin', 'marketplace', 'add', registration], ['claude', 'plugin', await effects.hasClaudePlugin() ? 'update' : 'install', 'ours@ours.network']];

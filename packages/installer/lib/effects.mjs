@@ -34,7 +34,7 @@ import { refreshDockerRecovery, recoveryCompose, reconcileDockerRecovery } from 
 import { reportBootReadiness } from './boot-readiness.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { isPluginOnly, serverRole, pluginOnlyCompose, PLUGIN_ONLY_COMPOSE } from './product.mjs';
-import { OWNERS_FILE, OWNED_IMAGES_FILE, addOwner, ownedImagesRecord } from './ownership.mjs';
+import { OWNERS_FILE, OWNED_IMAGES_FILE, addOwner, ownedImagesRecord, changedImages } from './ownership.mjs';
 import { IMAGE_TARGETS } from './removal-plan.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
 import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
@@ -390,6 +390,8 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     removeDir: (path) => { rmSync(resolve(path), { recursive: true, force: true }); },
     removeFile: (path) => { rmSync(resolve(path), { force: true }); },
     removeEmptyDir: (path) => { rmdirSync(resolve(path)); },
+    renamePath: (from, to) => { renameSync(resolve(from), resolve(to)); },
+    sleep: (ms) => new Promise(done => setTimeout(done, ms)),
     copyDir: (source, destination) => {
       mkdirSync(dirname(resolve(destination)), { recursive: true, mode: 0o700 });
       cpSync(resolve(source), resolve(destination), {
@@ -884,6 +886,8 @@ export function networkEffects(effects) {
       if (!existsSync(materialized)) writePrivateNew(materialized, retained);
       else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
       if (record.mode === 'docker') {
+        // Image IDs before this run builds anything: only what it creates or changes becomes proof.
+        const imagesBefore = runtimeOnly ? null : await effects.imageIds(record);
         if (isPluginOnly(record)) atomicWriteConfig(join(record.workDir, PLUGIN_ONLY_COMPOSE), pluginOnlyCompose());
         if (engineName(record) === 'podman') atomicWriteConfig(join(record.workDir, 'compose.podman.json'), JSON.stringify({ services: Object.fromEntries(record.services.map(name => [name, { restart: 'unless-stopped' }])) }));
         const rebuildPrivateScripts = refreshDockerPolicyCopy(record);
@@ -907,8 +911,10 @@ export function networkEffects(effects) {
           await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         }
         if (runtimeOnly) return;
-        await effects.recordOwnedImages(record);
         await effects.prepareServerVolumes(record);
+        // Volume preparation may build the maintenance image; record after it.
+        const imagesAfter = await effects.imageIds(record);
+        await effects.recordOwnedImages(record, changedImages(imagesBefore, imagesAfter));
       } else {
         if (!existsSync(join(record.workDir, '.packages-ready'))) {
           const sourceRoot = join(record.root, `build-${randomUUID()}`);
@@ -1082,7 +1088,10 @@ export function networkEffects(effects) {
     },
     async publishServerBuild(record, candidate) {
       const previous = join(candidate.root, 'previous-runtime');
+      const built = {};
       if (record.mode === 'docker') {
+        const proven = effects.ownedImages(record);
+        const before = await effects.imageIds(record);
         for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
           const retained = `${candidate.project}:previous-${target}`;
           const found = await container(record, ['image', 'inspect', retained], { allowCodes: [1] });
@@ -1090,7 +1099,14 @@ export function networkEffects(effects) {
             const current = await container(record, ['image', 'inspect', `${record.project}:${target}`], { allowCodes: [1] });
             if (current.code === 0) await container(record, ['tag', `${record.project}:${target}`, retained]);
           }
+          // A retained copy is proven only when the image it copies already was.
+          const tag = `${record.project}:${target}`;
+          if (before[tag] && proven[tag] === before[tag]) built[retained] = before[tag];
         }
+        // The candidate project name is a random per-build name kept in the private
+        // record; its images were built by this update.
+        Object.assign(built, Object.fromEntries(Object.entries(await effects.imageIds(candidate, ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]))
+          .map(([tag, id]) => [`${record.project}:${tag.slice(candidate.project.length + 1)}`, id])));
       }
       if (!existsSync(previous)) {
         privateDirectory(record.workDir);
@@ -1109,18 +1125,26 @@ export function networkEffects(effects) {
         }
       }
       atomicWriteConfig(record.sourcesPath, readFileSync(candidate.sourcesPath));
-      if (record.mode === 'docker') await effects.recordOwnedImages(record);
+      if (record.mode === 'docker') await effects.recordOwnedImages(record, built);
     },
-    /** Record the IDs of the images this installation built, so removal can prove them. */
-    async recordOwnedImages(record) {
+    /** Current image IDs of this project's tags (only those that exist). */
+    async imageIds(record, targets = IMAGE_TARGETS) {
       const images = {};
-      for (const target of IMAGE_TARGETS) {
+      for (const target of targets) {
         const tag = `${record.project}:${target}`;
         const found = await container(record, ['image', 'inspect', '--format', '{{.Id}}', tag], { allowCodes: [1] });
         if (found.code === 0 && /^sha256:[0-9a-f]{64}$/.test(found.stdout.trim())) images[tag] = found.stdout.trim();
       }
+      return images;
+    },
+    ownedImages(record) {
       const path = join(record.root, OWNED_IMAGES_FILE);
-      const next = ownedImagesRecord(existsSync(path) ? readFileSync(path, 'utf8') : null, images);
+      try { const value = JSON.parse(readFileSync(path, 'utf8')); return value?.schema === 1 && value.images && typeof value.images === 'object' ? value.images : {}; } catch { return {}; }
+    },
+    /** Add the IDs of images this run built; never adopts a tag it did not produce. */
+    async recordOwnedImages(record, built) {
+      const path = join(record.root, OWNED_IMAGES_FILE);
+      const next = ownedImagesRecord(existsSync(path) ? readFileSync(path, 'utf8') : null, built);
       if (next) atomicWriteConfig(path, next);
     },
     async validateServerBuildState(record) {
@@ -1511,8 +1535,10 @@ export function networkEffects(effects) {
       let owner = null;
       try { owner = readHostProfileFile(configPath)?.expectedInstanceId ?? null; } catch { /* not yet imported */ }
       const ownersPath = join(root, OWNERS_FILE);
-      const ownerRecord = owner ? addOwner(existsSync(ownersPath) ? readFileSync(ownersPath, 'utf8') : null, owner) : null;
-      if (ownerRecord) atomicWriteConfig(ownersPath, ownerRecord);
+      try {
+        const ownerRecord = owner ? addOwner(existsSync(ownersPath) ? readFileSync(ownersPath, 'utf8') : null, owner) : null;
+        if (ownerRecord) atomicWriteConfig(ownersPath, ownerRecord);
+      } catch (error) { effects.out?.(`! ${error.message}; complete removal will leave ${root} in place and say so.`); }
       const retained = join(root, 'sources.json');
       const bytes = readFileSync(sourcesPath);
       if (!existsSync(retained)) writePrivateNew(retained, bytes);
