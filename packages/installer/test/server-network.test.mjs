@@ -110,6 +110,8 @@ test('update and rebuild prepare isolated runtimes without replacing the active 
             assert.notEqual(options.env.OURS_IMAGE, 'ours-fixture:runtime');
             assert.notEqual(options.env.OURS_MAINTENANCE_IMAGE, 'ours-fixture:maintenance');
           } else if (args[0] === 'cp') fs.writeFileSync(args.at(-1), '{"name":"candidate"}\n');
+          // Read-only check for a stopped helper left by an interrupted run.
+          else if (args[0] === 'container' && args[1] === 'inspect') return { code: 1, stdout: '' };
           else assert.ok(['create', 'rm'].includes(args[0]));
         } else assert.fail(`Unexpected command: ${command}`);
         return { code: 0, stdout: '' };
