@@ -295,3 +295,28 @@ test('server rejects a context carried by only some component markers before bac
   await assert.rejects(runStateOperation(['backup', 'server', 'mixed'], env), /provenance/);
   assert.equal(fs.existsSync(join(dir, 'backups')), false);
 });
+
+test('a stopped build-record helper left by an interrupted run is cleared; any other container of that name stops the run', async t => {
+  const { realEffects } = await import('../lib/effects.mjs');
+  const { build, dir } = fixture(t), source = build('source'); createBuildContext(source);
+  const run = (existing) => {
+    const destination = fs.mkdtempSync(join(dir, 'dest-')); const events = [];
+    const effects = realEffects({ env: {}, home: dir });
+    effects.run = async (_command, args) => {
+      events.push(args.slice(0, 2).join(' '));
+      if (args[0] === 'container' && args[1] === 'inspect') return existing ? { code: 0, stdout: JSON.stringify([existing]) } : { code: 1, stdout: '' };
+      if (args[0] === 'image') return { stdout: '1\n' };
+      if (args[0] === 'cp') fs.copyFileSync(join(source, args[1].split('/').at(-1)), args[2]);
+      return { stdout: '', code: 0 };
+    };
+    return { promise: effects.copyDockerBuildRecords({ project: 'fixture' }, destination), events };
+  };
+  const helper = { State: { Running: false }, Config: { Entrypoint: ['/bin/true'], Image: 'fixture:runtime' } };
+  const cleared = run(helper); await cleared.promise;
+  assert.deepEqual(cleared.events.slice(0, 4), ['image inspect', 'container inspect', 'rm fixture-records', 'create --name']);
+  for (const other of [{ ...helper, State: { Running: true } }, { ...helper, Config: { ...helper.Config, Image: 'someone:else' } }, { ...helper, Config: { ...helper.Config, Entrypoint: ['sh'] } }]) {
+    const refused = run(other);
+    await assert.rejects(refused.promise, /not this installer's stopped build-record helper/);
+    assert.ok(!refused.events.some(e => e.startsWith('rm') || e.startsWith('create')));
+  }
+});

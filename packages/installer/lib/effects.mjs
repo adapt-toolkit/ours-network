@@ -1008,6 +1008,15 @@ export function networkEffects(effects) {
       const stage = mkdtempSync(join(directory, '.records-'));
       const name = `${record.project}-records`;
       let created = false;
+      // An interrupted earlier run can leave its stopped helper behind; clear only that.
+      const stale = await container(record, ['container', 'inspect', name], { allowCodes: [1] });
+      const [value] = stale.code === 0 ? (() => { try { return JSON.parse(stale.stdout); } catch { return []; } })() : [];
+      if (value) {
+        const helper = value?.State?.Running === false && JSON.stringify(value?.Config?.Entrypoint) === JSON.stringify(['/bin/true'])
+          && value?.Config?.Image === `${record.project}:runtime`;
+        if (!helper) throw new Error(`A container named ${name} exists and is not this installer's stopped build-record helper; remove or rename it, then run the installer again`);
+        await container(record, ['rm', name]);
+      }
       try {
         await container(record, ['create', '--name', name, '--entrypoint', '/bin/true', `${record.project}:runtime`]);
         created = true;
