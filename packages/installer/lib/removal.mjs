@@ -351,6 +351,9 @@ async function engineInventory(effects, item, keep) {
       const id = (json(found.stdout) ?? [])[0]?.Id;
       const recorded = item.ownedImages?.[tag] ?? item.images?.[tag];
       if (id && (recorded ? recorded === id : imageIds.has(id))) images[tag] = id;
+      // An unfinished update's project name comes from this installation's own record,
+      // so such an image is Ours even when its build was not recorded: report it.
+      else if (project !== item.project) keep('programs', `Container image ${tag}`, `it was built by an unfinished Ours update whose image was not recorded, so it is left in place; remove it with: docker image rm ${tag}`, true);
       else keep('programs', `Container image ${tag}`, 'it has an Ours name but is not provably the image this installer built, so it is left in place');
     }
     inventory[project] = {

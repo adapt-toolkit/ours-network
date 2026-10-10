@@ -255,3 +255,25 @@ test('F6: a remaining Ours Codex cache without the codex command keeps the remov
   assert.equal(await runRemoval([], g.effects), 0);
   assert.equal(files[cache], undefined);
 });
+
+test('images of an unfinished update are removed when recorded, and reported when they are not', async () => {
+  const root = '/home/u/.ours-install';
+  const candidate = 'ours-build' + 'c'.repeat(32);
+  const recordedId = 'sha256:' + 'a'.repeat(64), unrecordedId = 'sha256:' + 'b'.repeat(64);
+  const journal = { schema: 1, startedAt: 'x', clientInstanceIds: [], generations: [], fleet: false, legacy: false, installer: false,
+    installations: [{ root, instanceId: A, project: projectForRoot(root), mode: 'docker', candidateProjects: [candidate], images: { [`${candidate}:runtime`]: recordedId } }] };
+  const files = { [`${home}/.ours-removal.json`]: { type: 'file', mode: 0o600, text: JSON.stringify(journal) } };
+  const images = { [`${candidate}:runtime`]: recordedId, [`${candidate}:maintenance`]: unrecordedId };
+  const removed = [];
+  const f = fakeEffects(files, { askLine: async () => 'remove ours', run: async (command, args) => {
+    if (command === 'npm') return { stdout: '/x\n' };
+    if (command !== 'docker') throw new Error(`${command} unavailable`);
+    if (args[0] === 'image' && args[1] === 'inspect') return images[args.at(-1)] ? { code: 0, stdout: JSON.stringify([{ Id: images[args.at(-1)] }]) } : { code: 1, stdout: '' };
+    if (args[0] === 'image' && args[1] === 'rm') { removed.push(args[2]); delete images[args[2]]; return { code: 0, stdout: '' }; }
+    return { code: 0, stdout: '' };
+  } });
+  assert.equal(await runRemoval([], f.effects), 1, 'the unrecorded candidate image keeps the removal unfinished');
+  assert.deepEqual(removed, [`${candidate}:runtime`]);
+  assert.ok(images[`${candidate}:maintenance`], 'never removed without proof');
+  assert.ok(files[`${home}/.ours-removal.json`]);
+});

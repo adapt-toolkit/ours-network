@@ -979,6 +979,9 @@ export function networkEffects(effects) {
         await effects.prepareInstallation(candidate, { runtimeOnly: true });
         if (candidate.mode === 'docker') {
           await compose(candidate, ['build', 'state-operation']);
+          // The candidate's project name is new for this build: every image under it was
+          // built now. Record them with the installation so removal can prove them.
+          await effects.recordOwnedImages(record, await effects.imageIds(candidate));
           await effects.copyDockerBuildRecords(candidate, candidate.workDir);
         }
         // npm emits readable build records; maintenance consumes private copies.
