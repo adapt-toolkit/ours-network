@@ -18,7 +18,7 @@ import { stripManagedBlock, YAML_BLOCK, MD_BLOCK } from './uninstall.mjs';
 import { readOwners } from './ownership.mjs';
 import {
   JOURNAL, CONFIRMATION, IMAGE_TARGETS, CLAUDE_PLUGIN, CLAUDE_MARKETPLACE, CODEX_PLUGIN, CODEX_MARKETPLACE, FLEET_UNITS,
-  within, unsafeTreeReason, journalInstallation, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, ownedContainer, isOursCodexTable, projectForRoot, tombstoneFor,
+  within, unsafeTreeReason, journalInstallation, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, ownedContainer, isOursCodexTable, projectForRoot, tombstoneFor, otherOursProjects,
   planRemoval, describePlan,
 } from './removal-plan.mjs';
 import { ok, info, warn, heading, progress } from './ui.mjs';
@@ -274,10 +274,13 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     const removing = new Set(found.installations.flatMap(i => [i.project, ...(i.candidateProjects ?? [])]));
     const binding = found.installations.find(i => i.mode === 'docker');
     const others = new Set();
-    for (const kind of [['ps', '-a'], ['volume', 'ls']]) {
+    // Containers inherit their image's project label, so only Compose-created ones
+    // (with a project folder) show another installation; volume labels are not inherited.
+    const label = '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.project.working_dir"}}';
+    for (const [kind, composeOnly] of [[['ps', '-a'], true], [['volume', 'ls'], false]]) {
       try {
-        const listed = await runContainer(effects, binding, [...kind, '--format', '{{.Label "com.docker.compose.project"}}']);
-        for (const project of listed.stdout.split('\n').map(line => line.trim())) if (/^ours-/.test(project) && !removing.has(project)) others.add(project);
+        const listed = await runContainer(effects, binding, [...kind, '--format', label]);
+        for (const project of otherOursProjects(listed.stdout, removing, { composeOnly })) others.add(project);
       } catch { others.add('unknown'); }
     }
     found.otherEngineProjects = [...others];

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  projectForRoot, tombstoneFor, unsafeTreeReason, planRemoval, describePlan, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, within, journalInstallation, ownedContainer, isOursCodexTable,
+  projectForRoot, tombstoneFor, otherOursProjects, unsafeTreeReason, planRemoval, describePlan, validateJournal, removeTomlTables, parseBuildCache, isOursCacheRecord, within, journalInstallation, ownedContainer, isOursCodexTable,
 } from '../lib/removal-plan.mjs';
 import { addOwner, ownedImagesRecord } from '../lib/ownership.mjs';
 
@@ -266,4 +266,11 @@ test('installation and connection folders are retired only with their own record
   assert.ok(steps.some(s => s.id === `tombstone:${tomb}`) && steps.some(s => s.id === `tombstone:${home}/.ours-client.ours-removing-${A}`));
   const retained = planRemoval({ ...found, installations: [install(root, A, { record: null, tombstone: null })], clientTombstones: [] }, { home });
   assert.ok(!retained.steps.some(s => s.id === `root:${root}`), 'a retried root without its record is never deleted');
+});
+
+test('another Ours installation is shown only by Compose-created containers or volumes, not by inherited image labels', () => {
+  const removing = new Set(['ours-aaaaaaaaaaaaaaaa']);
+  const containers = 'ours-builddfdfd345428e48438497a08bf58a8ee6\t\nours-aaaaaaaaaaaaaaaa\t/home/u/.ours-install/runtime\nours-bbbbbbbbbbbbbbbb\t/home/u/.ours-b/runtime\n\t\n';
+  assert.deepEqual(otherOursProjects(containers, removing, { composeOnly: true }), ['ours-bbbbbbbbbbbbbbbb']);
+  assert.deepEqual(otherOursProjects('ours-cccccccccccccccc\t\n', removing), ['ours-cccccccccccccccc'], 'volume labels are not inherited');
 });

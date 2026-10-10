@@ -109,6 +109,18 @@ export const projectForRoot = root => `ours-${createHash('sha256').update(root).
  */
 export const tombstoneFor = (path, instanceId) => join(dirname(path), `${basename(path)}.ours-removing-${instanceId}`);
 
+/** Ours projects other than the ones being removed, from "project<TAB>working_dir" lines. */
+export function otherOursProjects(text, removing, { composeOnly = false } = {}) {
+  const others = new Set();
+  for (const line of String(text ?? '').split('\n')) {
+    const [project = '', workingDir = ''] = line.trim().split('\t');
+    if (!/^ours-/.test(project) || removing.has(project)) continue;
+    if (composeOnly && !workingDir.trim()) continue;
+    others.add(project);
+  }
+  return [...others];
+}
+
 /** Strict journal validation: only identities, never free-form deletion paths. */
 export function validateJournal(value, { home }) {
   const fail = message => { throw new Error(`Unfinished removal record is invalid (${message}); it was left untouched. Remove ${join(home, JOURNAL)} yourself only after checking what remains.`); };
