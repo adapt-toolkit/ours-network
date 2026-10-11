@@ -813,7 +813,14 @@ Recovery introduces no host watchdog or service.
 Host boot is a separate prerequisite. On Linux, enable the selected Docker
 Engine system service; rootless Docker additionally needs its user service and
 user linger. The installer reports read-only boot diagnostics and does not enable
-or restart host services. A reachable remote Engine or Docker Desktop context
+or restart host services. It reads the persistent `docker.service` unit-file
+state, not whether Docker is running now: when Docker is running but not enabled,
+it says that ours components depending on Docker will not start automatically
+after a reboot and prints the optional command (`sudo systemctl enable
+docker.service`, or `systemctl --user enable docker.service` plus
+`sudo loginctl enable-linger USER` for rootless Docker). A masked unit, or a host
+with no systemd `docker.service` (WSL with Docker Desktop integration, snap,
+OpenRC and similar), gets the same warning without a systemctl command. A reachable remote Engine or Docker Desktop context
 cannot prove boot recovery on this machine. A custom Unix socket also has an
 unverified boot-service binding; a host unit cannot establish its startup. On macOS/Windows with WSL, enable Docker
 Desktop startup at sign-in; this does not provide pre-login startup. Rootless
