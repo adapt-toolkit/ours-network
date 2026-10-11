@@ -5,7 +5,11 @@ const OPTIONAL = 'The installer does not change this for you.';
 
 /** Persistent unit-file state only: `is-active`/a reachable Engine says nothing about the next boot. */
 async function unitFileState(effects, scope) {
+  // `is-enabled` reads unit files offline, so it answers even where systemd is not the init
+  // system and its answer decides nothing. /run/systemd/system is sd_booted(3)'s own test.
+  if (!effects.exists('/run/systemd/system')) return 'unavailable';
   try {
+    if (scope.length) await effects.run('systemctl', [...scope, 'show-environment']); // a user manager must be running
     // 1 = disabled/masked, 4 = no such unit (older systemd reports that as 1 with empty output).
     const state = (await effects.run('systemctl', [...scope, 'is-enabled', 'docker.service'], { allowCodes: [1, 4] })).stdout.trim().split('\n')[0];
     if (state === 'enabled') return 'enabled';
@@ -38,8 +42,9 @@ export async function reportBootReadiness(effects, record) {
   let endpoint, rootless;
   try {
     const context = JSON.parse((await effects.run('docker', ['context', 'inspect'])).stdout);
-    endpoint = effects.env.DOCKER_HOST ?? context[0]?.Endpoints?.docker?.Host;
-    // `docker context inspect` already resolves DOCKER_CONTEXT, which may name the local Engine.
+    // The CLI runs with this same environment and reports the endpoint it resolved from
+    // DOCKER_HOST/DOCKER_CONTEXT; their precedence differs between its documentation and releases.
+    endpoint = context[0]?.Endpoints?.docker?.Host;
     if (!endpoint?.startsWith('unix://') || endpoint.includes('/.docker/desktop/')) {
       effects.out('Container recovery requires the selected remote/Desktop Docker Engine to start independently; local systemd boot cannot be verified for this context.');
       return;
@@ -60,7 +65,7 @@ export async function reportBootReadiness(effects, record) {
   const state = await unitFileState(effects, scope);
   if (state === 'unavailable') {
     // WSL with Docker Desktop integration, snap, OpenRC/runit and similar: a systemctl command would be wrong here.
-    effects.out(warn(`Docker is running now, but no systemd${rootless ? ' user' : ''} docker.service was found, so its start-at-boot setting cannot be checked. If Docker is not set to start at boot, ${NO_AUTOSTART}. To start them automatically, enable start-at-boot in whatever manages this Docker Engine (Docker Desktop, snap, or your init system). ${OPTIONAL}`));
+    effects.out(warn(`Docker is running now, but no running systemd${rootless ? ' user' : ''} manager with a docker.service was found, so its start-at-boot setting cannot be checked. If Docker is not set to start at boot, ${NO_AUTOSTART}. To start them automatically, enable start-at-boot in whatever manages this Docker Engine (Docker Desktop, snap, or your init system). ${OPTIONAL}`));
     return;
   }
   if (state === 'unknown') {
@@ -78,8 +83,12 @@ export async function reportBootReadiness(effects, record) {
   if (rootless) {
     let linger = '';
     try { linger = (await effects.run('loginctl', ['show-user', String(process.getuid()), '--property=Linger', '--value'])).stdout.trim(); } catch {}
+    if (linger === 'no') {
+      effects.out(warn(`Rootless Docker's user service is enabled, but user linger is off, so Docker starts only when you log in: ours components that depend on Docker will not start automatically after a reboot until then. If you want them to start at boot, run: sudo loginctl enable-linger ${effects.username()}. ${OPTIONAL}`));
+      return;
+    }
     if (linger !== 'yes') {
-      effects.out(warn(`Rootless Docker's user service is enabled, but user linger is ${linger === 'no' ? 'off' : 'not verified'}, so Docker starts only when you log in: ours components that depend on Docker will not start automatically after a reboot until then. If you want them to start at boot, run: sudo loginctl enable-linger ${effects.username()}. ${OPTIONAL}`));
+      effects.out(warn(`Rootless Docker's user service is enabled, but user linger could not be checked. If linger is off, Docker starts only when you log in and ours components that depend on Docker will not start automatically after a reboot until then. Check it with: loginctl show-user ${effects.username()} --property=Linger`));
       return;
     }
   }

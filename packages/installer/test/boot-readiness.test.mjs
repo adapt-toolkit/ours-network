@@ -8,12 +8,13 @@ const failure = (message, code) => Object.assign(new Error(message), code === un
 // `systemctl` is either a unit-file state (systemd exits 1 for disabled/masked and 4 for a
 // missing unit, which the real effects layer raises unless allowed) or an Error to throw.
 const EXIT = { enabled: 0, 'enabled-runtime': 0, static: 0, disabled: 1, masked: 1, 'not-found': 4, '': 1 };
-async function report({ endpoint = ROOTFUL, rootless = false, systemctl = 'enabled', linger = 'yes', env = {}, docker = true, platform = 'linux', record = { mode: 'docker' } } = {}) {
+async function report({ endpoint = ROOTFUL, rootless = false, systemctl = 'enabled', linger = 'yes', env = {}, docker = true, systemd = true, userManager = true, platform = 'linux', record = { mode: 'docker' } } = {}) {
   const messages = [], calls = [];
-  const effects = { platform: { platform }, env, username: () => 'alice', out: m => messages.push(m), run: async (cmd, args, { allowCodes = [] } = {}) => {
+  const effects = { platform: { platform }, env, username: () => 'alice', exists: path => systemd && path === '/run/systemd/system', out: m => messages.push(m), run: async (cmd, args, { allowCodes = [] } = {}) => {
     calls.push([cmd, ...args]);
     if (cmd === 'docker' && args[0] === 'context') return { stdout: JSON.stringify([{ Endpoints: { docker: { Host: endpoint } } }]) };
     if (cmd === 'docker') { if (!docker) throw failure('Cannot connect to the Docker daemon'); return { stdout: JSON.stringify(rootless ? ['name=seccomp,profile=builtin', 'name=rootless'] : ['name=seccomp,profile=builtin']) }; }
+    if (cmd === 'systemctl' && args.at(-1) === 'show-environment') { if (!userManager) throw failure('Failed to connect to user scope bus'); return { stdout: 'PATH=/usr/bin\n' }; }
     if (cmd === 'systemctl') {
       if (systemctl instanceof Error) throw systemctl;
       if (EXIT[systemctl] !== 0 && !allowCodes.includes(EXIT[systemctl])) throw failure(`systemctl exited ${EXIT[systemctl]}`);
@@ -25,7 +26,7 @@ async function report({ endpoint = ROOTFUL, rootless = false, systemctl = 'enabl
   await reportBootReadiness(effects, record);
   // Read-only: the only systemctl verb is is-enabled, and nothing is enabled, started or lingered.
   for (const call of calls) {
-    if (call[0] === 'systemctl') assert.deepEqual(call.filter(arg => arg !== '--user'), ['systemctl', 'is-enabled', 'docker.service']);
+    if (call[0] === 'systemctl') assert(['is-enabled docker.service', '--user is-enabled docker.service', '--user show-environment'].includes(call.slice(1).join(' ')), call.join(' '));
     if (call[0] === 'loginctl') assert.equal(call[1], 'show-user');
     assert(!call.some(arg => ['enable', 'start', 'restart', 'unmask', 'enable-linger', 'sudo'].includes(arg)), call.join(' '));
   }
@@ -74,11 +75,25 @@ for (const [name, systemctl] of [
   ['systemctl fails unexpectedly', failure('Failed to connect to bus')],
 ]) test(`no systemctl command is recommended when ${name}`, async () => {
   const { text } = await report({ systemctl });
-  assert.match(text, /no systemd docker\.service was found, so its start-at-boot setting cannot be checked/);
+  assert.match(text, /no running systemd manager with a docker\.service was found, so its start-at-boot setting cannot be checked/);
   assert.match(text, NO_AUTOSTART);
   assert.match(text, /Docker Desktop, snap, or your init system/);
   assert.doesNotMatch(text, /systemctl (--user )?(enable|status)|sudo/);
   assert.doesNotMatch(text, /boot service is enabled/);
+});
+// `systemctl is-enabled` reads unit files offline and answers on a host whose init is not systemd.
+for (const systemctl of ['enabled', 'disabled']) test(`an installed ${systemctl} unit on a host not booted with systemd proves nothing`, async () => {
+  const { text, calls } = await report({ systemd: false, systemctl });
+  assert.match(text, /no running systemd manager with a docker\.service was found/);
+  assert.match(text, NO_AUTOSTART);
+  assert.doesNotMatch(text, /systemctl|sudo|boot service is enabled/);
+  assert(!calls.some(call => call[0] === 'systemctl'));
+});
+for (const systemctl of ['enabled', 'disabled']) test(`rootless Docker without a running user manager ignores an installed ${systemctl} unit`, async () => {
+  const { text, calls } = await report({ endpoint: ROOTLESS, rootless: true, userManager: false, systemctl });
+  assert.match(text, /no running systemd user manager with a docker\.service was found/);
+  assert.doesNotMatch(text, /systemctl|sudo|boot service is enabled/);
+  assert(!calls.some(call => call.includes('is-enabled')));
 });
 test('disabled rootless Docker gets the user-scope command without sudo, plus linger', async () => {
   const { text, calls } = await report({ endpoint: ROOTLESS, rootless: true, systemctl: 'disabled' });
@@ -95,7 +110,9 @@ test('enabled rootless Docker without linger is distinguished from a disabled se
 });
 test('unreadable linger is reported as unverified, not as off or enabled', async () => {
   const { text } = await report({ endpoint: ROOTLESS, rootless: true, linger: failure('loginctl failed') });
-  assert.match(text, /user linger is not verified/);
+  assert.match(text, /user linger could not be checked\. If linger is off, Docker starts only when you log in/);
+  assert.match(text, /Check it with: loginctl show-user alice --property=Linger/);
+  assert.doesNotMatch(text, /linger is off, so|enable-linger/);
   assert.doesNotMatch(text, /boot service is enabled/);
 });
 test('enabled rootless Docker with linger reports boot readiness', async () => {
@@ -118,8 +135,20 @@ test('DOCKER_CONTEXT naming the local Engine is judged by its resolved endpoint'
   const rootless = await report({ endpoint: ROOTLESS, rootless: true, env: { DOCKER_CONTEXT: 'rootless' }, systemctl: 'disabled' });
   assert.match(rootless.text, /run: systemctl --user enable docker\.service /);
 });
+// With both variables set, only the endpoint the CLI resolved picks the guidance: Docker's
+// documentation and its releases disagree on which variable wins, so neither is read here.
+test('a remote resolved endpoint is not overruled by a local DOCKER_HOST', async () => {
+  const { text, calls } = await report({ endpoint: 'ssh://remote', env: { DOCKER_CONTEXT: 'remote', DOCKER_HOST: ROOTFUL }, systemctl: 'disabled' });
+  assert.match(text, /cannot be verified for this context/);
+  assert.doesNotMatch(text, /systemctl/);
+  assert(!calls.some(call => call[0] === 'systemctl'));
+});
+test('a local resolved endpoint is not overruled by a remote DOCKER_HOST', async () => {
+  const { text } = await report({ env: { DOCKER_CONTEXT: 'default', DOCKER_HOST: 'tcp://ignored:2376' }, systemctl: 'disabled' });
+  assert.match(text, /run: sudo systemctl enable docker\.service\./);
+});
 test('a custom socket is not checked against docker.service', async () => {
-  const { text, calls } = await report({ env: { DOCKER_HOST: 'unix:///task/docker.sock' }, systemctl: 'disabled' });
+  const { text, calls } = await report({ endpoint: 'unix:///task/docker.sock', env: { DOCKER_HOST: 'unix:///task/docker.sock' }, systemctl: 'disabled' });
   assert.match(text, /boot service binding is unverified/);
   assert(!calls.some(call => call[0] === 'systemctl'));
   assert.doesNotMatch(text, /systemctl/);

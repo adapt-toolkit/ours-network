@@ -819,7 +819,7 @@ it says that ours components depending on Docker will not start automatically
 after a reboot and prints the optional command (`sudo systemctl enable
 docker.service`, or `systemctl --user enable docker.service` plus
 `sudo loginctl enable-linger USER` for rootless Docker). A masked unit, or a host
-with no systemd `docker.service` (WSL with Docker Desktop integration, snap,
+not booted with systemd or with no `docker.service` (WSL with Docker Desktop integration, snap,
 OpenRC and similar), gets the same warning without a systemctl command. A reachable remote Engine or Docker Desktop context
 cannot prove boot recovery on this machine. A custom Unix socket also has an
 unverified boot-service binding; a host unit cannot establish its startup. On macOS/Windows with WSL, enable Docker
