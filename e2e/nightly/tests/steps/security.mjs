@@ -101,7 +101,7 @@ Then('each message is observed once and history pagination preserves all three',
 When('the published MCP proxy starts with a private remote profile', async function () {
   this.mcpDir = mkdtempSync(join(tmpdir(), 'ours-e2e-mcp-'));
   const profile = join(this.mcpDir,'profile.json');
-  writeFileSync(profile,JSON.stringify({ endpoint:nodes.a.endpoint,expectedInstanceId:nodes.a.instanceId,credentialPath:nodes.a.credentialPath }),{mode:0o600});
+  writeFileSync(profile,JSON.stringify({ serverUrl:nodes.a.serverUrl,expectedInstanceId:nodes.a.instanceId,credentialPath:nodes.a.credentialPath }),{mode:0o600});
   this.transport = new StdioClientTransport({command:'/opt/ours/node_modules/.bin/ours-mcp',args:['proxy'],env:{...process.env,OURS_CONFIG:profile,OURS_MCP_CONFIG:join(this.mcpDir,'mcp.json'),CLAUDE_CODE_SESSION_ID:`e2e-${randomUUID()}`},stderr:'pipe'});
   this.mcp = new Client({name:'e2e',version:'1'});
   await this.mcp.connect(this.transport);

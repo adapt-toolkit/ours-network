@@ -140,15 +140,13 @@ Given('Fleet uses a deterministic ACP agent and Cowork on server {word} with roo
     chmodSync(path, 0o600);
   };
   privateFile(`${home}/profile.json`, JSON.stringify({
-    endpoint: nodes[side].endpoint,
+    serverUrl: nodes[side].serverUrl,
     expectedInstanceId: nodes[side].instanceId,
     credentialPath: nodes[side].credentialPath,
   }));
   privateFile(`${home}/fleet.yaml`, [
     'api_version: ours.network/fleet/v2',
     'rooms:',
-    '  cowork:',
-    `    config: ${coworkConfig}`,
     '  owner:',
     `    expected_cid: ${owner.cid}`,
     '  defaults:',
