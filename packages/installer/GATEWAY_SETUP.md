@@ -10,10 +10,10 @@ control local processes; they do not carry server management requests.
 ## Release availability
 
 The nightly manifest selects one published dependency graph: SDK
-`3.8.1-nightly.14`, CLI `2.8.1-nightly.12`, daemon `3.8.1-nightly.6`,
-Fleet `1.2.0-nightly.17`, MCP/Codex/Claude Code `1.2.0-nightly.9`,
-Telegram `1.0.1-nightly.8`, Messenger `1.0.31-nightly.8`, and Cowork
-`1.3.3-nightly.20260926.ceab465`. Exact archive checksums are retained in
+`3.8.1-nightly.18`, CLI `2.8.1-nightly.16`, daemon `3.8.1-nightly.10`,
+Fleet `1.2.0-nightly.61`, MCP/Codex/Claude Code `1.2.0-nightly.14`,
+Telegram `1.0.1-nightly.12`, Messenger `1.0.31-nightly.18`, and Cowork
+`1.3.4-nightly.20261013.e8a690f`. Exact archive checksums are retained in
 `releases/nightly.json`; the host CLI uses the same SDK/CLI pair.
 
 The coordinated installer release must include these pins before using the
