@@ -18,6 +18,11 @@
 set -euo pipefail
 version="${1:?usage: verify-stable-candidate.sh <installer-version>}"
 [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "not a stable version: $version" >&2; exit 1; }
+# npm test below also starts real container tests when OURS_TEST_DOCKER=1 or
+# OURS_TEST_PODMAN=1, so refuse before any worktree, install or test runs.
+if [[ ( "${OURS_TEST_DOCKER:-}" == 1 || "${OURS_TEST_PODMAN:-}" == 1 ) && "${CI:-}" != true ]]; then
+  echo "Container qualification needs CI=true on a disposable runner" >&2; exit 1
+fi
 repo=$(git rev-parse --show-toplevel)
 work=$(mktemp -d)
 cleanup() { git -C "$repo" worktree remove --force "$work/tree" >/dev/null 2>&1 || true; rm -rf "$work"; }
@@ -60,7 +65,6 @@ assert.deepEqual(JSON.parse(read('assets/sources.json')), {
 console.log(`Verified stable installer archive ${packed.name}@${packed.version}`);
 JS
 if [[ "${OURS_TEST_DOCKER:-}" == 1 ]]; then
-  [[ "${CI:-}" == true ]] || { echo "Docker qualification needs CI=true on a disposable runner" >&2; exit 1; }
   node scripts/verify-human-setup-e2e.mjs
   node --test packages/installer/test/gateway-docker.test.mjs
   node --test packages/installer/test/notifications-recovery-docker.test.mjs
