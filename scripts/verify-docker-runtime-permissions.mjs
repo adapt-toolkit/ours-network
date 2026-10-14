@@ -31,7 +31,13 @@ try {
       if (fs.statSync(path).isFile()) fs.chmodSync(path, 0o600);
     }
   }
-  const release = JSON.parse(fs.readFileSync('releases/nightly.json'));
+  // Qualify the release the packed installer embeds, in the channel its version
+  // selects, so a stable candidate is never checked against nightly packages.
+  const release = JSON.parse(fs.readFileSync(join(packedAssets, 'release.json')));
+  const channel = packed.version.includes('-nightly.') ? 'nightly' : 'stable';
+  assert.equal(release.channel, channel, `packed ${packed.version} must embed the ${channel} release`);
+  assert.equal(release.installerVersion, packed.version);
+  assert.deepEqual(release, JSON.parse(fs.readFileSync(`releases/${channel}.json`)));
   const policy = { release, packages: Object.fromEntries(Object.entries(release.packages).filter(([name]) => SERVER_PACKAGES.includes(name)).map(([name, value]) => [name, { type: 'npm', version: value.version }])) };
   const source = join(root, 'sources.json');
   fs.writeFileSync(source, JSON.stringify(policy));

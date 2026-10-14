@@ -25,7 +25,8 @@ node scripts/bootstrap-stable-release.mjs \
   @ours.network/mcp@2.0.0 @ours.network/codex@2.0.0 @ours.network/claude-code@2.0.0 \
   @ours.network/fleet@2.0.0
 git add releases/stable.json && git commit -m "chore(release): bind the stable 2.0.0 component set"
-OURS_TEST_DOCKER=1 scripts/verify-stable-candidate.sh 2.0.0
+scripts/verify-stable-candidate.sh 2.0.0                 # any host
+CI=true OURS_TEST_DOCKER=1 scripts/verify-stable-candidate.sh 2.0.0   # disposable CI runner only
 ```
 
 `bootstrap-stable-release.mjs` requires an exact stable version for every
@@ -41,10 +42,14 @@ then runs the stable gates the nightly-versioned branch never reaches:
 `npm ci`, `test:release`, `npm test`,
 `verify-release --installed --require-all-capabilities` (registry archives,
 installed dependency graph, host CLI and global Fleet install), the stable pack
-assertions, and with `OURS_TEST_DOCKER=1` the Docker install, gateway,
-notifications recovery, runtime permission and legacy upgrade checks. Run it on
-the exact PR head before the Owner merges; CI on this branch only proves the
-nightly set.
+assertions. With `OURS_TEST_DOCKER=1` it also runs the Docker install,
+gateway, notifications recovery, runtime permission and legacy upgrade
+qualifications; these create real containers and volumes and require `CI=true`,
+so run them only on a disposable CI runner (for example a `workflow_dispatch`
+job on the exact head), never on the Owner's current installation. The
+runtime-permission check qualifies the release embedded in the packed installer
+and asserts it is the stable candidate. Run both on the exact PR head before the
+Owner merges; CI on this branch only proves the nightly set.
 
 | package | source release PR | nightly selected today | stable target |
 |---|---|---|---|

@@ -9,7 +9,12 @@
 # script copies HEAD into a temporary git worktree, applies exactly the edits the
 # main bump makes (installer package and workspace lock version, stable.json
 # installerVersion), and runs the stable registry, test and pack gates there.
-# The checkout itself is never modified. Docker gates run with OURS_TEST_DOCKER=1.
+# The checkout itself is never modified.
+#
+# OURS_TEST_DOCKER=1 additionally runs the Docker install, gateway, notifications
+# recovery, runtime-permission and legacy-upgrade qualifications. Those scripts
+# install real containers and volumes and refuse to run unless CI=true: run them
+# only on a disposable CI runner, never on a host with a live ours installation.
 set -euo pipefail
 version="${1:?usage: verify-stable-candidate.sh <installer-version>}"
 [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "not a stable version: $version" >&2; exit 1; }
@@ -55,6 +60,7 @@ assert.deepEqual(JSON.parse(read('assets/sources.json')), {
 console.log(`Verified stable installer archive ${packed.name}@${packed.version}`);
 JS
 if [[ "${OURS_TEST_DOCKER:-}" == 1 ]]; then
+  [[ "${CI:-}" == true ]] || { echo "Docker qualification needs CI=true on a disposable runner" >&2; exit 1; }
   node scripts/verify-human-setup-e2e.mjs
   node --test packages/installer/test/gateway-docker.test.mjs
   node --test packages/installer/test/notifications-recovery-docker.test.mjs
