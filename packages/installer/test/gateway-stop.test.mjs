@@ -60,6 +60,8 @@ test('forced stops of anything holding state still refuse state operations', asy
     ['gateway with a bind mount', exited(137), { ...gateway, Mounts: [{ Type: 'bind', Source: '/srv' }] }],
     ['writable gateway', exited(137), { ...gateway, HostConfig: { ReadonlyRootfs: false } }],
     ['foreign project gateway', exited(137), { ...gateway, Config: { Labels: labels('gateway', 'ours-other') } }],
+    ['gateway without reported mounts', exited(137), { Config: gateway.Config, HostConfig: gateway.HostConfig }],
+    ['gateway with null mounts', exited(137), { ...gateway, Mounts: null }],
     ['unlabelled container', exited(137), { HostConfig: { ReadonlyRootfs: true }, Mounts: [] }],
     ['running gateway', { Status: 'running', ExitCode: 0, OOMKilled: false, Dead: false }, gateway],
   ]) {

@@ -693,7 +693,7 @@ export function networkEffects(effects) {
   const statelessGateway = (record, detail) => {
     const labels = detail?.Config?.Labels ?? {};
     return labels['com.docker.compose.project'] === record.project && labels['com.docker.compose.service'] === 'gateway'
-      && detail.HostConfig?.ReadonlyRootfs === true && (detail.Mounts ?? []).every(mount => mount.Type === 'tmpfs');
+      && detail.HostConfig?.ReadonlyRootfs === true && Array.isArray(detail.Mounts) && detail.Mounts.every(mount => mount.Type === 'tmpfs');
   };
   const requireCleanContainerExit = async (record, selected) => {
     const containers = await compose(record, ['ps', '-aq', ...selected]);
