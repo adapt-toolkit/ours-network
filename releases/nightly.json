@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "channel": "nightly",
+  "installerVersion": "1.2.0-nightly.3",
+  "packages": {
+    "@ours.network/sdk": {
+      "version": "3.8.1-nightly.18",
+      "integrity": "sha512-48ZuJEW+SxIf3rgwAHx3/kPc18kN/KOgxj9tAvlFXDossRDhthte9VTV3xu2/sM7nzDoPXeQFm+/WImJ7UqZqw=="
+    },
+    "@ours.network/cli": {
+      "version": "2.8.1-nightly.16",
+      "integrity": "sha512-yZ6+xIaPiPCNxy/JMgQ7Kjh6ulKRY4pv6kZtnho328nPxG6/l/S09GPJDPG3rUd3IbkIsCGaLEffrCKKdWLhzQ=="
+    },
+    "@ours.network/tg-connector": {
+      "version": "1.0.1-nightly.12",
+      "integrity": "sha512-wEao1Xo5mCs//cuaD3YcdnTRMfBcPQCCqsPH1IiP7mYmVp/OFjEzp7U3YawNl8NUXZEdJZ0kIEzkHKUdhygEZw=="
+    },
+    "@ours.network/cowork": {
+      "version": "1.3.4-nightly.20261013.e8a690f",
+      "integrity": "sha512-t0eQoyMcfp5ar/eXkvGwTHHkkwvuD119WMbcFffsRhknJkZtnQOeLcKgfIiajVwk1HZIEONNeA4Eibml5M0DGw=="
+    },
+    "@ours.network/messenger-server": {
+      "version": "1.0.31-nightly.18",
+      "integrity": "sha512-nHeQBmBPV7w5VhOkHD9960HrN70sPmLzuldQVJd6uuEhKL7htE+jb+mOZAYuZwEN3qENbi/i0J39szHvUED9iA=="
+    },
+    "@ours.network/notifications": {
+      "version": "0.3.1-nightly.3",
+      "integrity": "sha512-mt69E2LLkfwBMOJm7IP49wLIO9KtugBqh6nQpfrfbRuTlenjyrmZqcAuhW1CyI2R1H518B0Evxagnx9/V9fIig=="
+    },
+    "@ours.network/fleet": {
+      "version": "1.2.0-nightly.61",
+      "integrity": "sha512-ZdgbZoleOUoGBr8Si9Yp/TUE46qd6eiscProaXFupusPAX4VDWODpmyupvIjckJcp860d1qNRngY2Z2cWYHcpw=="
+    },
+    "@ours.network/mcp": {
+      "version": "1.2.0-nightly.14",
+      "integrity": "sha512-Ja7lDKLK14tlduWBdD8vF7BS7+jd01U97UH6tyzbB8uMnBOBEQmmVlfEliat2ghgNMhuSCTpn4THp5eT58UTDQ=="
+    },
+    "@ours.network/codex": {
+      "version": "1.2.0-nightly.14",
+      "integrity": "sha512-NAEMprDCpYVd1ppRsdkrraMtFfCiJvGcJZHQUldJRyCL/DFve2J9YDJw/o3eY9zPg4b8er/5NI0mzQ420KYDmA=="
+    },
+    "@ours.network/claude-code": {
+      "version": "1.2.0-nightly.14",
+      "integrity": "sha512-yOUBUU4DE2pbyVLjvA58tZvZy3vkzTop1sGM/O/huO4rnJg7TZpxazDe7f4bAWia0axU1oT/gjChfiYvh6+/cA=="
+    },
+    "@ours.network/daemon": {
+      "version": "3.8.1-nightly.10",
+      "integrity": "sha512-y+t9xiuDRs9d/TdCYYxqqvYB+KjkryiaztoFDW7GY9qJFjgalylxrNZtlk2ASJRVSF4+2Hp0vqhM0Wt0Wsub0g=="
+    }
+  },
+  "hostCli": {
+    "@ours.network/sdk": {
+      "version": "3.8.1-nightly.18",
+      "integrity": "sha512-48ZuJEW+SxIf3rgwAHx3/kPc18kN/KOgxj9tAvlFXDossRDhthte9VTV3xu2/sM7nzDoPXeQFm+/WImJ7UqZqw=="
+    },
+    "@ours.network/cli": {
+      "version": "2.8.1-nightly.16",
+      "integrity": "sha512-yZ6+xIaPiPCNxy/JMgQ7Kjh6ulKRY4pv6kZtnho328nPxG6/l/S09GPJDPG3rUd3IbkIsCGaLEffrCKKdWLhzQ=="
+    }
+  }
+}

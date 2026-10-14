@@ -1,0 +1,198 @@
+services:
+  telegram-mock:
+    image: ours-e2e-0muekpy8-telegram-mock:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile.mock
+    command: ["node", "/opt/ours/suite/telegram-mock.mjs"]
+    volumes: ["mock-certs:/certs", "./scripts:/opt/ours/suite:ro"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    networks:
+      test:
+        aliases: [api.telegram.org]
+  broker:
+    image: ours-e2e-0muekpy8-broker:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: broker }
+    command: ["node", "/opt/ours/suite/dev-broker.mjs", "--host", "0.0.0.0", "--port", "9000", "--test_mode"]
+    volumes: ["./scripts:/opt/ours/suite:ro"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('net').connect(9000,'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+    networks: [test]
+  server-a: &server
+    image: ours-e2e-0muekpy8-server:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: server }
+    command: ["node", "/opt/ours/suite/server.mjs"]
+    environment:
+      OURS_DAEMON_ID: 00000000-0000-4000-8000-00000000000a
+      OURS_LISTEN_HOST: 0.0.0.0
+      OURS_CONFIG: /state/config.json
+      NODE_EXTRA_CA_CERTS: /certs/mock.crt
+    volumes: ["state-a:/state", "mock-certs:/certs:ro", "./scripts:/opt/ours/suite:ro"]
+    depends_on:
+      broker: { condition: service_healthy }
+      telegram-mock: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3050/selection').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 60
+    networks: [test]
+  server-b:
+    <<: *server
+    environment:
+      OURS_DAEMON_ID: 00000000-0000-4000-8000-00000000000b
+      OURS_LISTEN_HOST: 0.0.0.0
+      OURS_CONFIG: /state/config.json
+      NODE_EXTRA_CA_CERTS: /certs/mock.crt
+    volumes: ["state-b:/state", "mock-certs:/certs:ro", "./scripts:/opt/ours/suite:ro"]
+  client-a: &client
+    image: ours-e2e-0muekpy8-client:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: client }
+    command: ["sleep", "infinity"]
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/mock.crt
+      CLIENT_TARGET: a
+    volumes: ["state-a:/secrets/a:ro", "mock-certs:/certs:ro", "./tests:/opt/ours/tests:ro", "${OURS_E2E_REPORT_DIR:-./reports/manual}:/opt/ours/reports"]
+    depends_on:
+      server-a: { condition: service_healthy }
+      server-b: { condition: service_healthy }
+    networks: [test]
+  tg-connector:
+    image: ours-e2e-0muekpy8-server:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: server }
+    command: ["/opt/ours/node_modules/.bin/ours-tg-connector", "serve"]
+    environment:
+      OURS_TG_DAEMON_URL: http://server-a:3050
+      OURS_TG_DAEMON_ID: 00000000-0000-4000-8000-00000000000a
+      OURS_TG_DAEMON_CREDENTIAL_PATH: /secrets/a/daemon-token
+      OURS_TG_STATE_DIR: /tg-state
+      OURS_TG_CONTROL_HOST: 0.0.0.0
+      NODE_EXTRA_CA_CERTS: /certs/mock.crt
+    volumes: ["state-a:/secrets/a:ro", "mock-certs:/certs:ro", "tg-state:/tg-state", "./tests:/opt/ours/tests:ro", "${OURS_E2E_REPORT_DIR:-./reports/manual}:/opt/ours/reports"]
+    depends_on:
+      server-a: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('net').connect(3051,'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    networks: [test]
+  cowork-a:
+    image: ours-e2e-0muekpy8-agent-host:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: agent-host }
+    command: ["node", "/opt/ours/suite/cowork.mjs"]
+    environment:
+      OURS_COWORK_CONFIG: /cowork/a/config.json
+      OURS_DAEMON_URL: http://server-a:3050
+      OURS_DAEMON_ID: 00000000-0000-4000-8000-00000000000a
+      OURS_DAEMON_CREDENTIAL_PATH: /secrets/a/daemon-token
+    volumes: ["state-a:/secrets/a:ro", "cowork-a-state:/cowork/a", "./scripts:/opt/ours/suite:ro"]
+    depends_on:
+      server-a: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/opt/ours/node_modules/.bin/ours-cowork", "--json", "status"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+    networks: [test]
+  cowork-b:
+    image: ours-e2e-0muekpy8-agent-host:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: agent-host }
+    command: ["node", "/opt/ours/suite/cowork.mjs"]
+    environment:
+      OURS_COWORK_CONFIG: /cowork/b/config.json
+      OURS_DAEMON_URL: http://server-b:3050
+      OURS_DAEMON_ID: 00000000-0000-4000-8000-00000000000b
+      OURS_DAEMON_CREDENTIAL_PATH: /secrets/b/daemon-token
+    volumes: ["state-b:/secrets/b:ro", "cowork-b-state:/cowork/b", "./scripts:/opt/ours/suite:ro"]
+    depends_on:
+      server-b: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/opt/ours/node_modules/.bin/ours-cowork", "--json", "status"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+    networks: [test]
+  agent-runner:
+    image: ours-e2e-0muekpy8-agent-host:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: agent-host }
+    command: ["sleep", "infinity"]
+    environment:
+      CLIENT_TARGET: agent-host
+      OURS_FLEET_SUPERVISOR: none
+    volumes: ["state-a:/secrets/a:ro", "state-b:/secrets/b:ro", "cowork-a-state:/cowork/a", "cowork-b-state:/cowork/b", "agent-state:/agent-state", "./tests:/opt/ours/tests:ro", "${OURS_E2E_REPORT_DIR:-./reports/manual}:/opt/ours/reports"]
+    depends_on:
+      cowork-a: { condition: service_healthy }
+      cowork-b: { condition: service_healthy }
+    networks: [test]
+  client-b:
+    <<: *client
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/mock.crt
+      CLIENT_TARGET: b
+    volumes: ["state-b:/secrets/b:ro", "mock-certs:/certs:ro", "./tests:/opt/ours/tests:ro", "${OURS_E2E_REPORT_DIR:-./reports/manual}:/opt/ours/reports"]
+  test-runner:
+    <<: *client
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/mock.crt
+      CLIENT_TARGET: both
+    volumes: ["state-a:/secrets/a:ro", "state-b:/secrets/b:ro", "mock-certs:/certs:ro", "./tests:/opt/ours/tests:ro", "${OURS_E2E_REPORT_DIR:-./reports/manual}:/opt/ours/reports"]
+  component-runner:
+    image: ours-e2e-0muekpy8-client:review
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: { ROLE: client }
+    command: ["sleep", "infinity"]
+    environment:
+      CLIENT_TARGET: component
+    volumes: ["./tests:/opt/ours/tests:ro", "${OURS_E2E_REPORT_DIR:-./reports/manual}:/opt/ours/reports"]
+    networks: [test]
+networks:
+  test:
+    internal: true
+volumes:
+  state-a:
+  state-b:
+  mock-certs:
+  tg-state:
+  cowork-a-state:
+  cowork-b-state:
+  agent-state:

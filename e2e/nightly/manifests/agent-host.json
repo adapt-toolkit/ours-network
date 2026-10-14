@@ -1,0 +1,13 @@
+{
+  "name": "ours-nightly-e2e-agent-host",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cucumber/cucumber": "13.2.1",
+    "@ours.network/sdk": "3.8.1-nightly.11",
+    "@ours.network/cli": "2.8.1-nightly.9",
+    "@ours.network/cowork": "1.3.3-nightly.20260923.2d2ff89",
+    "@ours.network/fleet": "1.2.0-nightly.8",
+    "@ours.network/fleet-codex": "1.2.0-nightly.8"
+  }
+}

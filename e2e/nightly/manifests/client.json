@@ -1,0 +1,17 @@
+{
+  "name": "ours-nightly-e2e-client",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cucumber/cucumber": "13.2.1",
+    "@ours.network/sdk": "3.8.1-nightly.11",
+    "@ours.network/cli": "2.8.1-nightly.9",
+    "@ours.network/fleet": "1.2.0-nightly.8",
+    "@ours.network/mcp": "1.2.0-nightly.7",
+    "@ours.network/codex": "1.2.0-nightly.7",
+    "@ours.network/claude-code": "1.2.0-nightly.7",
+    "@ours.network/hermes": "1.2.0-nightly.7",
+    "@ours.network/fleet-codex": "1.2.0-nightly.8",
+    "@ours.network/fleet-claude-code": "1.2.0-nightly.8"
+  }
+}
