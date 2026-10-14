@@ -81,3 +81,5 @@ published yet. The Fleet 2.0.0 archive must declare every capability in
   declares it.
 - Exact, integrity-pinned per-channel component sets and automated installer
   channel version bumps.
+- Server update stops the gateway with nginx fast shutdown and only exempts a
+  forced gateway stop after the reported mounts are confirmed.
