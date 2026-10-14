@@ -690,12 +690,20 @@ export function networkEffects(effects) {
     const args = service === 'daemon' ? [...(daemonBinary === 'ours' ? ['daemon'] : []), op, ...(['install-service', 'uninstall-service'].includes(op) ? ['--yes'] : []), '--config', record.configPath, '--state-dir', installationPaths(record).daemon, '--json'] : [op];
     return effects.run(bin(record, name), args, { ...options, env: localEnv(record, service) });
   };
+  const statelessGateway = (record, detail) => {
+    const labels = detail?.Config?.Labels ?? {};
+    return labels['com.docker.compose.project'] === record.project && labels['com.docker.compose.service'] === 'gateway'
+      && detail.HostConfig?.ReadonlyRootfs === true && (detail.Mounts ?? []).every(mount => mount.Type === 'tmpfs');
+  };
   const requireCleanContainerExit = async (record, selected) => {
     const containers = await compose(record, ['ps', '-aq', ...selected]);
     for (const id of containers.stdout.split(/\s+/).filter(Boolean)) {
       const result = await container(record, ['inspect', '--format', '{{json .State}}', id]);
       const state = JSON.parse(result.stdout);
       if (state.Status !== 'exited' || state.ExitCode !== 0 || state.OOMKilled !== false || state.Dead !== false) {
+        // A forced gateway stop cannot damage stored state: accept it only when
+        // the container itself proves it has a read-only root and tmpfs mounts.
+        if (state.Status === 'exited' && statelessGateway(record, JSON.parse((await container(record, ['inspect', '--format', '{{json .}}', id])).stdout))) continue;
         throw new Error('Selected source container did not stop cleanly; state operation refused');
       }
     }
@@ -1430,6 +1438,10 @@ export function networkEffects(effects) {
         }
         if (operation === 'stop') {
           const consumers = selected.filter(s => s !== 'daemon').reverse();
+          // Gateways created before stop_signal was set still stop with nginx's
+          // SIGQUIT, which waits for open streams beyond the grace period and
+          // ends in SIGKILL. SIGTERM is nginx's fast shutdown; it exits cleanly.
+          if (consumers.includes('gateway')) await compose(record, ['kill', '-s', 'SIGTERM', 'gateway']);
           if (consumers.length) await compose(record, ['stop', ...consumers]);
           if (selected.includes('daemon')) await compose(record, ['stop', 'daemon']);
           if ((await effects.serverLifecycle(record, 'status', selected)).length) throw new Error('Writers did not stop');

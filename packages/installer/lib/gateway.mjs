@@ -57,6 +57,7 @@ export function gatewayCompose(record) {
     ports:
       - {target: 8080, published: "${record.port}", host_ip: "127.0.0.1"}
     restart: unless-stopped
+    stop_signal: SIGTERM
     stop_grace_period: 10s
     healthcheck:
       test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/healthz]
