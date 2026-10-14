@@ -12,15 +12,39 @@ installer ownership moved to this repository (ours-mcp #106).
 ## Required stable component set
 
 The `main` bump validates `releases/stable.json` before changing any file and
-fails closed while it is empty. Before this release merges, every component
-below must be **published** on npm `latest`, then selected with its registry
-integrity and verified:
+fails closed while it is empty. `select-release-package.mjs` cannot create the
+first stable set: it picks the channel from the installer version (nightly on
+this branch) and edits one package of an already complete manifest. Bind the
+whole set at once after every component below is **published** on npm:
 
 ```sh
-node scripts/select-release-package.mjs <package> <published-version>   # for each row
-node scripts/verify-release.mjs --installed --require-all-capabilities
-npm run test:release && npm test
+node scripts/bootstrap-stable-release.mjs \
+  @ours.network/sdk@4.0.0 @ours.network/cli@3.0.0 @ours.network/daemon@4.0.0 \
+  @ours.network/notifications@1.0.0 @ours.network/tg-connector@2.0.0 \
+  @ours.network/cowork@2.0.0 @ours.network/messenger-server@2.0.0 \
+  @ours.network/mcp@2.0.0 @ours.network/codex@2.0.0 @ours.network/claude-code@2.0.0 \
+  @ours.network/fleet@2.0.0
+git add releases/stable.json && git commit -m "chore(release): bind the stable 2.0.0 component set"
+OURS_TEST_DOCKER=1 scripts/verify-stable-candidate.sh 2.0.0
 ```
+
+`bootstrap-stable-release.mjs` requires an exact stable version for every
+component of the nightly manifest (including the daemon). It reads each
+registry integrity, checks it against the served archive and the installer's
+required and degrading capabilities (strict), and writes `releases/stable.json`
+with `hostCli` = SDK + CLI. It leaves `installerVersion` null for the main bump
+to bind, and writes nothing if any component fails.
+
+`verify-stable-candidate.sh` applies the main bump's edits (installer package,
+workspace lock, `stable.json` installerVersion) in a temporary worktree. It
+then runs the stable gates the nightly-versioned branch never reaches:
+`npm ci`, `test:release`, `npm test`,
+`verify-release --installed --require-all-capabilities` (registry archives,
+installed dependency graph, host CLI and global Fleet install), the stable pack
+assertions, and with `OURS_TEST_DOCKER=1` the Docker install, gateway,
+notifications recovery, runtime permission and legacy upgrade checks. Run it on
+the exact PR head before the Owner merges; CI on this branch only proves the
+nightly set.
 
 | package | source release PR | nightly selected today | stable target |
 |---|---|---|---|
@@ -36,11 +60,10 @@ npm run test:release && npm test
 | `@ours.network/claude-code` | ours-mcp | 1.2.0-nightly.14 | 2.0.0 |
 | `@ours.network/fleet` | ours-fleet | 1.2.0-nightly.61 | 2.0.0 |
 
-`select-release-package.mjs` selects into the manifest of the channel matching
-`packages/installer/package.json`. That is `nightly` on this branch, so the
-stable selection is made against `releases/stable.json` once the stable
-versions exist. No stable integrity is recorded here because none of these
-versions is published yet.
+No stable integrity is recorded here because none of these versions is
+published yet. The Fleet 2.0.0 archive must declare every capability in
+`scripts/release-capabilities.mjs`; Fleet 1.1.5 is refused for lacking
+`cowork.http-management-v1` and others.
 
 ## Highlights since 1.1.1
 
