@@ -2,6 +2,6 @@
   "name": "ours-room-layout-e2e",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node run.mjs", "test:runtime": "node --test runtime.test.mjs", "validate": "node run.mjs --dry-run" },
+  "scripts": { "test": "node run.mjs", "test:runtime": "node --test runtime.test.mjs socket-paths.test.mjs", "validate": "node run.mjs --dry-run" },
   "dependencies": { "@cucumber/cucumber": "13.2.1" }
 }

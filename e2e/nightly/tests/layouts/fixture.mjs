@@ -18,17 +18,18 @@ const { createCoworkAdapter } = await loadFleet('rooms-tasks/cowork-adapter.js')
 const [coworkArg, rootArg, codexArg] = process.argv.slice(2);
 assert(coworkArg && rootArg && codexArg, 'explicit isolated paths required');
 const coworkRoot = resolve(coworkArg), root = resolve(rootArg), codex = resolve(codexArg);
-mkdirSync(root, { mode: 0o700 });
-const { startProcess, stopProcess, command: teardownCommand, createCommandScope, createCleanup, unusedPort, waitFor, waitForPort } = await import('./runtime.mjs');
+mkdirSync(root, { recursive: true, mode: 0o700 });
+const { startProcess, stopProcess, command: teardownCommand, createCommandScope, createCleanup, layoutSocketPaths, unusedPort, waitFor, waitForPort } = await import('./runtime.mjs');
+const { coworkState, socketRoot } = layoutSocketPaths(root);
 const commandScope = createCommandScope({ shutdownTimeout: 1000 });
 const command = commandScope.command;
-const env = { PATH: process.env.PATH, HOME: root, NO_PROXY: '127.0.0.1,localhost', HTTP_PROXY: 'http://127.0.0.1:1', HTTPS_PROXY: 'http://127.0.0.1:1' };
+const env = { OURS_FLEET_SOCKET_ROOT: socketRoot, PATH: process.env.PATH, HOME: root, NO_PROXY: '127.0.0.1,localhost', HTTP_PROXY: 'http://127.0.0.1:1', HTTPS_PROXY: 'http://127.0.0.1:1' };
 const daemonState = join(root, 'd'); mkdirSync(daemonState, { mode: 0o700 });
 const daemonId = randomUUID(), daemonPort = await unusedPort(), brokerPort = await unusedPort(), coworkPort = await unusedPort();
 const endpoint = `http://127.0.0.1:${daemonPort}`, credentialPath = join(daemonState, 'daemon-token');
 const config = join(root, 'daemon.json'), profile = join(root, 'profile.json'), coworkConfig = join(root, 'cowork.json');
 writeFileSync(config, JSON.stringify({ brokerUrl: `ws://127.0.0.1:${brokerPort}`, stateDir: daemonState, port: daemonPort, apiVisibility: 'owner', apiTokenDeliveryFiles: [] }), { mode: 0o600 });
-writeFileSync(coworkConfig, JSON.stringify({ version: 1, stateDir: join(root, 'cw'), rest: { enabled: true, host: '127.0.0.1', port: coworkPort } }), { mode: 0o600 });
+writeFileSync(coworkConfig, JSON.stringify({ version: 1, stateDir: coworkState, rest: { enabled: true, host: '127.0.0.1', port: coworkPort } }), { mode: 0o600 });
 const coworkEnv = { ...env, OURS_COWORK_CONFIG: coworkConfig, OURS_COWORK_HTTP_MANAGEMENT: '1', OURS_DAEMON_URL: endpoint, OURS_DAEMON_ID: daemonId, OURS_DAEMON_CREDENTIAL_PATH: credentialPath };
 const coworkCLI = join(coworkRoot, 'dist/cli.js');
 const cli = async args => { const r = JSON.parse(await command([coworkCLI, '--json', ...args], coworkEnv, coworkRoot)); assert(r.ok, JSON.stringify(r)); return r.result; };
@@ -39,6 +40,7 @@ const listen = server => new Promise(r => server.listen(0, '127.0.0.1', r));
 let sequence = 0;
 // This dedicated process uses one isolated Fleet home for every lifecycle operation.
 process.env.OURS_FLEET_HOME = join(root, 'h');
+process.env.OURS_FLEET_SOCKET_ROOT = socketRoot;
 let cleanupDeadline, timedOut = false;
 const cleanupActions = createCleanup([
   ['commands', () => commandScope.cancel(), 2500],

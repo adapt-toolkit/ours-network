@@ -9,10 +9,11 @@ let report = join(here, '../../reports', `layouts-${Date.now()}`), dry = false;
 for (let n = 0; n < args.length; n++) {
   const key = args[n];
   if (key === '--dry-run') { dry = true; extra.push(key); }
-  else if (['--fleet', '--cowork', '--codex', '--report-dir'].includes(key)) {
+  else if (['--fleet', '--cowork', '--codex', '--report-dir', '--scratch-dir'].includes(key)) {
     if (!args[n + 1]) throw Error(`value required: ${key}`);
     const value = resolve(args[++n]);
     if (key === '--report-dir') report = value;
+    else if (key === '--scratch-dir') env.OURS_LAYOUT_SCRATCH_DIR = value;
     else env[`OURS_LAYOUT_${key.slice(2).toUpperCase()}_DIR`] = value;
   } else if (['--tags', '--name'].includes(key)) { extra.push(key, args[++n]); }
   else throw Error(`unknown option: ${key}`);

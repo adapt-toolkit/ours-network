@@ -29,3 +29,21 @@ a separate disposable experiment, not a permanent E2E requirement. HTML, JUnit a
 report directory. Never rebuild the selected Fleet while scenarios are running.
 
 An empty scenario selection fails, including `--dry-run`.
+
+Use `--scratch-dir /path/to/task-owned-directory` to keep all runtime state
+inside a selected workspace; also select --report-dir inside that workspace
+for reports and logs. The directory must already exist. The fixture
+creates a private per-scenario child and keeps reports/state for inspection;
+cleanup stops its processes without deleting evidence. Without this option,
+Linux uses TMPDIR and macOS uses /private/tmp.
+
+Unix socket limits apply to physical UTF-8 path bytes, not the visible symlink
+alias. Scratch parents up to 55 bytes fit the current portable 103-byte budget;
+longer parents fail before starting services with the calculated Cowork/Fleet
+path and a shorter-directory instruction. Fleet uses its supported private
+socket-root override inside that same scenario directory. A 54-byte task root
+is covered by real socket-bind tests:
+
+```sh
+node --test tests/layouts/runtime.test.mjs tests/layouts/socket-paths.test.mjs
+```

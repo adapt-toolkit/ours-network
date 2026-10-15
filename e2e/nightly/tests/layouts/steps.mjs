@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
 import { Given, When, Then, setDefaultTimeout } from '@cucumber/cucumber';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, createWriteStream } from 'node:fs';
+import { readFileSync, createWriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createLayoutScratch } from './runtime.mjs';
 setDefaultTimeout(360_000);
 const here = dirname(fileURLToPath(import.meta.url));
 Given('the public room layout CLI uses {string} participants', function (mode) {
   assert(['fresh', 'shared'].includes(mode)); this.mode = mode;
 });
 When('the YAML layout runs through native Fleet commands', async function () {
-  const parent = mkdtempSync(join(realpathSync(process.platform === 'darwin' ? '/private/tmp' : tmpdir()), 'lc-'));
-  this.root = join(parent, 'r');
+  this.root = createLayoutScratch(process.env.OURS_LAYOUT_SCRATCH_DIR ?? (process.platform === 'darwin' ? '/private/tmp' : tmpdir()));
   this.log = join(process.env.OURS_LAYOUT_REPORT_DIR, `native-${this.mode}-${Date.now()}.log`);
   const output = createWriteStream(this.log, { mode: 0o600 });
   const child = spawn(process.execPath, [join(here, 'fixture.mjs'), process.env.OURS_LAYOUT_COWORK_DIR, this.root, process.env.OURS_LAYOUT_CODEX_DIR], {
