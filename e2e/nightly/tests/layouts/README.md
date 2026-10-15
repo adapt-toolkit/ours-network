@@ -38,12 +38,18 @@ cleanup stops its processes without deleting evidence. Without this option,
 Linux uses TMPDIR and macOS uses /private/tmp.
 
 Unix socket limits apply to physical UTF-8 path bytes, not the visible symlink
-alias. Scratch parents up to 55 bytes fit the current portable 103-byte budget;
+alias. Scratch parents up to 61 bytes fit the current portable 103-byte budget;
 longer parents fail before starting services with the calculated Cowork/Fleet
 path and a shorter-directory instruction. Fleet uses its supported private
-socket-root override inside that same scenario directory. A 54-byte task root
+socket-root override inside that same scenario directory. A 61-byte task root
 is covered by real socket-bind tests:
 
 ```sh
-node --test tests/layouts/runtime.test.mjs tests/layouts/socket-paths.test.mjs
+OURS_LAYOUT_SCRATCH_DIR=/path/to/task-owned-root node --test tests/layouts/runtime.test.mjs tests/layouts/socket-paths.test.mjs
 ```
+
+Scenario directories use two random base64url characters, allocated with
+exclusive mkdir (0700) and bounded collision retries. Cowork state and Fleet
+sockets remain inside that directory; no sibling or global state is allocated.
+Socket tests honor OURS_LAYOUT_SCRATCH_DIR (or TMPDIR), including their negative
+case, and remove only directories they successfully allocated.
