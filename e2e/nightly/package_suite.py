@@ -55,6 +55,7 @@ FILES = (
     "tests/layouts/fixture.mjs",
     "tests/layouts/runtime.mjs",
     "tests/layouts/runtime.test.mjs",
+    "tests/layouts/socket-paths.test.mjs",
     "tests/layouts/native-cli.mjs",
     "tests/layouts/features/room-layouts.feature",
     "tests/layouts/package.json",

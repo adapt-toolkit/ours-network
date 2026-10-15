@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer, connect } from 'node:net';
+import { mkdtempSync, realpathSync, rmdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export async function unusedPort() {
@@ -119,4 +121,25 @@ export function createCommandScope({ shutdownTimeout = 8000 } = {}) {
       })();
     },
   };
+}
+
+// Cowork binds a private name before publishing management.sock. Fleet's
+// supported override hashes logical names to 24 hex characters plus .sock.
+export function layoutSocketPaths(root) {
+  const physical = realpathSync(root);
+  const coworkState = join(physical, 'c'), socketRoot = join(physical, 's');
+  for (const [owner, path] of [
+    ['Cowork', join(coworkState, 'management.sock.private-' + '0'.repeat(12))],
+    ['Fleet', join(socketRoot, '0'.repeat(24) + '.sock')],
+  ]) {
+    const bytes = Buffer.byteLength(path);
+    if (bytes > 103) throw new Error(`${owner} private socket path is ${bytes} bytes (portable limit 103): ${path}; select a shorter task-owned --scratch-dir or TMPDIR`);
+  }
+  return { coworkState, socketRoot };
+}
+
+export function createLayoutScratch(parent) {
+  const root = mkdtempSync(join(realpathSync(parent), 'l'));
+  try { layoutSocketPaths(root); return root; }
+  catch (error) { rmdirSync(root); throw error; }
 }
