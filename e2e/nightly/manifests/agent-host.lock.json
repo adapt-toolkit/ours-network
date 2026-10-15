@@ -9,8 +9,8 @@
         "@cucumber/cucumber": "13.2.1",
         "@ours.network/cli": "2.8.1-nightly.16",
         "@ours.network/cowork": "1.3.4-nightly.20261013.e8a690f",
-        "@ours.network/fleet": "1.2.0-nightly.64",
-        "@ours.network/fleet-codex": "1.2.0-nightly.64",
+        "@ours.network/fleet": "1.2.0-nightly.65",
+        "@ours.network/fleet-codex": "1.2.0-nightly.65",
         "@ours.network/sdk": "3.8.1-nightly.18"
       }
     },
@@ -865,9 +865,9 @@
       }
     },
     "node_modules/@ours.network/fleet": {
-      "version": "1.2.0-nightly.64",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-1.2.0-nightly.64.tgz",
-      "integrity": "sha512-1k0G9nKLUODS1omx+5sacBfvBVApZiswcjsR5YQogm3gte4CDy0BCym9QYr2pYsrTg8I2d1Rr787P/A39KTJ0Q==",
+      "version": "1.2.0-nightly.65",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-1.2.0-nightly.65.tgz",
+      "integrity": "sha512-zoAQ7H6a/Q/DXLRsEK2BM0GYnzkdRBuSP/Bh/lEUVC/PcaVXDe9ngrZ7y9Mp8hVZM8L552mM2Usk6gGxut45Yw==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.3.0",
@@ -894,9 +894,9 @@
       }
     },
     "node_modules/@ours.network/fleet-codex": {
-      "version": "1.2.0-nightly.64",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet-codex/-/fleet-codex-1.2.0-nightly.64.tgz",
-      "integrity": "sha512-nBnGA1Ip5SS+mGM5okDpH+bvyVTZDVsGFl+cmh4LELFt7pxnlcfOwpWgEyP/MKndYzqxOZEpfDC8oaheAzYapw==",
+      "version": "1.2.0-nightly.65",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet-codex/-/fleet-codex-1.2.0-nightly.65.tgz",
+      "integrity": "sha512-atetQIjNbOgdosMZo/IkDDrPcao888PqgVM1CuHM5GLNDvZalfhfqxmlvAAfoKkgRuzND2RViAiCHRTrTUBDkA==",
       "license": "FSL-1.1-Apache-2.0",
       "bin": {
         "ours-fleet-codex-install": "bin/ours-fleet-codex-install.mjs"
