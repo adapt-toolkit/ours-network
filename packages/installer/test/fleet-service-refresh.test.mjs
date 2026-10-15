@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { runFleetPhase, FLEET_MANAGED_CLI_CAPABILITY, FLEET_SERVICE_REFRESH_CAPABILITY } from '../lib/orchestrate.mjs';
+import { runFleetPhase, runFleetServiceRefresh, FLEET_MANAGED_CLI_CAPABILITY, FLEET_SERVICE_REFRESH_CAPABILITY } from '../lib/orchestrate.mjs';
 import { fx, said, HOME } from './fake-effects.mjs';
 
 const ARGS = { dryRun: false, assumeYes: false, channel: 'latest', brokerUrl: 'wss://b', acquiredFleet: '/new/release/node_modules/.bin/ours-fleet' };
@@ -64,6 +64,15 @@ test('unchanged and unrecognized definitions are reported, not replaced', async 
   const row = await runFleetPhase({ ...ARGS, disableFleetAgentsSetup: true }, e, { target: TARGET, isDefaultStateDir: false });
   assert.equal(row.state, 'installed');
   assert.match(said(e), /Fleet supervisor service definition was left unchanged: a drop-in in \/x\.d sets ExecStart/);
+});
+
+test('a definition whose reload failed is reported as not yet active, never as refreshed', async () => {
+  const e = fleet({ services: [service({ state: 'reload-failed', detail: 'systemctl --user daemon-reload failed: Failed to connect to bus' })] });
+  const result = await runFleetServiceRefresh({ ...ARGS }, e, { init: ['ours-fleet'], configPath: CONFIG }, TARGET);
+  assert.equal(result.state, 'attention');
+  const output = said(e);
+  assert.doesNotMatch(output, /now starts this release/);
+  assert.match(output, /Fleet supervisor service definition was updated, but the service manager did not reload it, so it still starts the previous release \(systemctl --user daemon-reload failed: Failed to connect to bus\); retry: systemctl --user daemon-reload/);
 });
 
 test('a failed refresh is reported with a retry line and does not fail the installation', async () => {
