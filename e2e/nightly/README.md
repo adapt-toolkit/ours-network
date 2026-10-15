@@ -111,3 +111,10 @@ New groups: `python3 run.py --only security --no-build`, `python3 run.py --only 
 ### Owner HTTP contract clarification, 2026-09-24
 
 TLS is deployment responsibility. The SDK accepts an explicit endpoint and credential; the current `@remote-http-endpoint` examples verify protected metadata access over configured HTTP on both daemons. Reproduce with `python3 run.py --only regressions-client --tags @remote-http-endpoint --no-build`. The earlier full35/10 remains historical evidence, not the current result of those two corrected tests.
+
+## Local room-layout candidate tests
+
+[Room layouts](tests/layouts/README.md) add one feature with two scenarios,
+covering shared and fresh participant sessions. Run the `room-layouts` group
+with explicit local Fleet/Cowork builds and a Codex binary. The portable archive
+includes the runner, feature, fixture and dependency lock.
