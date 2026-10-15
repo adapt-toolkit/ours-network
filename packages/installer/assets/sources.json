@@ -21,16 +21,16 @@
         "integrity": "sha512-t0eQoyMcfp5ar/eXkvGwTHHkkwvuD119WMbcFffsRhknJkZtnQOeLcKgfIiajVwk1HZIEONNeA4Eibml5M0DGw=="
       },
       "@ours.network/messenger-server": {
-        "version": "1.0.31-nightly.18",
-        "integrity": "sha512-nHeQBmBPV7w5VhOkHD9960HrN70sPmLzuldQVJd6uuEhKL7htE+jb+mOZAYuZwEN3qENbi/i0J39szHvUED9iA=="
+        "version": "1.0.31-nightly.19",
+        "integrity": "sha512-2yuvk8B5W5giQQoZu5HOd9ZS1D3aLI/1J1HZKlHKHQ34LDMMLtHpZf3oMNPXyrZWpZJm4p3hC9X8Pf13pOmcYw=="
       },
       "@ours.network/notifications": {
-        "version": "0.3.1-nightly.3",
-        "integrity": "sha512-mt69E2LLkfwBMOJm7IP49wLIO9KtugBqh6nQpfrfbRuTlenjyrmZqcAuhW1CyI2R1H518B0Evxagnx9/V9fIig=="
+        "version": "0.3.1-nightly.4",
+        "integrity": "sha512-z2n4MKigIsDNvOBgJ6rhyWMHT+lfAFNT8bL9mna1IR0ysSz4diAHZSvdc18KE5AdXEXr4YypH9Rmx7frMPG6rA=="
       },
       "@ours.network/fleet": {
-        "version": "1.2.0-nightly.61",
-        "integrity": "sha512-ZdgbZoleOUoGBr8Si9Yp/TUE46qd6eiscProaXFupusPAX4VDWODpmyupvIjckJcp860d1qNRngY2Z2cWYHcpw=="
+        "version": "1.2.0-nightly.63",
+        "integrity": "sha512-IlpPKMwMSF+zF3B8qyU75yjW7J7c+URX2pE+Ud/3FF3ECaPeYV5Mk15LUINSasThKb8LU9iTDq6JSeXBNqgh/A=="
       },
       "@ours.network/mcp": {
         "version": "1.2.0-nightly.14",
@@ -79,15 +79,15 @@
     },
     "@ours.network/messenger-server": {
       "type": "npm",
-      "version": "1.0.31-nightly.18"
+      "version": "1.0.31-nightly.19"
     },
     "@ours.network/notifications": {
       "type": "npm",
-      "version": "0.3.1-nightly.3"
+      "version": "0.3.1-nightly.4"
     },
     "@ours.network/fleet": {
       "type": "npm",
-      "version": "1.2.0-nightly.61"
+      "version": "1.2.0-nightly.63"
     },
     "@ours.network/mcp": {
       "type": "npm",
