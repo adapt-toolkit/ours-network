@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer, connect } from 'node:net';
-import { mkdtempSync, realpathSync, rmdirSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -126,7 +127,10 @@ export function createCommandScope({ shutdownTimeout = 8000 } = {}) {
 // Cowork binds a private name before publishing management.sock. Fleet's
 // supported override hashes logical names to 24 hex characters plus .sock.
 export function layoutSocketPaths(root) {
-  const physical = realpathSync(root);
+  return socketPaths(realpathSync(root));
+}
+
+function socketPaths(physical) {
   const coworkState = join(physical, 'c'), socketRoot = join(physical, 's');
   for (const [owner, path] of [
     ['Cowork', join(coworkState, 'management.sock.private-' + '0'.repeat(12))],
@@ -139,7 +143,16 @@ export function layoutSocketPaths(root) {
 }
 
 export function createLayoutScratch(parent) {
-  const root = mkdtempSync(join(realpathSync(parent), 'l'));
-  try { layoutSocketPaths(root); return root; }
-  catch (error) { rmdirSync(root); throw error; }
+  const physical = realpathSync(parent);
+  // Two base64url characters leave room for Cowork's private publication
+  // suffix under a 61-byte task root. mkdir is exclusive, including symlinks.
+  socketPaths(join(physical, '00'));
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const root = join(physical, randomBytes(2).toString('base64url').slice(0, 2));
+    try { mkdirSync(root, { mode: 0o700 }); }
+    catch (error) { if (error.code === 'EEXIST') continue; throw error; }
+    try { layoutSocketPaths(root); return root; }
+    catch (error) { rmdirSync(root); throw error; }
+  }
+  throw new Error('Could not allocate a unique private layout directory after 64 attempts');
 }

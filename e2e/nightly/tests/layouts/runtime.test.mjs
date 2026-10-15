@@ -23,7 +23,7 @@ test('cleanup attempts later resources after rejection and timeout, once for con
 
 test('command cancellation reaps a child ignoring SIGTERM before later cleanup and rejects new commands', async () => {
   assert.equal(typeof runtime.createCommandScope, 'function');
-  const dir = mkdtempSync(join(tmpdir(), 'layout-runtime-'));
+  const dir = mkdtempSync(join(process.env.OURS_LAYOUT_SCRATCH_DIR ?? tmpdir(), 'layout-runtime-'));
   const ready = join(dir, 'ready');
   const scope = runtime.createCommandScope({ shutdownTimeout: 50 });
   let pid;
