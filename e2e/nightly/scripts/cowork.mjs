@@ -10,7 +10,7 @@ chmodSync(stateDir, 0o700);
 writeFileSync(configPath, JSON.stringify({
   version: 1,
   stateDir,
-  rest: { enabled: false, port: 3052 },
+  rest: { enabled: true, host: '0.0.0.0', port: 3052 },
 }), { mode: 0o600 });
 chmodSync(configPath, 0o600);
 const child = spawn('/opt/ours/node_modules/.bin/ours-cowork', ['serve'], { stdio: 'inherit' });

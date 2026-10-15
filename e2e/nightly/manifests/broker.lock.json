@@ -6,17 +6,17 @@
     "": {
       "name": "ours-nightly-e2e-broker",
       "dependencies": {
-        "@adapt-toolkit/broker": "0.10.13-nightly.1",
-        "@adapt-toolkit/sdk": "0.10.13-nightly.1"
+        "@adapt-toolkit/broker": "0.12.1",
+        "@adapt-toolkit/sdk": "0.12.1"
       }
     },
     "node_modules/@adapt-toolkit/broker": {
-      "version": "0.10.13-nightly.1",
-      "resolved": "https://registry.npmjs.org/@adapt-toolkit/broker/-/broker-0.10.13-nightly.1.tgz",
-      "integrity": "sha512-pA7p6P7+S/XhQEmKzDW+bYMdcbLgkbt2zKO1o52tlZoOVeRViW8dBYK1kV+37aO55VFptiNZ61+yUiazQPrrjw==",
+      "version": "0.12.1",
+      "resolved": "https://registry.npmjs.org/@adapt-toolkit/broker/-/broker-0.12.1.tgz",
+      "integrity": "sha512-fGBokhIIyJKTNc83oqsu4FyqPpFecs2JV/uZm53ksiB9IUpU7VNF47cZf+8oSzs593+xlptEn8RWVGbuaCXVvg==",
       "license": "SEE LICENSE IN LICENSE",
       "dependencies": {
-        "@adapt-toolkit/sdk": "0.10.13-nightly.1",
+        "@adapt-toolkit/sdk": "0.12.1",
         "async": "^3.2.5",
         "better-sqlite3": "^11.10.0",
         "express": "^4.19.0",
@@ -34,9 +34,9 @@
       }
     },
     "node_modules/@adapt-toolkit/sdk": {
-      "version": "0.10.13-nightly.1",
-      "resolved": "https://registry.npmjs.org/@adapt-toolkit/sdk/-/sdk-0.10.13-nightly.1.tgz",
-      "integrity": "sha512-TRPbor3yf88c2S8VODHPVy5AzoD4bPLHhQ8XVPR1OWkM/2Xt80Fgsk0+kGcNwnDX/D+vYOUQJGFwPdnX9kdypw==",
+      "version": "0.12.1",
+      "resolved": "https://registry.npmjs.org/@adapt-toolkit/sdk/-/sdk-0.12.1.tgz",
+      "integrity": "sha512-7KMblnfnUHag6yMZ+h1dujgxZ/2SxHZyVKN4peA9XZRLtWc29oZyRDnBjSCEEwCpBSLHK08Z4LKYx9NSO5TxLg==",
       "license": "SEE LICENSE IN LICENSE",
       "dependencies": {
         "async": "^3.2.5",
@@ -47,7 +47,7 @@
         "ws": "^8.16.0"
       },
       "optionalDependencies": {
-        "@adapt-toolkit/sdk-native": "0.10.13-nightly.1"
+        "@adapt-toolkit/sdk-native": "0.12.1"
       },
       "peerDependencies": {
         "@adapt-toolkit/sdk-react-native": "0.1.0"
@@ -59,9 +59,9 @@
       }
     },
     "node_modules/@adapt-toolkit/sdk-native": {
-      "version": "0.10.13-nightly.1",
-      "resolved": "https://registry.npmjs.org/@adapt-toolkit/sdk-native/-/sdk-native-0.10.13-nightly.1.tgz",
-      "integrity": "sha512-Muc+Lms717KOWF0+WPtV36+r4yS8hMAC6FwW3B6CegnAGkjSlGSd3BJwJaVb7hZlO71ScSBw0FGQ1YFgy15Tag==",
+      "version": "0.12.1",
+      "resolved": "https://registry.npmjs.org/@adapt-toolkit/sdk-native/-/sdk-native-0.12.1.tgz",
+      "integrity": "sha512-mn1EF/v6zEHGPCCmaPVp8NNr9oHVPQyjf3sjTUr7ExJAP0H56VokGdoGjDQWrxVkyzwmoEqoF9Nq3AFH1MWveg==",
       "license": "SEE LICENSE IN LICENSE",
       "optional": true
     },
@@ -1836,9 +1836,9 @@
       "license": "ISC"
     },
     "node_modules/ws": {
-      "version": "8.21.3",
-      "resolved": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
-      "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==",
+      "version": "8.22.0",
+      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz",
+      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==",
       "license": "MIT",
       "engines": {
         "node": ">=10.0.0"

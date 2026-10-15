@@ -38,6 +38,7 @@ FILES = (
     "manifests/server.json",
     "scripts/cowork.mjs",
     "scripts/dev-broker.mjs",
+    "scripts/gateway.mjs",
     "scripts/server.mjs",
     "scripts/telegram-mock.mjs",
     "tests/test_runner.py",

@@ -61,6 +61,29 @@ services:
       OURS_CONFIG: /state/config.json
       NODE_EXTRA_CA_CERTS: /certs/mock.crt
     volumes: ["state-b:/state", "mock-certs:/certs:ro", "./scripts:/opt/ours/suite:ro"]
+  gateway-a: &gateway
+    image: ours-e2e-0muekpy8-server:review
+    pull_policy: never
+    command: ["node", "/opt/ours/suite/gateway.mjs"]
+    environment:
+      GATEWAY_DAEMON_URL: http://server-a:3050
+      GATEWAY_COWORK_URL: http://cowork-a:3052
+    volumes: ["./scripts:/opt/ours/suite:ro"]
+    depends_on:
+      server-a: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/daemon/selection').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+    networks: [test]
+  gateway-b:
+    <<: *gateway
+    environment:
+      GATEWAY_DAEMON_URL: http://server-b:3050
+      GATEWAY_COWORK_URL: http://cowork-b:3052
+    depends_on:
+      server-b: { condition: service_healthy }
   client-a: &client
     image: ours-e2e-0muekpy8-client:review
     pull_policy: never
@@ -76,6 +99,8 @@ services:
     depends_on:
       server-a: { condition: service_healthy }
       server-b: { condition: service_healthy }
+      gateway-a: { condition: service_healthy }
+      gateway-b: { condition: service_healthy }
     networks: [test]
   tg-connector:
     image: ours-e2e-0muekpy8-server:review
@@ -111,6 +136,7 @@ services:
     command: ["node", "/opt/ours/suite/cowork.mjs"]
     environment:
       OURS_COWORK_CONFIG: /cowork/a/config.json
+      OURS_COWORK_HTTP_MANAGEMENT: "1"
       OURS_DAEMON_URL: http://server-a:3050
       OURS_DAEMON_ID: 00000000-0000-4000-8000-00000000000a
       OURS_DAEMON_CREDENTIAL_PATH: /secrets/a/daemon-token
@@ -133,6 +159,7 @@ services:
     command: ["node", "/opt/ours/suite/cowork.mjs"]
     environment:
       OURS_COWORK_CONFIG: /cowork/b/config.json
+      OURS_COWORK_HTTP_MANAGEMENT: "1"
       OURS_DAEMON_URL: http://server-b:3050
       OURS_DAEMON_ID: 00000000-0000-4000-8000-00000000000b
       OURS_DAEMON_CREDENTIAL_PATH: /secrets/b/daemon-token
@@ -160,6 +187,8 @@ services:
     depends_on:
       cowork-a: { condition: service_healthy }
       cowork-b: { condition: service_healthy }
+      gateway-a: { condition: service_healthy }
+      gateway-b: { condition: service_healthy }
     networks: [test]
   client-b:
     <<: *client
