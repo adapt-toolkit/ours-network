@@ -10,9 +10,9 @@
         "@ours.network/claude-code": "1.2.0-nightly.14",
         "@ours.network/cli": "2.8.1-nightly.16",
         "@ours.network/codex": "1.2.0-nightly.14",
-        "@ours.network/fleet": "1.2.0-nightly.63",
-        "@ours.network/fleet-claude-code": "1.2.0-nightly.63",
-        "@ours.network/fleet-codex": "1.2.0-nightly.63",
+        "@ours.network/fleet": "1.2.0-nightly.64",
+        "@ours.network/fleet-claude-code": "1.2.0-nightly.64",
+        "@ours.network/fleet-codex": "1.2.0-nightly.64",
         "@ours.network/hermes": "1.2.0-nightly.14",
         "@ours.network/mcp": "1.2.0-nightly.14",
         "@ours.network/sdk": "3.8.1-nightly.18"
@@ -885,9 +885,9 @@
       }
     },
     "node_modules/@ours.network/fleet": {
-      "version": "1.2.0-nightly.63",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-1.2.0-nightly.63.tgz",
-      "integrity": "sha512-IlpPKMwMSF+zF3B8qyU75yjW7J7c+URX2pE+Ud/3FF3ECaPeYV5Mk15LUINSasThKb8LU9iTDq6JSeXBNqgh/A==",
+      "version": "1.2.0-nightly.64",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-1.2.0-nightly.64.tgz",
+      "integrity": "sha512-1k0G9nKLUODS1omx+5sacBfvBVApZiswcjsR5YQogm3gte4CDy0BCym9QYr2pYsrTg8I2d1Rr787P/A39KTJ0Q==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.3.0",
@@ -914,18 +914,18 @@
       }
     },
     "node_modules/@ours.network/fleet-claude-code": {
-      "version": "1.2.0-nightly.63",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet-claude-code/-/fleet-claude-code-1.2.0-nightly.63.tgz",
-      "integrity": "sha512-YVQhylTD716W1jCZCYL3itFbbQ1f5I8tYclAK5HvyPO0S/FarRt052lHMZqGOem/p3KG/RN2SWFl+SA4GFCmRw==",
+      "version": "1.2.0-nightly.64",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet-claude-code/-/fleet-claude-code-1.2.0-nightly.64.tgz",
+      "integrity": "sha512-S9QVN+GNV41+0F/FhAry7magZKDLlvWKqm/sap16bItUtULV7bIfehbjx7JAwibzMiNnQdLso9g0wB9GMFKdSA==",
       "license": "FSL-1.1-Apache-2.0",
       "engines": {
         "node": ">=22"
       }
     },
     "node_modules/@ours.network/fleet-codex": {
-      "version": "1.2.0-nightly.63",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet-codex/-/fleet-codex-1.2.0-nightly.63.tgz",
-      "integrity": "sha512-NmJ40OG6s5rsD0jckQ9swIH5AsFRcKngZLmbyIpwCLzC7vdXeFb3dUceKYvY7tXXiNy2LxFifSEkypzMdMtahQ==",
+      "version": "1.2.0-nightly.64",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet-codex/-/fleet-codex-1.2.0-nightly.64.tgz",
+      "integrity": "sha512-nBnGA1Ip5SS+mGM5okDpH+bvyVTZDVsGFl+cmh4LELFt7pxnlcfOwpWgEyP/MKndYzqxOZEpfDC8oaheAzYapw==",
       "license": "FSL-1.1-Apache-2.0",
       "bin": {
         "ours-fleet-codex-install": "bin/ours-fleet-codex-install.mjs"
