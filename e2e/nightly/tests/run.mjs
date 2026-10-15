@@ -1,8 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const name = process.argv[2];
+if (name === 'room-layouts') {
+  const child = spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'layouts/run.mjs'),
+    '--tags', '@layouts', ...process.argv.slice(3).filter(arg => arg !== '--include-deferred')], { stdio: 'inherit' });
+  if (child.error) throw child.error;
+  process.exit(child.status ?? 1);
+}
 if (!['smoke', 'flows', 'telegram', 'rooms-agents', 'regressions-fleet', 'regressions-client', 'regressions-telegram', 'regressions-component', 'security', 'recovery'].includes(name)) {
   console.error('Usage: node /opt/ours/tests/run.mjs smoke|flows|telegram|rooms-agents|regressions-fleet|regressions-client|regressions-telegram|regressions-component [cucumber options]');
   process.exit(2);
