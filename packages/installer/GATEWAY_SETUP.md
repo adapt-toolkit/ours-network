@@ -11,7 +11,7 @@ control local processes; they do not carry server management requests.
 
 The nightly manifest selects one published dependency graph: SDK
 `3.8.1-nightly.18`, CLI `2.8.1-nightly.16`, daemon `3.8.1-nightly.10`,
-Fleet `1.2.0-nightly.63`, MCP/Codex/Claude Code `1.2.0-nightly.14`,
+Fleet `1.2.0-nightly.64`, MCP/Codex/Claude Code `1.2.0-nightly.14`,
 Telegram `1.0.1-nightly.12`, Messenger `1.0.31-nightly.19`, Notifications
 `0.3.1-nightly.4`, and Cowork `1.3.4-nightly.20261013.e8a690f`. Exact archive checksums are retained in
 `releases/nightly.json`; the host CLI uses the same SDK/CLI pair.
