@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { PACKAGE_NAMES } from './release-manifest.mjs';
 import { DEGRADING_CAPABILITIES, REQUIRED_CAPABILITIES } from './release-capabilities.mjs';
 const FLEET='@ours.network/fleet', ALL=[...REQUIRED_CAPABILITIES[FLEET],...DEGRADING_CAPABILITIES[FLEET]];
-for (const mode of ['valid','wrong-bytes','nested-drift','registry-failure','missing-capability','degraded','degraded-strict']) {
+for (const mode of ['valid','wrong-bytes','nested-drift','registry-failure','missing-capability','missing-optional-profile','degraded','degraded-strict']) {
  test(`official artifact gate: ${mode}`,()=>{
   const dir=mkdtempSync(join(tmpdir(),'release-gate-fixture-'));
   try {
@@ -16,7 +16,7 @@ for (const mode of ['valid','wrong-bytes','nested-drift','registry-failure','mis
    for(const file of ['release-manifest.mjs','release-capabilities.mjs','verify-release.mjs','prepare-installer.mjs'])cpSync(new URL(file,import.meta.url),join(dir,'scripts',file));
    // A real npm archive: the gate reads the component's own build-info.json out of the pinned bytes.
    mkdirSync(join(dir,'archive/package/dist'),{recursive:true});
-   writeFileSync(join(dir,'archive/package/dist/build-info.json'),JSON.stringify({capabilities:mode==='missing-capability'?ALL.slice(1):mode.startsWith('degraded')?REQUIRED_CAPABILITIES[FLEET]:ALL}));
+   writeFileSync(join(dir,'archive/package/dist/build-info.json'),JSON.stringify({capabilities:mode==='missing-capability'?ALL.slice(1):mode==='missing-optional-profile'?ALL.filter(token=>token!=='workspace.enroll.optional-profile-v1'):mode.startsWith('degraded')?REQUIRED_CAPABILITIES[FLEET]:ALL}));
    assert.equal(spawnSync('tar',['-czf',join(dir,'fixture-source.tgz'),'-C',join(dir,'archive'),'package']).status,0);
    const integrity=`sha512-${createHash('sha512').update(readFileSync(join(dir,'fixture-source.tgz'))).digest('base64')}`;
    const manifest={schema:1,channel:'stable',installerVersion:'9.9.9',packages:Object.fromEntries(PACKAGE_NAMES.map(n=>[n,{version:'9.9.9',integrity}]))};
@@ -42,6 +42,8 @@ if(process.argv[2]==='pack'){
    const passes=mode==='valid'||mode==='degraded';
    assert.equal(r.status===0,passes,r.stdout+r.stderr);
    if(mode==='missing-capability')assert.match(r.stderr,/Release graph refused: @ours\.network\/fleet@9\.9\.9 does not declare cowork\.http-management-v1/);
+   // Fresh optional-profile workspace setup invokes this Fleet capability; an archive with everything else is still refused.
+   if(mode==='missing-optional-profile')assert.match(r.stderr,/Release graph refused: @ours\.network\/fleet@9\.9\.9 does not declare workspace\.enroll\.optional-profile-v1,/);
    // A selection without a step the installer only offers is releasable, and says what it lacks.
    if(mode==='degraded')assert.match(r.stderr,/NOTICE: @ours\.network\/fleet@9\.9\.9 does not declare managed-cli\.setup-v1\. An installer released with this selection skips that step/);
    else assert.doesNotMatch(r.stderr,/NOTICE:/);

@@ -9,6 +9,7 @@ export const REQUIRED_CAPABILITIES = {
   '@ours.network/fleet': [
     'cowork.http-management-v1',          // gateway HTTP management (client acquisition gate)
     'workspace.enroll.preserve-profile-v1', // workspace setup
+    'workspace.enroll.optional-profile-v1', // fresh workspace setup with an optional Human profile
     'managed-cli.codex-reasoning-effort-v1', // #235: reject affected Fleet archives even when setup-v1 exists
   ],
 };
