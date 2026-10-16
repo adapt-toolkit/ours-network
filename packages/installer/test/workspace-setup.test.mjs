@@ -111,9 +111,73 @@ for(const [label,input,response,error] of [
  ['malformed',grant,()=>new Response('bad-json'),/response/i],
  ['origin mismatch',grant,()=>new Response(JSON.stringify({payload:encode({...payload,appOrigin:'https://app.ours-tunnel.com'})})),/origin mismatch/i],
 ])test('grant '+label+' fails before setup without leaking private data',async()=>{
- const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');let setup=0,runs=0,requests=0;
- await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(input)],{home:'/fixture',async run(){runs++;return {ok:true};}},async()=>{setup++;return 0;},async()=>{requests++;return response();}),error);
- assert.equal(setup,0);assert.equal(runs,0);assert.equal(requests,['origin','expired','extra field'].includes(label)?0:1);
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');let setup=0,requests=0;const runs=[];
+ await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(input)],{home:'/fixture',async run(bin,args){runs.push(args);return {ok:true};}},async()=>{setup++;return 0;},async()=>{requests++;return response();}),error);
+ const local=['origin','expired','extra field'].includes(label);
+ assert.equal(setup,0);assert.deepEqual(runs,local?[]:[['workspace-enroll','--help'],['--version']]);assert.equal(requests,local?0:1);
+});
+// One-use App grant: SetupGrants.redeem deletes the code on the first POST.
+function grantServer(privatePayload){
+ const live=new Set([grant.code]),posts=[];
+ const request=async(url,options)=>{posts.push(url);const {code}=JSON.parse(options.body);if(!live.delete(code))return new Response('{}',{status:410});return new Response(JSON.stringify({payload:privatePayload}));};
+ return {request,posts};
+}
+function freshEffects(home,state,capabilities=['workspace.enroll.optional-profile-v1']){
+ return {home,env:{},out(){},readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))state.enrolled++;return {ok:true};}};
+}
+const {mkdtempSync,mkdirSync,writeFileSync,existsSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+test('grant dry run previews without redemption and the same command then redeems exactly once',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
+ const home=mkdtempSync(join(tmpdir(),'grant-preview-'));const state={profile:null,runs:[],enrolled:0},server=grantServer(encode(payload)),previews=[],installs=[];
+ const command=['--setup-workspace',encode(grant),'--fleet-settings=/fixture'];
+ try{
+  assert.equal(await runWorkspaceSetup([...command,'--dry-run'],freshEffects(home,state),async options=>{previews.push(options);return 0;},server.request),0);
+  assert.equal(server.posts.length,0);assert.equal(previews.length,1);assert.ok(previews[0].includes('--dry-run'));assert.equal(state.enrolled,0);assert.equal(existsSync(join(home,'.ours-client','workspace-setup-pending.json')),false);
+  assert.equal(await runWorkspaceSetup(command,freshEffects(home,state),async options=>{installs.push(options);state.profile={endpoint:'fixture'};return 0;},server.request),0);
+  assert.equal(server.posts.length,1);assert.equal(installs.length,1);assert.equal(installs[0][installs[0].indexOf('--identity-name')+1],'alice@home');assert.equal(state.enrolled,1);
+  // Replaying the spent command on another fresh host reaches the App and is refused.
+  const other=mkdtempSync(join(tmpdir(),'grant-replay-')),replay={profile:null,runs:[],enrolled:0};
+  try{await assert.rejects(runWorkspaceSetup(command,freshEffects(other,replay),async()=>{throw Error('used grant must not reach setup');},server.request),/used|expired/i);}finally{rmSync(other,{recursive:true,force:true});}
+  assert.equal(server.posts.length,2);assert.equal(state.enrolled,1);assert.equal(replay.enrolled,0);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
+for(const [label,args,error] of [
+ ['server scope',['--scope','server'],/all or client scope/],
+ ['identity override',['--identity-name','other@host'],/supplies identity/],
+ ['integration override',['--integrations','codex'],/supplies identity/],
+ ['unknown option',['--no-such-option'],/./],
+ ['invalid mode',['--mode','vm'],/Mode/],
+])test('grant is not redeemed for invalid setup arguments: '+label,async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
+ const home=mkdtempSync(join(tmpdir(),'grant-invalid-'));const state={profile:null,runs:[],enrolled:0},server=grantServer(encode(payload));
+ try{
+  await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),...args],freshEffects(home,state),async()=>{throw Error('must not set up');},server.request),error);
+  await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),...args,'--dry-run'],freshEffects(home,state),async()=>{throw Error('must not preview');},server.request),error);
+  assert.equal(server.posts.length,0);assert.equal(state.enrolled,0);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
+for(const [label,prepare,error] of [
+ ['enrollment unavailable',state=>{state.fail='workspace-enroll';},/enrollment is unavailable/],
+ ['tunnel connector unavailable',state=>{state.fail='--version';},/Tunnel connector/],
+ ['existing host lacks profile-preserving Fleet',state=>{state.profile={endpoint:'existing'};state.capabilities=[];},/profile-preserving Fleet/],
+ ['existing root without client profile',(state,home)=>{mkdirSync(join(home,'.ours-network','workspace'),{recursive:true});writeFileSync(join(home,'.ours-network','workspace','installation.json'),'{}');},/Existing host requires/],
+])test('grant is not redeemed when local preflight fails: '+label,async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
+ const home=mkdtempSync(join(tmpdir(),'grant-preflight-'));const state={profile:null,runs:[],enrolled:0,capabilities:['workspace.enroll.optional-profile-v1']},server=grantServer(encode(payload));
+ prepare(state,home);
+ const effects={home,env:{},out(){},readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]===state.fail)return {ok:false};if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:state.capabilities})};return {ok:true};}};
+ try{
+  for(const extra of [[],['--dry-run']])await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),...extra],effects,async()=>{throw Error('must not set up');},server.request),error);
+  assert.equal(server.posts.length,0);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
+test('payload-dependent optional profile support is checked after redemption, before any setup',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
+ const home=mkdtempSync(join(tmpdir(),'grant-optional-'));const state={profile:null,runs:[],enrolled:0},server=grantServer(encode({...payload,fullName:'Prince',name:null,surname:null}));
+ try{
+  await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant)],freshEffects(home,state,[]),async()=>{throw Error('must not set up');},server.request),/update.*Fleet.*fresh command/i);
+  assert.equal(server.posts.length,1);assert.equal(state.enrolled,0);assert.equal(existsSync(join(home,'.ours-client','workspace-setup-pending.json')),false);
+ }finally{rmSync(home,{recursive:true,force:true});}
 });
 test('private renewal preserves existing credential ownership checks downstream',()=>{
  const decoded=decodeWorkspacePayload(encode({...payload,connectorToken:undefined,renewal:true}),now);assert.equal(decoded.connectorToken,undefined);assert.equal(decoded.renewal,true);
