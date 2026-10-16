@@ -29,6 +29,7 @@ async function gateway(t, routes = {}) {
       const handler = routes[path] ?? healthy[path];
       const answer = handler ? handler(req, calls[path]) : [404, { error: 'not found' }];
       if (answer === 'hang') return;
+      if (answer === 'stall-body') { res.writeHead(200, { 'content-type': 'application/json' }); res.write('{"identities":'); return; }
       const [status, body, type = 'application/json'] = answer;
       res.writeHead(status, { 'content-type': type });
       res.end(typeof body === 'string' ? body : JSON.stringify(body));
@@ -89,6 +90,14 @@ test('persistent unavailability fails within one total deadline and names stage 
 
 test('a hanging request is capped by the remaining deadline', async t => {
   const g = await gateway(t, { '/daemon/identities': () => 'hang' });
+  const result = await run(t, g.base, { deadlineMs: 800 });
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /^gateway-readiness:authenticated-daemon:TIMEOUT:\d+:transient$/);
+  assert(result.elapsed < 800 + 1_500, `took ${result.elapsed}ms`);
+});
+
+test('a body that stalls after the headers is a bounded timeout, not an invalid answer', async t => {
+  const g = await gateway(t, { '/daemon/identities': () => 'stall-body' });
   const result = await run(t, g.base, { deadlineMs: 800 });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /^gateway-readiness:authenticated-daemon:TIMEOUT:\d+:transient$/);

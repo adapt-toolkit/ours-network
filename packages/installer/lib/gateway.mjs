@@ -189,7 +189,8 @@ const json=async(path,options={})=>{const r=await request(path,options);
   if(!r.ok){let body;try{body=await r.json();}catch{}
     // A well-formed RPC error is the service's answer, whatever the status: never retried.
     if(body&&typeof body==='object'&&body.version===1&&body.error)throw new Check('RPC_ERROR',false);throw status(r.status);}
-  try{return await r.json();}catch{throw new Check('INVALID',false);}};
+  // The request signal also bounds the body: a stalled body is a timeout, not an invalid answer.
+  try{return await r.json();}catch(e){if(e?.name==='TimeoutError'||e?.name==='AbortError')throw new Check('TIMEOUT',true);throw new Check('INVALID',false);}};
 let stage='selection';
 const attempt=async()=>{
   stage='selection';const selection=await json('/daemon/selection');
