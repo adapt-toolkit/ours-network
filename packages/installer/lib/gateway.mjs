@@ -157,3 +157,67 @@ http {
 }
 `;
 }
+
+/** How long the gateway readiness probe keeps retrying a dependency that is still starting. */
+export const GATEWAY_READINESS_WAIT_MS = 60_000;
+const GATEWAY_READINESS_RETRY_MS = 1_000;
+const READINESS_KIND = /^(EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|TIMEOUT|HTTP_[1-5][0-9][0-9]|INVALID|RPC_ERROR|CHECK_FAILED)$/;
+
+/**
+ * Node script the installer runs inside the daemon container to prove the
+ * gateway serves the daemon and Cowork management with the installation's
+ * credential. Services restored by an update may still be starting, so a
+ * transient result (a 502/503/504 without an RPC error body, a request
+ * timeout, a refused or reset connection, a name not yet resolvable) is
+ * retried until one total `deadlineMs` across every stage and attempt; each
+ * request is capped to the time left. Anything else — a wrong instance,
+ * 401/403, a well-formed RPC error under any status, any other status or an
+ * invalid body — fails at once. The probe only reads; nothing else is retried. Output carries stage and a fixed kind only,
+ * never the token or a response body.
+ */
+export function gatewayReadinessScript({ base, instanceId, tokenPath = '/var/lib/ours/daemon-token',
+  deadlineMs = GATEWAY_READINESS_WAIT_MS, retryMs = GATEWAY_READINESS_RETRY_MS }) {
+  return `const fs=require('node:fs');const base=${JSON.stringify(base)};const instanceId=${JSON.stringify(instanceId)};
+const tokenPath=${JSON.stringify(tokenPath)};const deadline=Date.now()+${Number(deadlineMs)};const retryMs=${Number(retryMs)};
+const NET=['EAI_AGAIN','ENOTFOUND','ECONNREFUSED','ECONNRESET','ETIMEDOUT'];
+class Check extends Error{constructor(kind,transient){super(kind);this.kind=kind;this.transient=transient;}}
+const status=s=>new Check('HTTP_'+s,s===502||s===503||s===504);
+const request=async(path,options)=>{const left=Math.max(1,Math.min(5000,deadline-Date.now()));
+  try{return await fetch(base+path,{...options,redirect:'error',signal:AbortSignal.timeout(left)});}
+  catch(e){const code=e?.cause?.code;if(NET.includes(code))throw new Check(code,true);if(e?.name==='TimeoutError'||e?.cause?.name==='TimeoutError')throw new Check('TIMEOUT',true);throw new Check('CHECK_FAILED',false);}};
+const json=async(path,options={})=>{const r=await request(path,options);
+  if(!r.ok){let body;try{body=await r.json();}catch{}
+    // A well-formed RPC error is the service's answer, whatever the status: never retried.
+    if(body&&typeof body==='object'&&body.version===1&&body.error)throw new Check('RPC_ERROR',false);throw status(r.status);}
+  try{return await r.json();}catch{throw new Check('INVALID',false);}};
+let stage='selection';
+const attempt=async()=>{
+  stage='selection';const selection=await json('/daemon/selection');
+  if(selection?.instanceId!==instanceId)throw new Check('INVALID',false);
+  stage='unauthenticated-management';
+  const denied=await request('/cowork/management/rpc',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+  await denied.body?.cancel();if(denied.status!==401)throw status(denied.status);
+  stage='credential';let token;try{token=fs.readFileSync(tokenPath,'utf8').trim();}catch{throw new Check('CHECK_FAILED',false);}
+  const headers={'x-ours-api-token':token,'content-type':'application/json'};
+  stage='authenticated-daemon';const identities=await json('/daemon/identities',{headers});
+  if(!Array.isArray(identities?.identities))throw new Check('INVALID',false);
+  stage='authenticated-management';
+  const result=await json('/cowork/management/rpc',{method:'POST',headers,body:JSON.stringify({version:1,id:'installer-readiness',method:'room.list',params:{}})});
+  if(result?.version!==1||result.id!=='installer-readiness'||!Array.isArray(result.result)||result.error)throw new Check('INVALID',false);
+};
+(async()=>{let attempts=0;for(;;){attempts++;try{await attempt();return;}catch(e){
+  const c=e instanceof Check?e:new Check('CHECK_FAILED',false);
+  if(!c.transient||Date.now()+retryMs>=deadline){process.stdout.write('gateway-readiness:'+stage+':'+c.kind+':'+attempts+(c.transient?':transient':''));process.exitCode=1;return;}
+  await new Promise(r=>setTimeout(r,retryMs));}}})();`;
+}
+
+/** Operator text for a failed readiness probe; `undefined` when the output is not the probe's. */
+export function describeGatewayReadiness(stdout) {
+  const match = /^gateway-readiness:(selection|unauthenticated-management|credential|authenticated-daemon|authenticated-management):([A-Z0-9_]+):([0-9]{1,6})(:transient)?$/.exec(String(stdout).trim());
+  if (!match || !READINESS_KIND.test(match[2])) return undefined;
+  const [, stage, kind, attempts, transient] = match;
+  const what = kind.startsWith('HTTP_') ? `HTTP ${kind.slice(5)}` : kind;
+  return transient
+    ? `${stage}, ${what}; still not ready after ${attempts} attempts over ${GATEWAY_READINESS_WAIT_MS / 1000}s`
+    : `${stage}, ${what}`;
+}
