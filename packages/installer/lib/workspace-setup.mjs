@@ -5,11 +5,39 @@ import {parseSetupArgs} from './setup-options.mjs';
 export function decodeWorkspacePayload(encoded,now=Date.now()) {
   if(typeof encoded!=='string' || encoded.length>32768 || !/^[A-Za-z0-9_-]+$/.test(encoded.trim()))throw Error('Invalid private workspace payload');
   let p;try{p=JSON.parse(Buffer.from(encoded.trim(),'base64url'));}catch{throw Error('Invalid private workspace payload');}
-  const allowed=['version','appOrigin','hostname','rootName','name','surname','connectorToken','invitation','serverCid','challenge'];
-  if(!p || Object.keys(p).some(k=>!allowed.includes(k)) || p.version!==1 || !['https://app.ours.network','https://app.ours-tunnel.com'].includes(p.appOrigin) || !/^[a-z0-9][a-z0-9-]{2,60}\.ours-tunnel\.com$/.test(p.hostname) || !/^[a-z0-9-]{2,30}@[a-z0-9-]{2,30}$/.test(p.rootName) || !/^[a-f0-9]{64}$/i.test(p.serverCid))throw Error('Invalid workspace payload boundary');
-  for(const key of ['name','surname','connectorToken','invitation'])if(typeof p[key]!=='string' || !p[key].trim() || p[key].length>8192 || /[\x00-\x1f\x7f]/.test(p[key]))throw Error('Invalid private workspace payload');
+  const allowed=['version','appOrigin','hostname','rootName','fullName','name','surname','connectorToken','invitation','serverCid','challenge','renewal'];
+  if(!p || typeof p!=='object' || Array.isArray(p) || Object.keys(p).some(k=>!allowed.includes(k)) || p.version!==1 || !['https://app.ours.network','https://app.ours-tunnel.com'].includes(p.appOrigin) || !/^[a-z0-9][a-z0-9-]{2,60}\.ours-tunnel\.com$/.test(p.hostname) || !/^[a-z0-9-]{2,30}@[a-z0-9-]{2,30}$/.test(p.rootName) || !/^[a-f0-9]{64}$/i.test(p.serverCid))throw Error('Invalid workspace payload boundary');
+  for(const key of ['fullName','name','surname']){const value=p[key];if(value==null || value===''){p[key]=null;continue;}if(typeof value!=='string' || value.length>8192 || /[\x00-\x1f\x7f]/.test(value))throw Error('Invalid private workspace profile');p[key]=value.trim()||null;}
+  if(p.renewal!==undefined && typeof p.renewal!=='boolean')throw Error('Invalid workspace renewal');
+  for(const key of ['connectorToken','invitation'])if(!(key==='connectorToken' && p[key]===undefined && p.renewal===true) && (typeof p[key]!=='string' || !p[key].trim() || p[key].length>8192 || /[\x00-\x1f\x7f]/.test(p[key])))throw Error('Invalid private workspace payload');
   if(!p.challenge || !['nonce','accountId','workspaceId'].every(k=>/^[\w-]{43}$/.test(p.challenge[k])) || !Number.isFinite(p.challenge.expiresAt) || p.challenge.expiresAt<=now || p.challenge.expiresAt>now+16*60000)throw Error('Workspace challenge expired or invalid');
   return p;
+}
+// Redeem only the minimal public grant; the private envelope stays in process/file transport.
+async function workspaceInput(input,request){
+  if(typeof input!=='string' || !/^[A-Za-z0-9_-]{1,32768}$/.test(input.trim()))throw Error('Invalid workspace setup input');
+  let grant;try{grant=JSON.parse(Buffer.from(input.trim(),'base64url'));}catch{throw Error('Invalid workspace setup input');}
+  if(grant?.version===1)return input;
+  const now=Date.now();
+  if(grant?.version!==2 || Object.keys(grant).sort().join(',')!=='appOrigin,code,expiresAt,version'
+    || !['https://app.ours.network','https://app.ours-tunnel.com'].includes(grant.appOrigin)
+    || !/^[A-Za-z0-9_-]{43}$/.test(grant.code) || !Number.isSafeInteger(grant.expiresAt) || grant.expiresAt<=now || grant.expiresAt>now+16*60000)
+    throw Error('Workspace setup grant is invalid or expired; get a fresh command from the App');
+  let response;
+  try{response=await request(grant.appOrigin+'/account-api/workspace-install-redeem',{method:'POST',redirect:'error',credentials:'omit',signal:AbortSignal.timeout(30000),headers:{'Content-Type':'application/json',Origin:grant.appOrigin},body:JSON.stringify({code:grant.code})});}
+  catch{throw Error('Workspace grant redemption could not be confirmed; check the App before requesting a fresh command');}
+  if(!response.ok || response.redirected){await response.body?.cancel();throw Error(response.status===410?'Workspace grant expired or was already used; get a fresh command from the App':'Workspace grant redemption failed; check the App before requesting a fresh command');}
+  let result;
+  try{
+    const chunks=[];let bytes=0;
+    if(!response.body)throw Error();
+    for await(const chunk of response.body){bytes+=chunk.length;if(bytes>33792)throw Error();chunks.push(chunk);}
+    result=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  }catch{throw Error('Invalid workspace setup response; get a fresh command from the App');}
+  if(typeof result?.payload!=='string' || !/^[A-Za-z0-9_-]{1,32768}$/.test(result.payload))throw Error('Invalid workspace setup response');
+  const payload=decodeWorkspacePayload(result.payload);
+  if(payload.appOrigin!==grant.appOrigin)throw Error('Workspace setup response origin mismatch');
+  return result.payload;
 }
 export function extractWorkspaceArgs(args){
   const flags=['--setup-workspace','--setup-workspace-file','--workspace-fleet-bin','--fleet-settings'];const values={},rest=[];
@@ -17,13 +45,14 @@ export function extractWorkspaceArgs(args){
   if(values['--setup-workspace'] && values['--setup-workspace-file'])throw Error('Choose one private payload transport');
   return {values,rest};
 }
-export async function runWorkspaceSetup(args,effects,runSetup){
+export async function runWorkspaceSetup(args,effects,runSetup,request=fetch){
   const migrateAppOrigin=args.includes('--workspace-migrate-app-origin');
   if(args.filter(arg=>arg==='--workspace-migrate-app-origin').length>1)throw Error('Duplicate workspace migration flag');
   const {values,rest}=extractWorkspaceArgs(args.filter(arg=>arg!=='--workspace-migrate-app-origin'));let encoded;
   if(values['--setup-workspace-file']){const path=resolve(values['--setup-workspace-file']),stat=lstatSync(path);if(!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1 || stat.uid!==process.getuid?.() || stat.size>32768 || (stat.mode&0o077)!==0)throw Error('Setup file must be owned and private (chmod 600)');encoded=readFileSync(path,'utf8').trim();}
   else if(values['--setup-workspace']==='-'){const chunks=[];let bytes=0;for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>32768)throw Error('Private payload too large');chunks.push(chunk);}encoded=Buffer.concat(chunks).toString().trim();}
   else encoded=values['--setup-workspace'];
+  encoded=await workspaceInput(encoded,request);
   const p=decodeWorkspacePayload(encoded),fleetBin=values['--workspace-fleet-bin'] || 'ours-fleet';
   const parsed=parseSetupArgs(rest,{home:effects.home,validate:false});
   if(parsed.scope==='server')throw Error('Workspace setup requires all or client scope');
@@ -54,10 +83,12 @@ export async function runWorkspaceSetup(args,effects,runSetup){
   if(!existing){if(!parsed.mode)options.push('--mode','docker');if(!parsed.stateDir)options.push('--state-dir',root);options.push('--identity-name',p.rootName);}
   options.push('--integrations','none');
   parseSetupArgs(options,{home:effects.home});
-  if(preserveProfile){
+  const optionalProfile=!preserveProfile && Boolean(p.fullName || !p.name || !p.surname);
+  if(preserveProfile || optionalProfile){
     const version=await effects.run(fleetBin,['version','--json'],{sensitive:true});
     let info;try{info=JSON.parse(version.stdout);}catch{}
-    if(!version.ok || !info?.capabilities?.includes('workspace.enroll.preserve-profile-v1'))throw Error('Existing-host setup requires a profile-preserving Fleet release; nothing was changed');
+    if(optionalProfile && (!version.ok || !Array.isArray(info?.capabilities) || !info.capabilities.includes('workspace.enroll.optional-profile-v1')))throw Error('Optional workspace profile requires an updated Fleet; update ours-fleet before retrying setup');
+    if(preserveProfile && (!version.ok || !Array.isArray(info?.capabilities) || !info.capabilities.includes('workspace.enroll.preserve-profile-v1')))throw Error('Existing-host setup requires a profile-preserving Fleet release; nothing was changed');
   }
   const help=await effects.run(fleetBin,['workspace-enroll','--help'],{sensitive:true});if(!help.ok)throw Error('Fleet workspace enrollment is unavailable');
   const tunnel=await effects.run('cloudflared',['--version'],{sensitive:true});if(!tunnel.ok)throw Error('Tunnel connector is unavailable');
