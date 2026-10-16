@@ -93,11 +93,16 @@ test('supported Fleet receives the original optional profile privately and only 
 });
 
 const grant={version:2,appOrigin:payload.appOrigin,code:'g'.repeat(43),expiresAt:now+600000};
+// Read-only effects used by the setup plan preflight before a grant is redeemed.
+// '/fixture' is the complete Fleet settings file these grant tests name.
+const fleetModel={harness:'codex',session:'acp',model:'gpt-6-astra',efforts:['low','medium','high']};
+const fleetSettings={subscriptions:['codex'],assignmentStrategy:'one-model',reasoning:'balanced',models:{development:fleetModel,review:fleetModel,coordination:fleetModel}};
+const planning={platform:{platform:'linux'},readJson:path=>path==='/fixture'?fleetSettings:null,packagedSourcePolicy:()=>({}),readManagedClientProfile:()=>null};
 test('minimal grant is redeemed privately through the actual fresh setup path without logging its envelope',async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,readFileSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const home=mkdtempSync(join(tmpdir(),'grant-forward-'));let profile=null,forwarded,setup=0;const visible=[];
  const privatePayload=encode({...payload,fullName:'Prince',name:null,surname:null});
- const effects={home,env:{},out:value=>visible.push(value),readManagedClientProfile:()=>profile,async run(bin,args){visible.push(JSON.stringify(args));if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.optional-profile-v1']})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))forwarded=readFileSync(args[args.indexOf('--file')+1],'utf8');return {ok:true};}};
+ const effects={home,env:{},out:value=>visible.push(value),...planning,readManagedClientProfile:()=>profile,async run(bin,args){visible.push(JSON.stringify(args));if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.optional-profile-v1']})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))forwarded=readFileSync(args[args.indexOf('--file')+1],'utf8');return {ok:true};}};
  const request=async(url,options)=>{assert.equal(url,'https://app.ours.network/account-api/workspace-install-redeem');assert.equal(options.method,'POST');assert.equal(options.redirect,'error');assert.equal(options.credentials,'omit');assert.equal(options.headers.Origin,grant.appOrigin);assert.deepEqual(JSON.parse(options.body),{code:'g'.repeat(43)});return new Response(JSON.stringify({payload:privatePayload}));};
  try{assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(grant),'--fleet-settings=/fixture'],effects,async options=>{visible.push(JSON.stringify(options));setup++;profile={endpoint:'fixture'};return 0;},request),0);assert.equal(setup,1);assert.equal(forwarded,privatePayload);assert.ok(!visible.join('').includes(privatePayload));assert.ok(!visible.join('').includes('Prince'));}finally{rmSync(home,{recursive:true,force:true});}
 });
@@ -112,7 +117,7 @@ for(const [label,input,response,error] of [
  ['origin mismatch',grant,()=>new Response(JSON.stringify({payload:encode({...payload,appOrigin:'https://app.ours-tunnel.com'})})),/origin mismatch/i],
 ])test('grant '+label+' fails before setup without leaking private data',async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');let setup=0,requests=0;const runs=[];
- await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(input)],{home:'/fixture',async run(bin,args){runs.push(args);return {ok:true};}},async()=>{setup++;return 0;},async()=>{requests++;return response();}),error);
+ await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(input)],{home:'/fixture',...planning,async run(bin,args){runs.push(args);return {ok:true};}},async()=>{setup++;return 0;},async()=>{requests++;return response();}),error);
  const local=['origin','expired','extra field'].includes(label);
  assert.equal(setup,0);assert.deepEqual(runs,local?[]:[['workspace-enroll','--help'],['--version']]);assert.equal(requests,local?0:1);
 });
@@ -123,7 +128,7 @@ function grantServer(privatePayload){
  return {request,posts};
 }
 function freshEffects(home,state,capabilities=['workspace.enroll.optional-profile-v1']){
- return {home,env:{},out(){},readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))state.enrolled++;return {ok:true};}};
+ return {home,env:{},out(){},...planning,readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))state.enrolled++;return {ok:true};}};
 }
 const {mkdtempSync,mkdirSync,writeFileSync,existsSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
 test('grant dry run previews without redemption and the same command then redeems exactly once',async()=>{
@@ -156,7 +161,12 @@ for(const [label,args,error] of [
   assert.equal(server.posts.length,0);assert.equal(state.enrolled,0);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
-for(const [label,prepare,error] of [
+for(const [label,prepare,error,extra=[]] of [
+ ['client daemon token override',state=>{state.env={OURS_API_TOKEN:'fixture'};},/OURS_API_TOKEN conflicts/],
+ ['client port override',state=>{state.env={OURS_PORT:'3050'};},/OURS_PORT conflicts/],
+ ['direct Windows Node',state=>{state.platform='win32';},/WSL/],
+ ['invalid Fleet settings',state=>{state.json={'/fixture/settings.json':{subscriptions:['codex']}};},/Fleet settings/,['--fleet-settings=/fixture/settings.json']],
+ ['unreadable source policy',()=>{},/Source policy/,['--sources','/fixture/missing-sources.json']],
  ['enrollment unavailable',state=>{state.fail='workspace-enroll';},/enrollment is unavailable/],
  ['tunnel connector unavailable',state=>{state.fail='--version';},/Tunnel connector/],
  ['existing host lacks profile-preserving Fleet',state=>{state.profile={endpoint:'existing'};state.capabilities=[];},/profile-preserving Fleet/],
@@ -165,10 +175,21 @@ for(const [label,prepare,error] of [
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
  const home=mkdtempSync(join(tmpdir(),'grant-preflight-'));const state={profile:null,runs:[],enrolled:0,capabilities:['workspace.enroll.optional-profile-v1']},server=grantServer(encode(payload));
  prepare(state,home);
- const effects={home,env:{},out(){},readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]===state.fail)return {ok:false};if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:state.capabilities})};return {ok:true};}};
+ const effects={home,env:state.env||{},out(){},...planning,platform:{platform:state.platform||'linux'},readJson:path=>state.json?.[path]??null,readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]===state.fail)return {ok:false};if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:state.capabilities})};return {ok:true};}};
  try{
-  for(const extra of [[],['--dry-run']])await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),...extra],effects,async()=>{throw Error('must not set up');},server.request),error);
+  for(const mode of [[],['--dry-run']])await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),...extra,...mode],effects,async()=>{throw Error('must not set up');},server.request),error);
   assert.equal(server.posts.length,0);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
+test('grant preview with a valid explicit profile plans its derived identity, then the same command redeems once',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {runSetup}=await import('../lib/setup.mjs');
+ const home=mkdtempSync(join(tmpdir(),'grant-profile-preview-'));const state={profile:null,runs:[],enrolled:0},server=grantServer(encode(payload)),out=[],installs=[];
+ const command=['--setup-workspace',encode(grant),'--fleet-settings=/fixture','--username','alice','--name','Alice','--surname','Tester','--hostname','home'];
+ try{
+  assert.equal(await runWorkspaceSetup([...command,'--dry-run'],{...freshEffects(home,state),out:value=>out.push(value)},runSetup,server.request),0);
+  assert.equal(server.posts.length,0);assert.ok(out.some(line=>String(line).includes('Preview only')),out.join('\n'));assert.ok(!out.join('\n').includes('conflicts'));
+  assert.equal(await runWorkspaceSetup(command,freshEffects(home,state),async options=>{installs.push(options);state.profile={endpoint:'fixture'};return 0;},server.request),0);
+  assert.equal(server.posts.length,1);assert.equal(installs[0][installs[0].indexOf('--identity-name')+1],'alice@home');assert.equal(state.enrolled,1);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
 test('payload-dependent optional profile support is checked after redemption, before any setup',async()=>{

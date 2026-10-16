@@ -109,6 +109,16 @@ export async function prepareSetupPlan(options, effects) {
   return plan;
 }
 
+/**
+ * Read-only preflight of a complete noninteractive setup command and optional Fleet
+ * settings: the same validation and dry-run planning as runSetup, without prompts,
+ * locks, installs or service changes.
+ */
+export async function preflightSetup(argv, effects, { fleetSettingsPath } = {}) {
+  if (fleetSettingsPath) validateFleetSettings(readObject(effects, fleetSettingsPath, 'Fleet settings'));
+  if (argv) await prepareSetupPlan(validateSetupOptions({ ...parseSetupArgs(argv, { home: effects.home, validate: false }), dryRun: true }, { interactive: false }), effects);
+}
+
 export async function executeSetupPlan(plan, effects, { server = runServerCommand, client = runClientCommand } = {}) {
   if (!plan.interactive) effects.out(banner());
   effects.out(heading(`${plan.operation === 'update' ? 'Update' : 'Install'} ours.network`));

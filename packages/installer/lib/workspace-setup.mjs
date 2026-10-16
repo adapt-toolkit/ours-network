@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import {parseSetupArgs} from './setup-options.mjs';
+import {preflightSetup} from './setup.mjs';
 /** Base64 is transport, not encryption. Broad provider credentials are never accepted. */
 export function decodeWorkspacePayload(encoded,now=Date.now()) {
   if(typeof encoded!=='string' || encoded.length>32768 || !/^[A-Za-z0-9_-]+$/.test(encoded.trim()))throw Error('Invalid private workspace payload');
@@ -13,8 +14,9 @@ export function decodeWorkspacePayload(encoded,now=Date.now()) {
   if(!p.challenge || !['nonce','accountId','workspaceId'].every(k=>/^[\w-]{43}$/.test(p.challenge[k])) || !Number.isFinite(p.challenge.expiresAt) || p.challenge.expiresAt<=now || p.challenge.expiresAt>now+16*60000)throw Error('Workspace challenge expired or invalid');
   return p;
 }
-// A v1 envelope is local. A v2 grant is one-use, so it is parsed here and redeemed only after
-// every payload-independent check (arguments, host state, Fleet/tunnel preflight, dry run) passes.
+// A v1 envelope is local. A v2 grant is one-use, so it is parsed here and redeemed only after the
+// payload-independent checks in runWorkspaceSetup (arguments, host state, read-only setup and Fleet
+// settings preflight, Fleet/tunnel availability, dry run) pass.
 function workspaceGrant(input){
   if(typeof input!=='string' || !/^[A-Za-z0-9_-]{1,32768}$/.test(input.trim()))throw Error('Invalid workspace setup input');
   let grant;try{grant=JSON.parse(Buffer.from(input.trim(),'base64url'));}catch{throw Error('Invalid workspace setup input');}
@@ -89,9 +91,13 @@ export async function runWorkspaceSetup(args,effects,runSetup,request=fetch){
   if(!existing){if(!parsed.mode)options.push('--mode','docker');if(!parsed.stateDir)options.push('--state-dir',root);}
   options.push('--integrations','none');
   // The App assigns the root identity on redemption. Before that, a well-formed stand-in validates the
-  // remaining options; explicit username/hostname options derive their own identity for comparison.
+  // remaining options; explicit username/hostname options derive their own identity instead.
   const setupOptions=identity=>existing || identity===undefined?options:[...options,'--identity-name',identity];
-  parseSetupArgs(setupOptions(p?.rootName ?? (parsed.localUsername===undefined?'workspace@preview':undefined)),{home:effects.home});
+  const standIn=parsed.localUsername===undefined?'workspace@preview':undefined;
+  parseSetupArgs(setupOptions(p?.rootName ?? standIn),{home:effects.home});
+  const fleetHome=effects.env?.OURS_FLEET_HOME || effects.home,fleetConfig=join(fleetHome,'fleet.yaml');
+  // Fresh setup and Fleet initialization would reject these only after redemption.
+  if(grant)await preflightSetup(existing?null:setupOptions(standIn),effects,{fleetSettingsPath:existsSync(fleetConfig)?undefined:fleetSettings});
   const capable=async capability=>{
     const version=await effects.run(fleetBin,['version','--json'],{sensitive:true});
     let info;try{info=JSON.parse(version.stdout);}catch{}
@@ -105,7 +111,7 @@ export async function runWorkspaceSetup(args,effects,runSetup,request=fetch){
   const tunnel=await effects.run('cloudflared',['--version'],{sensitive:true});if(!tunnel.ok)throw Error('Tunnel connector is unavailable');
   if(options.includes('--dry-run')){
     if(grant)effects.out('Preview only: the workspace setup grant was not redeemed; this command remains usable until it expires.');
-    if(!existing)return runSetup(setupOptions(p?.rootName ?? 'workspace@preview'),effects);return 0;
+    if(!existing)return runSetup(setupOptions(p?.rootName ?? standIn),effects);return 0;
   }
   if(grant){
     // Checks below depend on the private envelope, so a failure here leaves the grant spent.
@@ -121,7 +127,6 @@ export async function runWorkspaceSetup(args,effects,runSetup,request=fetch){
   const selected=existingProfile || effects.readManagedClientProfile();if(!selected)throw Error('Workspace client profile was not installed');
   const env={OURS_CONFIG:existingProfile || managedPath};
   for(const key of ['OURS_PORT','OURS_STATE_DIR','OURS_API_TOKEN','OURS_DAEMON_ID','OURS_DAEMON_URL','OURS_DAEMON_CREDENTIAL_PATH'])env[key]=undefined;
-  const fleetHome=effects.env?.OURS_FLEET_HOME || effects.home,fleetConfig=join(fleetHome,'fleet.yaml');
   if(!existsSync(fleetConfig)){
     const initArgs=['init',...(fleetSettings?['--settings',fleetSettings]:[])];
     const initialized=fleetSettings?await effects.run(fleetBin,initArgs,{env}):await effects.runInteractive(fleetBin,initArgs,{env});if(!initialized.ok)throw Error('Fleet configuration incomplete');
