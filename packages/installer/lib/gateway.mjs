@@ -161,14 +161,15 @@ http {
 /** How long the gateway readiness probe keeps retrying a dependency that is still starting. */
 export const GATEWAY_READINESS_WAIT_MS = 60_000;
 const GATEWAY_READINESS_RETRY_MS = 1_000;
-const READINESS_KIND = /^(EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|TIMEOUT|HTTP_[1-5][0-9][0-9]|INVALID|RPC_ERROR|CHECK_FAILED)$/;
+const READINESS_KIND = /^(EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT|TIMEOUT|HTTP_[1-5][0-9][0-9]|INVALID|RPC_ERROR|CHECK_FAILED)$/;
 
 /**
  * Node script the installer runs inside the daemon container to prove the
  * gateway serves the daemon and Cowork management with the installation's
  * credential. Services restored by an update may still be starting, so a
  * transient result (a 502/503/504 without an RPC error body, a request
- * timeout, a refused or reset connection, a name not yet resolvable) is
+ * timeout, a refused, reset or dropped connection — including one dropped
+ * while the body is read — or a name not yet resolvable) is
  * retried until one total `deadlineMs` across every stage and attempt; each
  * request is capped to the time left. Anything else — a wrong instance,
  * 401/403, a well-formed RPC error under any status, any other status or an
@@ -179,7 +180,7 @@ export function gatewayReadinessScript({ base, instanceId, tokenPath = '/var/lib
   deadlineMs = GATEWAY_READINESS_WAIT_MS, retryMs = GATEWAY_READINESS_RETRY_MS }) {
   return `const fs=require('node:fs');const base=${JSON.stringify(base)};const instanceId=${JSON.stringify(instanceId)};
 const tokenPath=${JSON.stringify(tokenPath)};const deadline=Date.now()+${Number(deadlineMs)};const retryMs=${Number(retryMs)};
-const NET=['EAI_AGAIN','ENOTFOUND','ECONNREFUSED','ECONNRESET','ETIMEDOUT'];
+const NET=['EAI_AGAIN','ENOTFOUND','ECONNREFUSED','ECONNRESET','ETIMEDOUT','EPIPE','UND_ERR_SOCKET','UND_ERR_CONNECT_TIMEOUT'];
 class Check extends Error{constructor(kind,transient){super(kind);this.kind=kind;this.transient=transient;}}
 const status=s=>new Check('HTTP_'+s,s===502||s===503||s===504);
 const request=async(path,options)=>{const left=Math.max(1,Math.min(5000,deadline-Date.now()));
@@ -190,7 +191,9 @@ const json=async(path,options={})=>{const r=await request(path,options);
     // A well-formed RPC error is the service's answer, whatever the status: never retried.
     if(body&&typeof body==='object'&&body.version===1&&body.error)throw new Check('RPC_ERROR',false);throw status(r.status);}
   // The request signal also bounds the body: a stalled body is a timeout, not an invalid answer.
-  try{return await r.json();}catch(e){if(e?.name==='TimeoutError'||e?.name==='AbortError')throw new Check('TIMEOUT',true);throw new Check('INVALID',false);}};
+  // A connection dropped mid-body is transport, not content; only a parse failure is invalid.
+  try{return await r.json();}catch(e){if(e?.name==='TimeoutError'||e?.name==='AbortError')throw new Check('TIMEOUT',true);
+    const code=e?.cause?.code;if(NET.includes(code))throw new Check(code,true);throw new Check('INVALID',false);}};
 let stage='selection';
 const attempt=async()=>{
   stage='selection';const selection=await json('/daemon/selection');

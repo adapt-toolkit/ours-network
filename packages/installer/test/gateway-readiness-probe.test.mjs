@@ -29,6 +29,7 @@ async function gateway(t, routes = {}) {
       const handler = routes[path] ?? healthy[path];
       const answer = handler ? handler(req, calls[path]) : [404, { error: 'not found' }];
       if (answer === 'hang') return;
+      if (answer === 'reset-body') { res.writeHead(200, { 'content-type': 'application/json' }); res.write('{"identities":'); setTimeout(() => res.socket.destroy(), 50); return; }
       if (answer === 'stall-body') { res.writeHead(200, { 'content-type': 'application/json' }); res.write('{"identities":'); return; }
       const [status, body, type = 'application/json'] = answer;
       res.writeHead(status, { 'content-type': type });
@@ -102,6 +103,24 @@ test('a body that stalls after the headers is a bounded timeout, not an invalid 
   assert.equal(result.code, 1);
   assert.match(result.stdout, /^gateway-readiness:authenticated-daemon:TIMEOUT:\d+:transient$/);
   assert(result.elapsed < 800 + 1_500, `took ${result.elapsed}ms`);
+});
+
+test('a connection dropped while reading the body is transient and recovers', async t => {
+  const g = await gateway(t, { '/daemon/identities': (req, n) => n <= 2 ? 'reset-body' : healthy['/daemon/identities'](req) });
+  const result = await run(t, g.base);
+  assert.equal(result.code, 0, result.stdout);
+  assert.equal(g.calls['/daemon/identities'], 3);
+});
+
+// The deadline may cut the final attempt short, so its kind is the socket code
+// or TIMEOUT; either way it is transient and never INVALID.
+test('a persistently dropped body fails transiently with the socket code', async t => {
+  const g = await gateway(t, { '/daemon/identities': () => 'reset-body' });
+  const result = await run(t, g.base, { deadlineMs: 600 });
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /^gateway-readiness:authenticated-daemon:(UND_ERR_SOCKET|TIMEOUT):\d+:transient$/);
+  assert.match(describeGatewayReadiness(result.stdout), /^authenticated-daemon, (UND_ERR_SOCKET|TIMEOUT); still not ready/);
+  assert(g.calls['/daemon/identities'] >= 2, 'a dropped body must be retried');
 });
 
 test('a gateway that is not listening yet is waited for', async t => {
