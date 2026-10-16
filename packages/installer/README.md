@@ -707,7 +707,12 @@ Cloudflare management tokens are forbidden in these payloads.
 
 Docker and `cloudflared` are required for the fresh workflow. Supply a complete
 `--fleet-settings` JSON for noninteractive Fleet initialization, or answer its
-terminal prompts. Dry-run never initializes or enrolls Fleet. Read the matching
+terminal prompts. Dry-run never initializes or enrolls Fleet. A one-use App setup
+grant is redeemed only after argument, host-state and Fleet/`cloudflared`
+preflight checks pass; dry-run and rejected arguments leave the command usable
+until it expires. Checks that need the private envelope (resumed-workspace match,
+optional-profile Fleet capability) follow redemption, so their failure requires a
+fresh command. Ambiguous redemption is never retried automatically. Read the matching
 ours-app `server/DEPLOYMENT.md` for exact task source-policy generation, external
 Google/Cloudflare prerequisites and account-server setup. On uncertain enrollment
 check account status before requesting a new payload; do not reset identities or
