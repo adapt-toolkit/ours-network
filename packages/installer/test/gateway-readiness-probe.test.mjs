@@ -79,14 +79,35 @@ test('a daemon still starting behind the gateway is waited for, then passes', as
   assert.equal(g.calls['/daemon/identities'], 4);
 });
 
-test('persistent unavailability fails within one total deadline and names stage and status', async t => {
+// On the real clock the total deadline may also expire inside any request of
+// the last attempt, which is a legitimate TIMEOUT. This clock moves only by the
+// probe's retry waits, which return at once, so every request keeps its full
+// per-request budget and the run ends exactly when the next wait would cross
+// the deadline.
+const retryClock = retryMs => `{const start=Date.now();let waited=0;Date.now=()=>start+waited;
+const wait=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>{if(ms!==${Number(retryMs)})return wait(fn,ms,...args);waited+=ms;return wait(fn,0,...args);};}
+`;
+
+test('persistent unavailability fails at the total deadline and names stage, status and attempts', async t => {
   const g = await gateway(t, { '/daemon/identities': () => [503, '<html>503</html>', 'text/html'] });
+  const result = await probe(retryClock(10_000) + gatewayReadinessScript({
+    base: g.base, instanceId: INSTANCE, tokenPath: tokenFile(t), deadlineMs: 35_000, retryMs: 10_000 }));
+  assert.equal(result.code, 1, result.stderr);
+  // Attempts start at 0, 10, 20 and 30s; a fifth would start after the 35s deadline.
+  assert.equal(result.stdout, 'gateway-readiness:authenticated-daemon:HTTP_503:4:transient');
+  assert.equal(g.calls['/daemon/identities'], 4);
+  assert(result.elapsed < 10_000, `waited for real: ${result.elapsed}ms`);
+  assert.equal(describeGatewayReadiness(result.stdout),
+    `authenticated-daemon, HTTP 503; still not ready after 4 attempts over ${GATEWAY_READINESS_WAIT_MS / 1000}s`);
+});
+
+test('the total deadline caps the first request on the real clock', async t => {
+  const g = await gateway(t, { '/daemon/selection': () => 'hang' });
   const result = await run(t, g.base, { deadlineMs: 600 });
   assert.equal(result.code, 1);
-  assert.match(result.stdout, /^gateway-readiness:authenticated-daemon:HTTP_503:\d+:transient$/);
+  assert.equal(result.stdout, 'gateway-readiness:selection:TIMEOUT:1:transient');
+  assert.equal(g.calls['/daemon/selection'], 1);
   assert(result.elapsed < 600 + 1_500, `took ${result.elapsed}ms`);
-  assert.match(describeGatewayReadiness(result.stdout),
-    new RegExp(`^authenticated-daemon, HTTP 503; still not ready after \\d+ attempts over ${GATEWAY_READINESS_WAIT_MS / 1000}s$`));
 });
 
 test('a hanging request is capped by the remaining deadline', async t => {
