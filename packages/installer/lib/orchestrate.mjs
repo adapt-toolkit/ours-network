@@ -1081,38 +1081,51 @@ function insideUnit(effects, unit) {
   return cgroup === null || cgroup.split('\n').some(line => line.split(':').slice(2).join(':').split('/').includes(unit));
 }
 
+/** The platform's own restart command for a Fleet service definition. */
+function fleetRestartCommand(effects, service) {
+  return effects.platform.platform === 'darwin'
+    ? `launchctl kickstart -k gui/$(id -u)/${basename(service.path, '.plist')}`
+    : `systemctl --user try-restart ${basename(service.path)}`;
+}
+
 /**
  * An active Fleet service started from the replaced release keeps running it.
  * Restart each one that `service refresh` reports running a stale release once
  * its definition starts this release, then confirm with the read-only
- * `service check` that it now runs this release. A stopped service is never
- * started, and a service whose definition still points elsewhere, an unknown
- * running state (launchd, a stable launcher) or the unit hosting this run is
- * left alone with a notice naming the manual restart.
+ * `service check` that it now runs this release. The restart is systemd's
+ * `try-restart`, which acts only on an active unit, so a service stopped at
+ * any point is never started. A service whose definition still points
+ * elsewhere, launchd, or the unit hosting this run is left alone with a notice
+ * naming the manual restart; a running state Fleet cannot determine is never
+ * restarted and is reported as unconfirmed.
  */
 async function restartStaleFleetServices(effects, fleet, shown, env, services) {
+  const attention = [];
+  for (const service of services.filter(service => service.running === 'unknown' && (service.state === 'refreshed' || service.state === 'current'))) {
+    attention.push(service.service);
+    effects.out(warn(`Could not confirm which release the Fleet ${service.service} service is running; if it is running and was started before this update, restart it: ${fleetRestartCommand(effects, service)}${service.service === 'supervisor' ? ' (agents resume through their supervisor)' : ''}.`));
+  }
   const stale = services.filter(service => service.running === 'stale')
     .sort((a, b) => FLEET_RESTART_ORDER.indexOf(a.service) - FLEET_RESTART_ORDER.indexOf(b.service));
-  if (!stale.length) return [];
+  if (!stale.length) return attention;
   const linux = effects.platform.platform === 'linux';
-  const attention = [];
   const restarted = [];
   for (const service of stale) {
     const unit = basename(service.path);
-    const manual = `systemctl --user restart ${unit}`;
-    const left = why => { attention.push(service.service); effects.out(warn(`Running Fleet ${service.service} service still uses the previous release: ${why}; when convenient: ${manual}${service.service === 'supervisor' ? ' (agents resume through their supervisor)' : ''}.`)); };
+    const left = why => { attention.push(service.service); effects.out(warn(`Running Fleet ${service.service} service still uses the previous release: ${why}; when convenient: ${fleetRestartCommand(effects, service)}${service.service === 'supervisor' ? ' (agents resume through their supervisor)' : ''}.`)); };
     if (!linux) { left('this installer restarts Fleet services only under systemd'); continue; }
     if (service.state !== 'refreshed' && service.state !== 'current') { left('its definition does not start this release yet, so a restart would not help'); continue; }
     if (insideUnit(effects, unit)) { left('this installer runs inside it, so restarting it would stop this run'); continue; }
     try {
-      await effects.run('systemctl', ['--user', 'restart', unit], { timeout: FLEET_RESTART_TIMEOUT_MS });
+      // try-restart: a unit stopped since the report was taken stays stopped.
+      await effects.run('systemctl', ['--user', 'try-restart', unit], { timeout: FLEET_RESTART_TIMEOUT_MS });
       restarted.push(service);
     } catch (error) {
       left(`restarting it failed (${installerFailure(error)})`);
     }
   }
   if (!restarted.length) return attention;
-  let checked = [];
+  let checked;
   try {
     const result = await effects.run(fleet, ['service', 'check', '--json'], { env, allowCodes: [1] });
     checked = JSON.parse(result.stdout ?? '').services;
@@ -1126,7 +1139,9 @@ async function restartStaleFleetServices(effects, fleet, shown, env, services) {
     if (now?.running === 'current') effects.out(ok(`Restarted Fleet ${service.service} service; it now runs this release${service.service === 'supervisor' ? ' and resumes its agents' : ''}.`));
     else {
       attention.push(service.service);
-      effects.out(warn(`Restarted Fleet ${service.service} service, but it is ${now?.running === 'stopped' ? 'not running' : `not confirmed on this release (${now?.running ?? 'not reported'})`}; check: systemctl --user status ${basename(service.path)}`));
+      effects.out(warn(now?.running === 'stopped'
+        ? `Fleet ${service.service} service is not running after the restart (it was stopped, or exited); this installer did not start it. Check: systemctl --user status ${basename(service.path)}`
+        : `Restarted Fleet ${service.service} service, but it is not confirmed on this release (${now?.running ?? 'not reported'}); check: systemctl --user status ${basename(service.path)}`));
     }
   }
   return attention;

@@ -22,20 +22,21 @@ const TERMINAL = '0::/user.slice/user-1000.slice/user@1000.service/app.slice/app
 
 /**
  * A Fleet whose `service check` after the restarts reports `after` (default:
- * every restarted unit now runs this release), and a systemd whose restart of
- * a unit in `restartFails` fails.
+ * each unit restarted while active runs this release, a unit stopped since the
+ * report is stopped), and a systemd with `try-restart` semantics: a unit in
+ * `stoppedSinceReport` is inactive and stays so; one in `restartFails` fails.
  */
 function fleet({ services = [service()], fail = false, capabilities = [FLEET_MANAGED_CLI_CAPABILITY, FLEET_SERVICE_REFRESH_CAPABILITY],
   text = { [CONFIG]: 'api_version: ours.network/fleet/v2\n' }, cgroup = TERMINAL, after = null, restartFails = [], checkFails = false,
-  platform = 'linux' } = {}) {
+  platform = 'linux', stoppedSinceReport = [] } = {}) {
   const e = fx({ text: { ...text, ...(cgroup === null ? {} : { '/proc/self/cgroup': cgroup }) }, fleetCapabilities: capabilities, platform });
   const run = e.run;
   const restarted = new Set();
   e.run = async (cmd, args, opts = {}) => {
     const result = await run(cmd, args, opts);
     if (cmd === 'systemctl') {
-      if (args[1] === 'restart' && restartFails.includes(args[2])) throw new Error(`systemctl exited 1: Job for ${args[2]} failed`);
-      if (args[1] === 'restart') restarted.add(args[2]);
+      if (args[1] === 'try-restart' && restartFails.includes(args[2])) throw new Error(`systemctl exited 1: Job for ${args[2]} failed`);
+      if (args[1] === 'try-restart' && !stoppedSinceReport.includes(args[2])) restarted.add(args[2]);
       return result;
     }
     if (args[0] === 'managed-cli') return { ok: true, code: 0, stdout: managedReport };
@@ -44,7 +45,7 @@ function fleet({ services = [service()], fail = false, capabilities = [FLEET_MAN
     if (args[1] === 'check') {
       if (checkFails) throw new Error('ours-fleet exited 2');
       const now = after ?? services.map(entry => ({ ...entry, state: 'current',
-        running: restarted.has(UNITS[entry.service]) ? 'current' : entry.running }));
+        running: restarted.has(UNITS[entry.service]) ? 'current' : stoppedSinceReport.includes(UNITS[entry.service]) ? 'stopped' : entry.running }));
       return { ok: true, code: 0, stdout: JSON.stringify({ binPath: '/new/release/cli.js', services: now }) };
     }
     return { ok: true, code: 0, stdout: JSON.stringify({ binPath: '/new/release/cli.js', services }) };
@@ -62,7 +63,7 @@ test('a retained-configuration update re-points existing Fleet services at the n
   assert.deepEqual(e.recorder.ran, [
     [ARGS.acquiredFleet, 'managed-cli', 'setup', '--configuration', CONFIG, '--json'],
     [ARGS.acquiredFleet, 'service', 'refresh', '--json'],
-    ['systemctl', '--user', 'restart', 'ours-fleet.service'],
+    ['systemctl', '--user', 'try-restart', 'ours-fleet.service'],
     [ARGS.acquiredFleet, 'service', 'check', '--json'],
   ]);
   assert.deepEqual(e.recorder.ranEnv.at(-1), { OURS_CONFIG: TARGET.configPath });
@@ -73,7 +74,7 @@ test('a retained-configuration update re-points existing Fleet services at the n
 });
 
 test('a full Fleet initialization also refreshes, after init and policy setup', async () => {
-  const e = fleet({ services: [service({ running: 'current' }), service({ service: 'web', state: 'current', running: 'unknown' })] });
+  const e = fleet({ services: [service({ running: 'current' }), service({ service: 'web', state: 'current', running: 'current' })] });
   await runFleetPhase({ ...ARGS, fleetSettingsPath: '/home/me/private/fleet.json' }, e, { target: TARGET, isDefaultStateDir: false });
   assert.deepEqual(e.recorder.ran.map(call => call[1]), ['init', 'managed-cli', 'service']);
   assert.doesNotMatch(said(e), /Restarted|previous release/);
@@ -84,8 +85,8 @@ test('a Fleet version change restarts the active web service before the supervis
   const result = await runFleetServiceRefresh({ ...ARGS }, e, PLAN, TARGET);
   assert.equal(result.state, 'refreshed');
   assert.deepEqual(systemctl(e), [
-    ['systemctl', '--user', 'restart', 'ours-fleet-web.service'],
-    ['systemctl', '--user', 'restart', 'ours-fleet.service'],
+    ['systemctl', '--user', 'try-restart', 'ours-fleet-web.service'],
+    ['systemctl', '--user', 'try-restart', 'ours-fleet.service'],
   ]);
   for (const call of e.recorder.ran) for (const forbidden of ['up', 'start', 'stop', 'enable', 'disable', '_run', '_run-fleet'])
     assert.equal(call.includes(forbidden), false, call.join(' '));
@@ -118,7 +119,7 @@ test('a running service whose definition still starts another release is not res
     const result = await runFleetServiceRefresh({ ...ARGS }, e, PLAN, TARGET);
     assert.equal(result.state, 'attention', state);
     assert.deepEqual(systemctl(e), [], state);
-    assert.match(said(e), /Running Fleet supervisor service still uses the previous release: its definition does not start this release yet.*systemctl --user restart ours-fleet\.service \(agents resume through their supervisor\)/, state);
+    assert.match(said(e), /Running Fleet supervisor service still uses the previous release: its definition does not start this release yet.*systemctl --user try-restart ours-fleet\.service \(agents resume through their supervisor\)/, state);
   }
 });
 
@@ -127,8 +128,8 @@ test('an installer running inside the Fleet supervisor does not restart it, but 
     cgroup: '0::/user.slice/user-1000.slice/user@1000.service/app.slice/ours-fleet.service\n' });
   const result = await runFleetServiceRefresh({ ...ARGS }, e, PLAN, TARGET);
   assert.equal(result.state, 'attention');
-  assert.deepEqual(systemctl(e), [['systemctl', '--user', 'restart', 'ours-fleet-web.service']]);
-  assert.match(said(e), /Running Fleet supervisor service still uses the previous release: this installer runs inside it, so restarting it would stop this run; when convenient: systemctl --user restart ours-fleet\.service/);
+  assert.deepEqual(systemctl(e), [['systemctl', '--user', 'try-restart', 'ours-fleet-web.service']]);
+  assert.match(said(e), /Running Fleet supervisor service still uses the previous release: this installer runs inside it, so restarting it would stop this run; when convenient: systemctl --user try-restart ours-fleet\.service/);
   const unknown = fleet({ cgroup: null });
   await runFleetServiceRefresh({ ...ARGS }, unknown, PLAN, TARGET);
   assert.deepEqual(systemctl(unknown), [], 'an unreadable cgroup fails closed');
@@ -138,7 +139,7 @@ test('a failed restart, a service still on the old release, or an unconfirmed ch
   const failed = fleet({ restartFails: ['ours-fleet.service'] });
   const row = await runFleetPhase({ ...ARGS, disableFleetAgentsSetup: true }, failed, { target: TARGET, isDefaultStateDir: false });
   assert.equal(row.state, 'installed');
-  assert.match(said(failed), /still uses the previous release: restarting it failed \(.*Job for ours-fleet\.service failed.*\); when convenient: systemctl --user restart ours-fleet\.service/);
+  assert.match(said(failed), /still uses the previous release: restarting it failed \(.*Job for ours-fleet\.service failed.*\); when convenient: systemctl --user try-restart ours-fleet\.service/);
   assert.equal(systemctl(failed).length, 1, 'no second attempt');
 
   const old = fleet({ after: [service({ state: 'current', running: 'stale' })] });
@@ -147,19 +148,47 @@ test('a failed restart, a service still on the old release, or an unconfirmed ch
 
   const stopped = fleet({ after: [service({ state: 'current', running: 'stopped' })] });
   assert.equal((await runFleetServiceRefresh({ ...ARGS }, stopped, PLAN, TARGET)).state, 'attention');
-  assert.match(said(stopped), /Restarted Fleet supervisor service, but it is not running/);
+  assert.match(said(stopped), /Fleet supervisor service is not running after the restart .*this installer did not start it/);
 
   const unconfirmed = fleet({ checkFails: true });
   assert.equal((await runFleetServiceRefresh({ ...ARGS }, unconfirmed, PLAN, TARGET)).state, 'attention');
   assert.match(said(unconfirmed), /Restarted Fleet supervisor service, but could not confirm which release it runs .*; check: .*service check/);
 });
 
-test('outside systemd a stale running service is reported, not restarted', async () => {
+test('outside systemd a stale running service is reported with the launchd command, not restarted', async () => {
   const e = fleet({ platform: 'darwin', services: [service({ path: '/home/me/Library/LaunchAgents/network.ours.fleet.plist' })] });
   const result = await runFleetServiceRefresh({ ...ARGS }, e, PLAN, TARGET);
   assert.equal(result.state, 'attention');
   assert.deepEqual(systemctl(e), []);
-  assert.match(said(e), /still uses the previous release: this installer restarts Fleet services only under systemd/);
+  assert.match(said(e), /still uses the previous release: this installer restarts Fleet services only under systemd; when convenient: launchctl kickstart -k gui\/\$\(id -u\)\/network\.ours\.fleet \(agents resume/);
+});
+
+// Critic reproduction: refresh saw the unit running, then it was stopped before
+// the restart. A plain `restart` would start it; `try-restart` leaves it stopped.
+test('a service stopped after the report is not started by the restart', async () => {
+  const e = fleet({ stoppedSinceReport: ['ours-fleet.service'] });
+  const result = await runFleetServiceRefresh({ ...ARGS }, e, PLAN, TARGET);
+  assert.equal(result.state, 'attention');
+  assert.deepEqual(systemctl(e), [['systemctl', '--user', 'try-restart', 'ours-fleet.service']]);
+  assert(!systemctl(e).some(call => call.includes('restart') || call.includes('start')), 'never a plain restart or start');
+  assert.match(said(e), /Fleet supervisor service is not running after the restart \(it was stopped, or exited\); this installer did not start it/);
+  assert.doesNotMatch(said(e), /now runs this release/);
+});
+
+// Critic reproduction: a running state Fleet cannot determine must not pass as current.
+test('an undeterminable running state is reported as unconfirmed, never restarted', async () => {
+  for (const [platform, path, command] of [
+    ['linux', '/home/me/.config/systemd/user/ours-fleet-web.service', /systemctl --user try-restart ours-fleet-web\.service/],
+    ['darwin', '/home/me/Library/LaunchAgents/network.ours.fleet.web.plist', /launchctl kickstart -k gui\/\$\(id -u\)\/network\.ours\.fleet\.web/],
+  ]) {
+    const e = fleet({ platform, services: [service({ service: 'web', path, state: 'current', running: 'unknown' })] });
+    const result = await runFleetServiceRefresh({ ...ARGS }, e, PLAN, TARGET);
+    assert.equal(result.state, 'attention', platform);
+    assert.deepEqual(systemctl(e), [], platform);
+    assert.deepEqual(refreshes(e).map(call => call[2]), ['refresh'], platform);
+    assert.match(said(e), /Could not confirm which release the Fleet web service is running; if it is running and was started before this update, restart it: /, platform);
+    assert.match(said(e), command, platform);
+  }
 });
 
 test('unchanged and unrecognized definitions are reported, not replaced', async () => {
