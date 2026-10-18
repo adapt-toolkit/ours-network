@@ -4,14 +4,14 @@
   "type": "module",
   "dependencies": {
     "@cucumber/cucumber": "13.2.1",
-    "@ours.network/sdk": "3.8.1-nightly.18",
-    "@ours.network/cli": "2.8.1-nightly.16",
-    "@ours.network/fleet": "1.2.0-nightly.68",
-    "@ours.network/mcp": "1.2.0-nightly.14",
-    "@ours.network/codex": "1.2.0-nightly.14",
-    "@ours.network/claude-code": "1.2.0-nightly.14",
-    "@ours.network/hermes": "1.2.0-nightly.14",
-    "@ours.network/fleet-codex": "1.2.0-nightly.68",
-    "@ours.network/fleet-claude-code": "1.2.0-nightly.68"
+    "@ours.network/sdk": "4.1.1-nightly.1",
+    "@ours.network/cli": "3.1.1-nightly.1",
+    "@ours.network/fleet": "1.2.0-nightly.73",
+    "@ours.network/mcp": "1.2.0-nightly.15",
+    "@ours.network/codex": "1.2.0-nightly.15",
+    "@ours.network/claude-code": "1.2.0-nightly.15",
+    "@ours.network/hermes": "1.2.0-nightly.15",
+    "@ours.network/fleet-codex": "1.2.0-nightly.73",
+    "@ours.network/fleet-claude-code": "1.2.0-nightly.73"
   }
 }
