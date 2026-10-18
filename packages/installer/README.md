@@ -186,8 +186,9 @@ release set (SDK `4.1.1-nightly.1`, CLI `3.1.1-nightly.1`, daemon
 `4.1.1-nightly.1`). The isolated host CLI uses published SDK
 `4.1.1-nightly.1` and CLI `3.1.1-nightly.1`, including the shared gateway
 profile resolver. `releases/nightly.json` binds both selections to verified
-SHA512 integrities. Gateway-only Fleet/MCP release adoption is still pending;
-see [GATEWAY_SETUP.md](GATEWAY_SETUP.md). Mixed or unselected nested ours
+SHA512 integrities. Fleet and the MCP harness packages are selected on the
+same SDK/CLI graph; installer publication and rollout are separate steps, see
+[GATEWAY_SETUP.md](GATEWAY_SETUP.md). Mixed or unselected nested ours
 versions remain rejected within each selected graph. An explicit `--sources`
 override remains available for development.
 
