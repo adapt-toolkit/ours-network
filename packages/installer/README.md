@@ -690,6 +690,8 @@ Fleet and Messenger task builds. Do not advertise it as available in `@latest`.
 Use an owned private directory and a 0600 downloaded payload:
 
 ```sh
+OURS_ACCOUNT_ORIGIN=https://accounts.example.com \
+OURS_WORKSPACE_HOST=alice-home.workspaces.example.com \
 node /absolute/task-ours-network/packages/installer/install.mjs \
   --setup-workspace-file /absolute/private/workspace.payload \
   --workspace-fleet-bin /absolute/task-ours-fleet/dist/cli.js \
@@ -719,9 +721,18 @@ Google/Cloudflare prerequisites and account-server setup. On uncertain enrollmen
 check account status before requesting a new payload; do not reset identities or
 replay a consumed invitation.
 
-Workspace setup accepts exactly https://app.ours.network and the controlled test
-account origin https://app.ours-tunnel.com. To move an existing same workspace to
-the other origin, obtain a fresh payload from the moved account server and add
+Workspace setup requires the trusted invocation configuration `OURS_ACCOUNT_ORIGIN`
+to name the exact HTTPS account origin. The generated App command also carries
+`OURS_WORKSPACE_HOST`, the exact account-record hostname; it takes precedence over
+`OURS_WORKSPACE_DOMAIN`. An operator bootstrap without an exact host may instead
+configure `OURS_WORKSPACE_DOMAIN`, accepting one DNS label under that suffix. A
+missing configuration has no historical-domain fallback. Never obtain these trust
+values from a grant, redeemed envelope, or query. Grant origins are checked before
+redemption; envelope origins and hosts are checked before setup/enrollment, and
+the same trusted configuration is forwarded to Fleet. A v2 grant has no hostname.
+
+To move an existing same workspace to another configured origin, obtain a fresh
+payload from the moved account server, select that trusted origin explicitly, and add
 `--workspace-migrate-app-origin`. Fleet verifies the signed binding receipt before
 changing local origin trust, preserves identities/config/device records, and
 restarts the runtime. An implicit origin change is rejected. Browser account
