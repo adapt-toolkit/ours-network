@@ -5,7 +5,7 @@ import { engineName, runContainer } from './container-engine.mjs';
 import { isPluginOnly } from './product.mjs';
 
 const assets = new URL('../assets/', import.meta.url);
-const files = ['scripts/runtime/recover.mjs', 'scripts/runtime/dependency-ready.mjs',
+const files = ['scripts/runtime/recover.mjs', 'scripts/runtime/dependency-ready.mjs', 'scripts/runtime/healthcheck.mjs',
   ...['entrypoint.sh', 'start-telegram.sh', 'start-cowork.sh', 'start-messenger.sh'].map(f => `scripts/runtime/${f}`)];
 const owned = (path, directory = false) => {
   const s = lstatSync(path);

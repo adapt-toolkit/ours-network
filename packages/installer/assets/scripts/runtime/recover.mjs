@@ -3,11 +3,23 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { readdirSync, readFileSync } from 'node:fs';
 
+// Exit status after the recovery budget is spent: the container stops and its
+// restart policy, the only outer supervisor, starts a fresh one.
+export const EXHAUSTED_EXIT_CODE = 75;
+// Probe output is never logged; only these fixed classifications survive.
+const PROBE_CLASSES = new Set(['liveness:unreachable', 'liveness:timeout', 'liveness:http',
+  'readiness:timeout', 'readiness:auth', 'readiness:instance', 'readiness:capability', 'readiness:error']);
+const probeClass = output => {
+  const match = /^OURS_PROBE ([a-z:]+)$/m.exec(output);
+  return match && PROBE_CLASSES.has(match[1]) ? match[1] : null;
+};
+
 // The container owns recovery; no Docker socket, host service or stored state is
 // accessed. Every launch re-enters the locked, provenance-checking entrypoint.
 export async function runRecovery({ command, health, dependency, graceMs = 90_000,
   intervalMs = 5_000, probeTimeoutMs = 15_000,
-  killAfterMs = 20_000, retries = 3, failures = 3, ownerPidEnvironment, log = console.error }) {
+  killAfterMs = 20_000, retries = 3, failures = 3, healthyResetMs = 600_000,
+  maxBackoffMs = 300_000, ownerPidEnvironment, log = console.error }) {
   let stopping = false, active;
   const probes = new Set();
   const controller = new AbortController();
@@ -42,10 +54,10 @@ export async function runRecovery({ command, health, dependency, graceMs = 90_00
   };
   const launch = (args, probe = false) => {
     const child = spawn(args[0], args.slice(1), { detached: true,
-      stdio: probe ? 'ignore' : 'inherit', env: { ...process.env, OURS_RECOVERY_CHILD: '1' } });
+      stdio: probe ? ['ignore', 'pipe', 'ignore'] : 'inherit', env: { ...process.env, OURS_RECOVERY_CHILD: '1' } });
     child.probe = probe;
     child.done = new Promise(resolve => {
-      child.once('error', () => resolve(1));
+      child.once('error', () => { child.spawnFailed = true; resolve(1); });
       child.once('exit', (code) => resolve(code ?? 1));
     });
     return child;
@@ -78,17 +90,24 @@ export async function runRecovery({ command, health, dependency, graceMs = 90_00
       await sleep(25);
     }
   };
+  // Resolves { ok, reason, ms }; reason is ok, timeout, spawn, an allowlisted
+  // class reported by the probe, or exit:<code>.
   const probe = async args => {
+    const started = Date.now();
     const child = launch(args, true);
     probes.add(child);
-    let timer;
+    let output = '', timer, timedOut = false;
+    child.stdout?.on('data', chunk => { if (output.length < 512) output += chunk.toString('utf8').slice(0, 512); });
     const code = await Promise.race([child.done, new Promise(resolve => {
-      timer = setTimeout(() => { signalGroup(child, 'SIGKILL'); resolve(1); }, probeTimeoutMs);
+      timer = setTimeout(() => { timedOut = true; signalGroup(child, 'SIGKILL'); resolve(1); }, probeTimeoutMs);
     })]);
     clearTimeout(timer);
     await terminate(child);
+    child.stdout?.destroy();
     probes.delete(child);
-    return code === 0;
+    const ok = code === 0 && !timedOut;
+    const reason = ok ? 'ok' : timedOut ? 'timeout' : child.spawnFailed ? 'spawn' : probeClass(output) ?? `exit:${code}`;
+    return { ok, reason, ms: Date.now() - started };
   };
   const stop = () => { stopping = true; controller.abort(); signalGroup(active, 'SIGTERM', false); for (const child of probes) signalGroup(child, 'SIGKILL'); };
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
@@ -96,15 +115,17 @@ export async function runRecovery({ command, health, dependency, graceMs = 90_00
     let recoveries = 0;
     while (!stopping) {
       if (recoveries > retries) {
-        log(`OURS recovery exhausted (${retries} automatic attempts); children stopped. Inspect logs and use server restart after correcting the cause.`);
-        while (!stopping) await pause(60_000);
+        // Never strand a running container without its service: exit visibly
+        // and let the container restart policy apply its own backoff.
+        log(`OURS recovery exhausted (${retries} automatic attempts without ${Math.round(healthyResetMs / 1000)}s of continuous readiness); children stopped. Exiting with status ${EXHAUSTED_EXIT_CODE} for the container restart policy.`);
+        process.exitCode = EXHAUSTED_EXIT_CODE;
         break;
       }
       // A dependency outage is a wait, not a local failure. Never spend a
       // consumer's circuit on daemon boot order, restart or unavailability.
       if (dependency) {
         let waiting = false;
-        while (!stopping && !await probe(dependency)) {
+        while (!stopping && !(await probe(dependency)).ok) {
           if (!waiting) log('OURS waiting for the authenticated daemon; recovery budget retained');
           waiting = true;
           await pause(intervalMs);
@@ -121,12 +142,27 @@ export async function runRecovery({ command, health, dependency, graceMs = 90_00
       active.done.then(() => { exited = true; generation.abort(); });
       const watch = async () => {
         await wait(graceMs);
-        let failed = 0;
+        let failed = 0, healthySince = null;
         while (monitoring && !stopping && !exited) {
-          const healthy = await probe(health);
+          const result = await probe(health);
           if (!monitoring || stopping || exited) break;
-          if (!healthy && dependency && !await probe(dependency)) failed = 0;
-          else failed = healthy ? 0 : failed + 1;
+          if (result.ok) {
+            failed = 0;
+            healthySince ??= Date.now();
+            // Only an unbroken readiness interval restores the budget; any
+            // failed or timed-out probe, including a dependency outage, restarts it.
+            if (recoveries && Date.now() - healthySince >= healthyResetMs) {
+              log(`OURS recovery budget restored after ${Math.round((Date.now() - healthySince) / 1000)}s of continuous readiness`);
+              recoveries = 0;
+            }
+          } else {
+            healthySince = null;
+            if (dependency && !(await probe(dependency)).ok) failed = 0;
+            else {
+              failed += 1;
+              log(`OURS health probe failed (${failed}/${failures}): ${result.reason} after ${result.ms}ms`);
+            }
+          }
           if (failed >= failures) { log('OURS service health failed repeatedly; stopping children before recovery'); return; }
           await wait(intervalMs);
         }
@@ -139,8 +175,9 @@ export async function runRecovery({ command, health, dependency, graceMs = 90_00
       controller.signal.removeEventListener('abort', cancel);
       active = undefined;
       if (!stopping) {
-        if (!dependency || await probe(dependency)) recoveries++;
-        await pause(intervalMs);
+        if (!dependency || (await probe(dependency)).ok) recoveries++;
+        // Exponential backoff between attempts; a dependency outage keeps the base interval.
+        await pause(Math.min(maxBackoffMs, intervalMs * 2 ** Math.max(0, recoveries - 1)));
       }
     }
   } finally {
