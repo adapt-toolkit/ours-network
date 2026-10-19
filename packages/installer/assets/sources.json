@@ -17,8 +17,8 @@
         "integrity": "sha512-7M1nlEP7u+Cx0tGTIyGa/Lreul9OWIoI4sRWyg4z9nGWnpvSRUWcDFN04UfNlmQ3GVnoU14rRdBO1lVNPTPT/g=="
       },
       "@ours.network/cowork": {
-        "version": "1.3.4-nightly.20261019.033881c",
-        "integrity": "sha512-3dEYziNfGJr9duVs4STERKxXFeFHpLNDRUr82aYi6qIinQGcAr+ihU9S/ri32hzSIf24PgVm8o44f6h5i7zJZA=="
+        "version": "1.3.4-nightly.20261019.ebbff0f",
+        "integrity": "sha512-Zm6jELDgpQ/oxIOVupq254TT5LLOt62UUpZD10yZ10DLMMJB4qyHLgPgd7KCCusy9ecUTcBs7IIfsxS/rfcISg=="
       },
       "@ours.network/messenger-server": {
         "version": "1.0.31-nightly.23",
@@ -75,7 +75,7 @@
     },
     "@ours.network/cowork": {
       "type": "npm",
-      "version": "1.3.4-nightly.20261019.033881c"
+      "version": "1.3.4-nightly.20261019.ebbff0f"
     },
     "@ours.network/messenger-server": {
       "type": "npm",

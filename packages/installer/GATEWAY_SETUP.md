@@ -13,7 +13,7 @@ The nightly manifest selects one published dependency graph: SDK
 `4.1.1-nightly.2`, CLI `3.1.1-nightly.2`, daemon `4.1.1-nightly.2`,
 Fleet `1.2.0-nightly.76`, MCP/Codex/Claude Code `1.2.0-nightly.16`,
 Telegram `1.0.1-nightly.14`, Messenger `1.0.31-nightly.23`, Notifications
-`0.3.1-nightly.6`, and Cowork `1.3.4-nightly.20261019.033881c`. Exact archive checksums are retained in
+`0.3.1-nightly.6`, and Cowork `1.3.4-nightly.20261019.ebbff0f`. Exact archive checksums are retained in
 `releases/nightly.json`; the host CLI uses the same SDK/CLI pair.
 
 The coordinated installer release must include these pins before using the
