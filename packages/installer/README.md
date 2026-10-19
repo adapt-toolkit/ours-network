@@ -757,7 +757,7 @@ Existing installation records keep their ports and identities. A listener acquir
 by another process after preflight still causes startup to fail safely; no foreign
 process is stopped and no retained installation is silently moved.
 
-Workspace setup pins Fleet `1.2.0-nightly.75` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
+Workspace setup pins Fleet `1.2.0-nightly.76` with its recorded registry integrity. This release includes first-time Fleet setup through the host API for the account App, direct App access to the workspace services with the device credential, v2 positional one-use grants and automatic QR/connection-code output from `ours-fleet setup-tunnel`, optional private file/stdin inputs for legacy v1 payloads, a separate `ours-fleet link-device` command for additional devices, host prerequisite checks before the one-time workspace proof (`setup-tunnel --check`), `setup-tunnel --resume` to finish a setup that stopped after the host saved its private pending setup record (not when the proof's answer was lost, or after the setup window expired with an unconfirmed non-default port), and persists the available Fleet loopback port used by the workspace tunnel. It also accepts a setup-generated configuration left behind after the host enrollment state was removed, runs the host Codex when it is at least as new as the packaged one, offers only the Codex models the signed-in account can use, and removes the temporary setup contact after confirmation. Fleet serves no pages and opens no browser: every screen is in the App. Fleet also serves the workspace notification routes, produces notifications through the server gateway with the imported producer credential, accepts the App's device credential on the notification presence socket so an open App receives no push, and defaults agent wakes to `monitor.interrupt: after_tool` (Hermes: no interrupt; role snapshots saved before this default keep no interrupt). Existing installation identities and configured ports remain retained; a retained-port collision fails safely.
 
 ### App tunnel setup prerelease sequencing
 
@@ -774,7 +774,7 @@ connection code automatically; the App checks readiness and opens the code field
 Private `--file`/`--stdin` transports remain optional and are the only transports
 for legacy v1 payloads with long-lived credentials.
 
-The nightly installer release manifest selects published Fleet `1.2.0-nightly.75`
+The nightly installer release manifest selects published Fleet `1.2.0-nightly.76`
 and its actual registry integrity through the normal release manifest/source-policy
 generators. This release includes v2 argument and private-input support. The former
 nightly.41 selection predates this capability. Merge and publish the repinned
@@ -804,10 +804,17 @@ Three consecutive local health failures or a child exit stop its entire process
 group (TERM, then KILL within 20 seconds) before restarting. Cowork's detached
 workers carry an explicit supervisor-PID marker; recovery also kills those
 owned groups and waits for them to stop before launching a replacement. Each container start
-allows three automatic child recovery attempts. Exhaustion leaves the container
-running but unhealthy, with its children stopped and a diagnostic in its logs.
-Correct the cause and use `ours-install server restart --state-dir PATH` to
-reset that circuit; `server start` alone does not reset a running circuit holder.
+allows three automatic child recovery attempts, separated by exponential backoff
+(5 seconds doubling, at most 5 minutes). Ten minutes of continuous readiness
+restores that budget; any failed or timed-out probe, including one during a
+daemon outage, restarts the interval. Exhaustion stops the children and exits the
+container with status 75, so `unless-stopped` restarts it with Docker's own
+backoff and `docker inspect` reports the restart count and exit code. The
+container is never left running without its service. Each failed probe is logged
+with a fixed classification only (`timeout`, `exit:N`, `spawn`, or a daemon
+`liveness:`/`readiness:` class such as `liveness:unreachable` or
+`readiness:auth`), never probe output. The daemon probe separates anonymous
+liveness (`/selection` answers) from authenticated readiness.
 Consumers wait for authenticated readiness of their pinned daemon instance and
 do not spend their recovery budget on a daemon outage. The gateway uses Docker
 process recovery only; a gateway hang requires operator restart.
