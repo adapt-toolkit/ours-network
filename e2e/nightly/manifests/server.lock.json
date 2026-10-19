@@ -7,12 +7,12 @@
       "name": "ours-nightly-e2e-server",
       "dependencies": {
         "@cucumber/cucumber": "13.2.1",
-        "@ours.network/cli": "3.1.1-nightly.2",
-        "@ours.network/cowork": "1.3.4-nightly.20261019.ebbff0f",
-        "@ours.network/daemon": "4.1.1-nightly.2",
-        "@ours.network/messenger-server": "1.0.31-nightly.23",
-        "@ours.network/sdk": "4.1.1-nightly.2",
-        "@ours.network/tg-connector": "1.0.1-nightly.14"
+        "@ours.network/cli": "3.1.1-nightly.4",
+        "@ours.network/cowork": "1.3.4-nightly.20261019.b0d73c0",
+        "@ours.network/daemon": "4.1.1-nightly.4",
+        "@ours.network/messenger-server": "1.0.31-nightly.25",
+        "@ours.network/sdk": "4.1.1-nightly.4",
+        "@ours.network/tg-connector": "1.0.1-nightly.16"
       }
     },
     "node_modules/@adapt-toolkit/sdk": {
@@ -298,12 +298,12 @@
       }
     },
     "node_modules/@ours.network/cli": {
-      "version": "3.1.1-nightly.2",
-      "resolved": "https://registry.npmjs.org/@ours.network/cli/-/cli-3.1.1-nightly.2.tgz",
-      "integrity": "sha512-I7GUnNRazl+UI6c+J6aZ28mrByGzcB+0mOuL5L5j5T1fG67nqPnruGntDTTSCb9IToXsK9yNsEh6KSpoMlqGEg==",
+      "version": "3.1.1-nightly.4",
+      "resolved": "https://registry.npmjs.org/@ours.network/cli/-/cli-3.1.1-nightly.4.tgz",
+      "integrity": "sha512-pwsVYMd6k99/8IW8cMI4rGRcL9kMnFwJbur8dXnThBevm91WeAdloSCPdc6oeAK0inyC01Gbxp1P3sQFNxfOXQ==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
-        "@ours.network/sdk": "4.1.1-nightly.2"
+        "@ours.network/sdk": "4.1.1-nightly.4"
       },
       "bin": {
         "ours": "dist/cli.js"
@@ -313,17 +313,17 @@
       }
     },
     "node_modules/@ours.network/cowork": {
-      "version": "1.3.4-nightly.20261019.ebbff0f",
-      "resolved": "https://registry.npmjs.org/@ours.network/cowork/-/cowork-1.3.4-nightly.20261019.ebbff0f.tgz",
-      "integrity": "sha512-Zm6jELDgpQ/oxIOVupq254TT5LLOt62UUpZD10yZ10DLMMJB4qyHLgPgd7KCCusy9ecUTcBs7IIfsxS/rfcISg==",
+      "version": "1.3.4-nightly.20261019.b0d73c0",
+      "resolved": "https://registry.npmjs.org/@ours.network/cowork/-/cowork-1.3.4-nightly.20261019.b0d73c0.tgz",
+      "integrity": "sha512-Jfi4xMjxyVhJ6W8D253nrXZm3Jy51X4enk0+Wk5gZf1noW0ea73fBNEPANTq62CBfP9vum3Bf2LttEUKi/vZeA==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
-        "@ours.network/sdk": "4.1.1-nightly.2",
         "ajv": "8.20.0",
-        "better-sqlite3": "13.0.3",
+        "zod": "^3.23.8",
         "react": "18.3.1",
         "react-dom": "18.3.1",
-        "zod": "^3.23.8"
+        "better-sqlite3": "13.0.3",
+        "@ours.network/sdk": "4.1.1-nightly.4"
       },
       "bin": {
         "ours-cowork": "dist/cli.js"
@@ -333,17 +333,17 @@
       }
     },
     "node_modules/@ours.network/daemon": {
-      "version": "4.1.1-nightly.2",
-      "resolved": "https://registry.npmjs.org/@ours.network/daemon/-/daemon-4.1.1-nightly.2.tgz",
-      "integrity": "sha512-GXMDhq4hB5WuwW2mhOAhRPJP2SnbyouenGomzq4hn0ipUZ97zU7Z32/AjtDia860qtf7fz4lykk6ZZP6u3CEGw==",
+      "version": "4.1.1-nightly.4",
+      "resolved": "https://registry.npmjs.org/@ours.network/daemon/-/daemon-4.1.1-nightly.4.tgz",
+      "integrity": "sha512-PP4ynhx7rcwPccoMOB3giipHSynkNmJeObwY1nsg2Dlb/TiiyyFL+ACwbRtqH9MFcb4zanj+iHrLN3uT59+Nsw==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
-        "@adapt-toolkit/sdk": "0.12.1",
-        "@adapt-toolkit/sdk-native": "0.12.1",
-        "@ours.network/sdk": "4.1.1-nightly.2",
-        "ajv": "^8.20.0",
         "pg": "^8.16.3",
-        "ws": "^8.22.0"
+        "ws": "^8.22.0",
+        "ajv": "^8.20.0",
+        "@ours.network/sdk": "4.1.1-nightly.4",
+        "@adapt-toolkit/sdk": "0.12.1",
+        "@adapt-toolkit/sdk-native": "0.12.1"
       },
       "bin": {
         "ours-daemon": "dist/cli.js"
@@ -356,16 +356,16 @@
       }
     },
     "node_modules/@ours.network/messenger-server": {
-      "version": "1.0.31-nightly.23",
-      "resolved": "https://registry.npmjs.org/@ours.network/messenger-server/-/messenger-server-1.0.31-nightly.23.tgz",
-      "integrity": "sha512-iaLHvUziO8z3HDEO2W9zpKMhlET1/SdGGJOrQvbVgxms7Ac0XwiHqr5EqJVvKQaLcoMRZAhpvUXkED/HPyRwrQ==",
+      "version": "1.0.31-nightly.25",
+      "resolved": "https://registry.npmjs.org/@ours.network/messenger-server/-/messenger-server-1.0.31-nightly.25.tgz",
+      "integrity": "sha512-TX4yBhlCiSUQ+Q3aIYLbIXjAEWbvxPc7rXQEoaU7hQoxq95AL0wJL8xoBV/VYOirDXwPhBG3fzctchEheLELYA==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
-        "@eslint-community/regexpp": "4.12.2",
-        "@ours.network/sdk": "4.1.1-nightly.2",
+        "ws": "^8.21.0",
         "parse5": "^8.0.1",
         "web-push": "^3.6.7",
-        "ws": "^8.21.0"
+        "@ours.network/sdk": "4.1.1-nightly.4",
+        "@eslint-community/regexpp": "4.12.2"
       },
       "bin": {
         "ours-messenger-server": "dist/cli.js"
@@ -375,9 +375,9 @@
       }
     },
     "node_modules/@ours.network/sdk": {
-      "version": "4.1.1-nightly.2",
-      "resolved": "https://registry.npmjs.org/@ours.network/sdk/-/sdk-4.1.1-nightly.2.tgz",
-      "integrity": "sha512-5wN1tWvS0ZoJ05doEkZhnsr4FFlCvOddbSh2pWo3sPWrCmeGCyH/yJC0dcI05bgWpYYnI8hkD6HsaanEMgo5ig==",
+      "version": "4.1.1-nightly.4",
+      "resolved": "https://registry.npmjs.org/@ours.network/sdk/-/sdk-4.1.1-nightly.4.tgz",
+      "integrity": "sha512-kTWkRd38YCQmPbgQ7LxvgVEe20de9m80L1wnrgddZ+rnQkjD8NQ314yimnGd/4UH83ucv6M4GE6Z8KKHPvN2Rw==",
       "license": "FSL-1.1-Apache-2.0",
       "workspaces": [
         ".",
@@ -388,13 +388,13 @@
       }
     },
     "node_modules/@ours.network/tg-connector": {
-      "version": "1.0.1-nightly.14",
-      "resolved": "https://registry.npmjs.org/@ours.network/tg-connector/-/tg-connector-1.0.1-nightly.14.tgz",
-      "integrity": "sha512-7M1nlEP7u+Cx0tGTIyGa/Lreul9OWIoI4sRWyg4z9nGWnpvSRUWcDFN04UfNlmQ3GVnoU14rRdBO1lVNPTPT/g==",
+      "version": "1.0.1-nightly.16",
+      "resolved": "https://registry.npmjs.org/@ours.network/tg-connector/-/tg-connector-1.0.1-nightly.16.tgz",
+      "integrity": "sha512-8GqFZeW1qcuXd8ZLSbxQ3Gl4ju1Eez3EEh9Pua85xYg3lQdIopQYkV2SVamIeMKdV/+CccszkTvXJrkWD1mV/w==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
-        "@ours.network/sdk": "4.1.1-nightly.2",
-        "undici": "^7.28.0"
+        "undici": "^7.28.0",
+        "@ours.network/sdk": "4.1.1-nightly.4"
       },
       "bin": {
         "ours-tg-connector": "dist/cli.js"
