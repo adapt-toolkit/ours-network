@@ -4,11 +4,11 @@
   "type": "module",
   "dependencies": {
     "@cucumber/cucumber": "13.2.1",
-    "@ours.network/sdk": "4.1.1-nightly.2",
-    "@ours.network/cli": "3.1.1-nightly.2",
-    "@ours.network/daemon": "4.1.1-nightly.2",
-    "@ours.network/tg-connector": "1.0.1-nightly.14",
-    "@ours.network/cowork": "1.3.4-nightly.20261019.ebbff0f",
-    "@ours.network/messenger-server": "1.0.31-nightly.23"
+    "@ours.network/sdk": "4.1.1-nightly.4",
+    "@ours.network/cli": "3.1.1-nightly.4",
+    "@ours.network/daemon": "4.1.1-nightly.4",
+    "@ours.network/tg-connector": "1.0.1-nightly.16",
+    "@ours.network/cowork": "1.3.4-nightly.20261019.b0d73c0",
+    "@ours.network/messenger-server": "1.0.31-nightly.25"
   }
 }
