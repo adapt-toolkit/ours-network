@@ -8,7 +8,7 @@
     "@ours.network/cli": "3.1.1-nightly.2",
     "@ours.network/daemon": "4.1.1-nightly.2",
     "@ours.network/tg-connector": "1.0.1-nightly.14",
-    "@ours.network/cowork": "1.3.4-nightly.20261019.033881c",
+    "@ours.network/cowork": "1.3.4-nightly.20261019.ebbff0f",
     "@ours.network/messenger-server": "1.0.31-nightly.23"
   }
 }
