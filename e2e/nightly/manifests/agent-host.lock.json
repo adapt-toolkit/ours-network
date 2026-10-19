@@ -7,11 +7,11 @@
       "name": "ours-nightly-e2e-agent-host",
       "dependencies": {
         "@cucumber/cucumber": "13.2.1",
-        "@ours.network/cli": "3.1.1-nightly.1",
-        "@ours.network/cowork": "1.3.4-nightly.20261017.1109a5a",
-        "@ours.network/fleet": "1.2.0-nightly.75",
-        "@ours.network/fleet-codex": "1.2.0-nightly.75",
-        "@ours.network/sdk": "4.1.1-nightly.1"
+        "@ours.network/cli": "3.1.1-nightly.2",
+        "@ours.network/cowork": "1.3.4-nightly.20261019.033881c",
+        "@ours.network/fleet": "1.2.0-nightly.76",
+        "@ours.network/fleet-codex": "1.2.0-nightly.76",
+        "@ours.network/sdk": "4.1.1-nightly.2"
       }
     },
     "node_modules/@agentclientprotocol/claude-agent-acp": {
@@ -830,12 +830,12 @@
       }
     },
     "node_modules/@ours.network/cli": {
-      "version": "3.1.1-nightly.1",
-      "resolved": "https://registry.npmjs.org/@ours.network/cli/-/cli-3.1.1-nightly.1.tgz",
-      "integrity": "sha512-4LhkIlZWh6+V38Qd/PTaTvAfzY7PYu+q3yRAnjRef+Cgk6HEZatMpk1wL0ZbcrZrxhSvrHR0C82R0OyiXvChIg==",
+      "version": "3.1.1-nightly.2",
+      "resolved": "https://registry.npmjs.org/@ours.network/cli/-/cli-3.1.1-nightly.2.tgz",
+      "integrity": "sha512-I7GUnNRazl+UI6c+J6aZ28mrByGzcB+0mOuL5L5j5T1fG67nqPnruGntDTTSCb9IToXsK9yNsEh6KSpoMlqGEg==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
-        "@ours.network/sdk": "4.1.1-nightly.1"
+        "@ours.network/sdk": "4.1.1-nightly.2"
       },
       "bin": {
         "ours": "dist/cli.js"
@@ -845,12 +845,12 @@
       }
     },
     "node_modules/@ours.network/cowork": {
-      "version": "1.3.4-nightly.20261017.1109a5a",
-      "resolved": "https://registry.npmjs.org/@ours.network/cowork/-/cowork-1.3.4-nightly.20261017.1109a5a.tgz",
-      "integrity": "sha512-yOH/uL4vpp4bABmtfazO787epUNX6DX16J9yzLlx3y6DXEKF+kpqfLe2cD4xP1fVL+8LAZgIKCDTnzYk7Kfp3g==",
+      "version": "1.3.4-nightly.20261019.033881c",
+      "resolved": "https://registry.npmjs.org/@ours.network/cowork/-/cowork-1.3.4-nightly.20261019.033881c.tgz",
+      "integrity": "sha512-3dEYziNfGJr9duVs4STERKxXFeFHpLNDRUr82aYi6qIinQGcAr+ihU9S/ri32hzSIf24PgVm8o44f6h5i7zJZA==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
-        "@ours.network/sdk": "4.1.1-nightly.1",
+        "@ours.network/sdk": "4.1.1-nightly.2",
         "ajv": "8.20.0",
         "better-sqlite3": "13.0.3",
         "react": "18.3.1",
@@ -865,16 +865,16 @@
       }
     },
     "node_modules/@ours.network/fleet": {
-      "version": "1.2.0-nightly.75",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-1.2.0-nightly.75.tgz",
-      "integrity": "sha512-Y2347sOdfcWYdG+dbxGQx0krOyMjWvw7wn3JCSsCYzUyZm2BdlVah08H3P4DfIp/xknM+PwozZSzN3OdGTHWtA==",
+      "version": "1.2.0-nightly.76",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-1.2.0-nightly.76.tgz",
+      "integrity": "sha512-WdmIB7ozrpu92C52pO34e4RJTk3CO2Yjw5jOICeZfxbmYMU2A9S9/YtbxX2WEg5Tpn0vG/7Z98ZUxafztOcwGw==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.3.0",
         "@fastify/websocket": "^11.2.0",
-        "@ours.network/cli": "3.1.1-nightly.1",
-        "@ours.network/mcp": "1.2.0-nightly.15",
-        "@ours.network/sdk": "4.1.1-nightly.1",
+        "@ours.network/cli": "3.1.1-nightly.2",
+        "@ours.network/mcp": "1.2.0-nightly.16",
+        "@ours.network/sdk": "4.1.1-nightly.2",
         "commander": "^12.1.0",
         "fastify": "^5.4.0",
         "qrcode": "1.5.4",
@@ -895,9 +895,9 @@
       }
     },
     "node_modules/@ours.network/fleet-codex": {
-      "version": "1.2.0-nightly.75",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet-codex/-/fleet-codex-1.2.0-nightly.75.tgz",
-      "integrity": "sha512-YwHN3fqsrmiE/YtNDcfwboobyYUU7L0TI9L922SSnmK1hBM7UvBn5XX+z/Q1EdaXtDXSEVR+3XCisbp0BU/6wA==",
+      "version": "1.2.0-nightly.76",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet-codex/-/fleet-codex-1.2.0-nightly.76.tgz",
+      "integrity": "sha512-wr2f8o0wy3/gsLJSUzrqmjy6lsb0dbOh6DqN0P41hjz/bXNC3V9PL/R4ubkVsHY6O9JxdGBhoTTsfppQAent6g==",
       "license": "FSL-1.1-Apache-2.0",
       "bin": {
         "ours-fleet-codex-install": "bin/ours-fleet-codex-install.mjs"
@@ -925,13 +925,13 @@
       }
     },
     "node_modules/@ours.network/mcp": {
-      "version": "1.2.0-nightly.15",
-      "resolved": "https://registry.npmjs.org/@ours.network/mcp/-/mcp-1.2.0-nightly.15.tgz",
-      "integrity": "sha512-FBdXrQqOdYr/dL31oWuMk10L9Wt8OILi3nHBoaxzxdwaGCsEy5Twq3lgOA96aUimuSNOO2a8Tek85rA/EDUnbg==",
+      "version": "1.2.0-nightly.16",
+      "resolved": "https://registry.npmjs.org/@ours.network/mcp/-/mcp-1.2.0-nightly.16.tgz",
+      "integrity": "sha512-ZwMXnvcfThrreMJMOALCpznU66SsvM5Gqeo/m8s/xyUWHCsEPXUeFvxn2iTVLzVcSj7ujfKZqCY5S+TL4rF90w==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
-        "@ours.network/sdk": "4.1.1-nightly.1",
+        "@ours.network/sdk": "4.1.1-nightly.2",
         "zod": "^3.23.8"
       },
       "bin": {
@@ -942,9 +942,9 @@
       }
     },
     "node_modules/@ours.network/sdk": {
-      "version": "4.1.1-nightly.1",
-      "resolved": "https://registry.npmjs.org/@ours.network/sdk/-/sdk-4.1.1-nightly.1.tgz",
-      "integrity": "sha512-IL9n7mP6CjXCms4gaJYHWdQ/Ube75i4dY7qpcYPhBA9CWZd2NVF1ZCtQam/FWa8KZKmwNPDec2xZ/vHAaJ7rcg==",
+      "version": "4.1.1-nightly.2",
+      "resolved": "https://registry.npmjs.org/@ours.network/sdk/-/sdk-4.1.1-nightly.2.tgz",
+      "integrity": "sha512-5wN1tWvS0ZoJ05doEkZhnsr4FFlCvOddbSh2pWo3sPWrCmeGCyH/yJC0dcI05bgWpYYnI8hkD6HsaanEMgo5ig==",
       "license": "FSL-1.1-Apache-2.0",
       "workspaces": [
         ".",
