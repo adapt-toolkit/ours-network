@@ -804,10 +804,17 @@ Three consecutive local health failures or a child exit stop its entire process
 group (TERM, then KILL within 20 seconds) before restarting. Cowork's detached
 workers carry an explicit supervisor-PID marker; recovery also kills those
 owned groups and waits for them to stop before launching a replacement. Each container start
-allows three automatic child recovery attempts. Exhaustion leaves the container
-running but unhealthy, with its children stopped and a diagnostic in its logs.
-Correct the cause and use `ours-install server restart --state-dir PATH` to
-reset that circuit; `server start` alone does not reset a running circuit holder.
+allows three automatic child recovery attempts, separated by exponential backoff
+(5 seconds doubling, at most 5 minutes). Ten minutes of continuous readiness
+restores that budget; any failed or timed-out probe, including one during a
+daemon outage, restarts the interval. Exhaustion stops the children and exits the
+container with status 75, so `unless-stopped` restarts it with Docker's own
+backoff and `docker inspect` reports the restart count and exit code. The
+container is never left running without its service. Each failed probe is logged
+with a fixed classification only (`timeout`, `exit:N`, `spawn`, or a daemon
+`liveness:`/`readiness:` class such as `liveness:unreachable` or
+`readiness:auth`), never probe output. The daemon probe separates anonymous
+liveness (`/selection` answers) from authenticated readiness.
 Consumers wait for authenticated readiness of their pinned daemon instance and
 do not spend their recovery budget on a daemon outage. The gateway uses Docker
 process recovery only; a gateway hang requires operator restart.
