@@ -1,0 +1,118 @@
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { validateRelease } from './release-manifest.mjs';
+import { assertArchiveCapabilities } from './release-capabilities.mjs';
+const root=new URL('../',import.meta.url);
+const pkg=JSON.parse(readFileSync(new URL('packages/installer/package.json',root)));
+const channel=pkg.version.includes('-nightly.')?'nightly':'stable';
+const release=validateRelease(JSON.parse(readFileSync(new URL(`releases/${channel}.json`,root))),pkg.version);
+const dir=mkdtempSync(join(tmpdir(),'ours-release-verify-'));
+const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('OURS_')&&!key.toLowerCase().startsWith('npm_config_')));
+mkdirSync(join(dir,'home'));Object.assign(env,{HOME:join(dir,'home'),NPM_CONFIG_USERCONFIG:join(dir,'home/.npmrc'),NPM_CONFIG_CACHE:join(dir,'cache')});
+const npm=(args,cwd=dir)=>execFileSync('npm',[...args,'--registry=https://registry.npmjs.org'],{cwd,env,encoding:'utf8',timeout:180_000,maxBuffer:8*1024*1024});
+try {
+ const archives={};
+ for(const [name,p] of Object.entries(release.packages)) {
+  const [packed]=JSON.parse(npm(['pack',`${name}@${p.version}`,'--ignore-scripts','--json']));
+  if(packed.name!==name||packed.version!==p.version)throw new Error(`Registry package identity mismatch: ${name}`);
+  const sri=`sha512-${createHash('sha512').update(readFileSync(join(dir,packed.filename))).digest('base64')}`;
+  if(sri!==p.integrity)throw new Error(`Registry archive integrity mismatch: ${name}`);
+  assertArchiveCapabilities(name,p.version,join(dir,packed.filename),{strict:process.argv.includes('--require-all-capabilities')});
+  archives[name]=packed.filename;
+ }
+ writeFileSync(join(dir,'package.json'),JSON.stringify({name:'ours-release-set-verification',version:'0.0.0',private:true,dependencies:Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,p.version]))}));
+ npm(['install','--package-lock-only','--ignore-scripts','--no-audit','--no-fund']);
+ const lock=JSON.parse(readFileSync(join(dir,'package-lock.json')));
+ for(const [path,p] of Object.entries(lock.packages)) {
+  const match=path.match(/(?:^|\/)node_modules\/(@ours\.network\/[^/]+)$/);
+  if(!match)continue;
+  const selected=release.packages[match[1]];
+  if(!selected||p.version!==selected.version||p.integrity!==selected.integrity)throw new Error(`Unselected nested ours artifact: ${path}@${p.version}`);
+ }
+ writeFileSync(new URL('packages/installer/assets/release-lock.json',root),JSON.stringify(lock,null,2)+'\n');
+ if(process.argv.includes('--installed')) {
+  const { verifyReleaseGraph }=await import('../packages/installer/assets/scripts/maintenance/release-graph.mjs');
+  const policy={release,packages:Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,{type:'npm',version:p.version}]))};
+  npm(['ci','--ignore-scripts','--no-audit','--no-fund']);
+  verifyReleaseGraph(dir,policy);
+  // The server installs original registry archives through local file references.
+  rmSync(join(dir,'node_modules'),{recursive:true,force:true});
+  rmSync(join(dir,'package-lock.json'));
+  writeFileSync(join(dir,'package.json'),JSON.stringify({name:'ours-vendor-set-verification',version:'0.0.0',private:true,dependencies:Object.fromEntries(Object.entries(archives).map(([name,file])=>[name,`file:${file}`]))}));
+  npm(['install','--ignore-scripts','--no-audit','--no-fund']);
+  verifyReleaseGraph(dir,policy);
+  console.log('Verified actual registry and local-vendor installed ours graphs without lifecycle scripts.');
+ }
+
+ if (release.hostCli) {
+  const { hostCliPolicy, verifyReleaseGraph } = await import('../packages/installer/assets/scripts/maintenance/release-graph.mjs');
+  const selected = hostCliPolicy({ release, packages: Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,{type:'npm',version:p.version}])) });
+  const hostRoot = join(dir, 'home/.ours-client-install/host-cli');
+  mkdirSync(hostRoot, { recursive: true, mode: 0o700 });
+  writeFileSync(join(hostRoot, 'sources.json'), JSON.stringify(selected));
+  for (const [name,p] of Object.entries(release.hostCli)) {
+   const [packed] = JSON.parse(npm(['pack', `${name}@${p.version}`, '--ignore-scripts', '--json'], hostRoot));
+   if (packed.name !== name || packed.version !== p.version || 'sha512-' + createHash('sha512').update(readFileSync(join(hostRoot, packed.filename))).digest('base64') !== p.integrity) throw new Error('Host CLI artifact identity/integrity mismatch');
+  }
+  writeFileSync(join(hostRoot,'package.json'),JSON.stringify({name:'ours-host-cli-verification',private:true,dependencies:Object.fromEntries(Object.entries(release.hostCli).map(([name,p])=>[name,p.version]))}));
+  npm(['install','--ignore-scripts','--no-audit','--no-fund'],hostRoot);
+  verifyReleaseGraph(hostRoot,selected);
+  if (process.argv.includes('--installed')) {
+   const { publishClientCli } = await import('../packages/installer/lib/client-cli.mjs');
+   const effects = { home: join(dir,'home'), out: console.log, run: async (command,args) => {
+    if (command !== 'npm') throw new Error('Unexpected command');
+    return { stdout: npm(['--prefix',join(dir,'home'),...args]) };
+   }};
+   const packagePath=join(hostRoot,'node_modules/@ours.network/cli');
+   await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
+   // Installing/reinstalling optional integrations must not select their CLI for the host command.
+   npm(['install','--global','--prefix',join(dir,'home'),'--ignore-scripts','--no-audit','--no-fund', '@ours.network/fleet@'+release.packages['@ours.network/fleet'].version]);
+   await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
+   await publishClientCli(effects,packagePath,{policy:selected,isolated:true});
+   const { realEffects } = await import('../packages/installer/lib/effects.mjs');
+   const acquisition = realEffects({ home: join(dir,'home'), env: { ...env, NPM_CONFIG_PREFIX: join(dir,'home') }, out: console.log });
+   const sourcesPath=join(dir,'client-sources.json');
+   writeFileSync(sourcesPath,JSON.stringify({release,packages:Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,{type:'npm',version:p.version}]))}));
+   const profilePath=join(dir,'home/.ours-client/profile.json');
+   const first=await acquisition.acquireClientPackages(profilePath,sourcesPath,[]);
+   const second=await acquisition.acquireClientPackages(profilePath,sourcesPath,[]);
+   if (first.cliBin !== second.cliBin) throw new Error('Client-only retry changed retained CLI acquisition');
+   const { realpathSync } = await import('node:fs');
+   if (realpathSync(first.cliBin) !== realpathSync(join(dir,'home/bin/ours'))) throw new Error('Client acquisition published a different CLI');
+   console.log('Verified actual client-only acquisition, private host CLI publication and retry after global Fleet installation.');
+   if (release.channel === 'nightly') {
+    const { realEffects } = await import('../packages/installer/lib/effects.mjs');
+    const clientHome = join(dir, 'client-home');
+    mkdirSync(clientHome, {mode:0o700});
+    const acquisition = realEffects({ home: clientHome, env: {...env, HOME:clientHome, NPM_CONFIG_PREFIX:clientHome}, out:console.log });
+    const sourcesPath = join(clientHome,'sources.json');
+    writeFileSync(sourcesPath,JSON.stringify({release,packages:Object.fromEntries(Object.entries(release.packages).map(([name,p])=>[name,{type:'npm',version:p.version}]))}));
+    const profilePath = join(clientHome,'.ours-client/profile.json');
+    const integrations = ['fleet','codex','claude-code'];
+    const options = {gatewayServerUrl:'http://127.0.0.1:4050/ours'};
+    const first = await acquisition.acquireClientPackages(profilePath,sourcesPath,integrations,options);
+    const second = await acquisition.acquireClientPackages(profilePath,sourcesPath,integrations,options);
+    if (first.fleetBin !== second.fleetBin || first.cliBin !== second.cliBin) throw new Error('Client retry changed retained acquisition');
+    for (const name of ['codex','claude-code']) await acquisition.prepareClientMarketplace(name,first.localPackages[name]);
+    const { dirname } = await import('node:path');
+    const acquisitionRoot = dirname(dirname(dirname(first.fleetBin)));
+    const hiddenLock = join(acquisitionRoot,'node_modules/.package-lock.json');
+    const retained = readFileSync(hiddenLock);
+    const tampered = JSON.parse(retained);
+    tampered.packages['node_modules/@ours.network/sdk'].version = '0.0.0';
+    writeFileSync(hiddenLock,JSON.stringify(tampered));
+    let rejected = false;
+    try { await acquisition.acquireClientPackages(profilePath,sourcesPath,integrations,options); } catch (error) { if (!/Release graph refused/.test(error.message)) throw error; rejected = true; }
+    finally { writeFileSync(hiddenLock,retained); }
+    if (!rejected) throw new Error('Client acquisition accepted SDK drift');
+    console.log('Verified client release acquisition, Fleet gateway capability, both marketplaces, retry and graph tamper rejection.');
+   }
+
+  }
+ }
+
+ console.log('Verified ten official archive identities/SHA512 and complete nested ours version/integrity selection. Runtime qualification remains separate.');
+} finally {rmSync(dir,{recursive:true,force:true});}

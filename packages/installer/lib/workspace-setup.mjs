@@ -1,0 +1,154 @@
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join,resolve } from 'node:path';
+import {parseSetupArgs} from './setup-options.mjs';
+import {preflightSetup} from './setup.mjs';
+// Invocation configuration is trusted; an incoming grant/envelope never selects its authority.
+const dnsName=value=>typeof value==='string' && value.length<=253 && value.includes('.') && value.split('.').every(label=>/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+function configuredOrigin(value,env) {
+  const configured=env.OURS_ACCOUNT_ORIGIN;
+  let url;try{url=new URL(configured);}catch{return false;}
+  return typeof configured==='string' && url.protocol==='https:' && url.origin===configured && !url.username && !url.password && !url.hostname.includes('*') && value===configured;
+}
+function configuredHost(value,env) {
+  if(!dnsName(value))return false;
+  if(env.OURS_WORKSPACE_HOST!==undefined)return dnsName(env.OURS_WORKSPACE_HOST) && value===env.OURS_WORKSPACE_HOST;
+  const domain=env.OURS_WORKSPACE_DOMAIN;
+  return dnsName(domain) && value.endsWith('.'+domain) && !value.slice(0,-domain.length-1).includes('.');
+}
+/** Base64 is transport, not encryption. Broad provider credentials are never accepted. */
+export function decodeWorkspacePayload(encoded,now=Date.now(),env={}) {
+  if(typeof encoded!=='string' || encoded.length>32768 || !/^[A-Za-z0-9_-]+$/.test(encoded.trim()))throw Error('Invalid private workspace payload');
+  let p;try{p=JSON.parse(Buffer.from(encoded.trim(),'base64url'));}catch{throw Error('Invalid private workspace payload');}
+  const allowed=['version','appOrigin','hostname','rootName','fullName','name','surname','connectorToken','invitation','serverCid','challenge','renewal'];
+  if(!p || typeof p!=='object' || Array.isArray(p) || Object.keys(p).some(k=>!allowed.includes(k)) || p.version!==1 || !configuredOrigin(p.appOrigin,env) || !configuredHost(p.hostname,env) || !/^[a-z0-9-]{2,30}@[a-z0-9-]{2,30}$/.test(p.rootName) || !/^[a-f0-9]{64}$/i.test(p.serverCid))throw Error('Invalid workspace payload boundary');
+  for(const key of ['fullName','name','surname']){const value=p[key];if(value==null || value===''){p[key]=null;continue;}if(typeof value!=='string' || value.length>8192 || /[\x00-\x1f\x7f]/.test(value))throw Error('Invalid private workspace profile');p[key]=value.trim()||null;}
+  if(p.renewal!==undefined && typeof p.renewal!=='boolean')throw Error('Invalid workspace renewal');
+  for(const key of ['connectorToken','invitation'])if(!(key==='connectorToken' && p[key]===undefined && p.renewal===true) && (typeof p[key]!=='string' || !p[key].trim() || p[key].length>8192 || /[\x00-\x1f\x7f]/.test(p[key])))throw Error('Invalid private workspace payload');
+  if(!p.challenge || !['nonce','accountId','workspaceId'].every(k=>/^[\w-]{43}$/.test(p.challenge[k])) || !Number.isFinite(p.challenge.expiresAt) || p.challenge.expiresAt<=now || p.challenge.expiresAt>now+16*60000)throw Error('Workspace challenge expired or invalid');
+  return p;
+}
+// A v1 envelope is local. A v2 grant is one-use, so it is parsed here and redeemed only after the
+// payload-independent checks in runWorkspaceSetup (arguments, host state, read-only setup and Fleet
+// settings preflight, Fleet/tunnel availability, dry run) pass.
+function workspaceGrant(input,env){
+  if(typeof input!=='string' || !/^[A-Za-z0-9_-]{1,32768}$/.test(input.trim()))throw Error('Invalid workspace setup input');
+  let grant;try{grant=JSON.parse(Buffer.from(input.trim(),'base64url'));}catch{throw Error('Invalid workspace setup input');}
+  if(grant?.version===1)return null;
+  const now=Date.now();
+  if(grant?.version!==2 || Object.keys(grant).sort().join(',')!=='appOrigin,code,expiresAt,version'
+    || !configuredOrigin(grant.appOrigin,env)
+    || !/^[A-Za-z0-9_-]{43}$/.test(grant.code) || !Number.isSafeInteger(grant.expiresAt) || grant.expiresAt<=now || grant.expiresAt>now+16*60000)
+    throw Error('Workspace setup grant is invalid or expired; get a fresh command from the App');
+  return grant;
+}
+// Redeem only the minimal public grant; the private envelope stays in process/file transport.
+async function redeemWorkspaceGrant(grant,request,env){
+  let response;
+  try{response=await request(grant.appOrigin+'/account-api/workspace-install-redeem',{method:'POST',redirect:'error',credentials:'omit',signal:AbortSignal.timeout(30000),headers:{'Content-Type':'application/json',Origin:grant.appOrigin},body:JSON.stringify({code:grant.code})});}
+  catch{throw Error('Workspace grant redemption could not be confirmed; check the App before requesting a fresh command');}
+  if(!response.ok || response.redirected){await response.body?.cancel();throw Error(response.status===410?'Workspace grant expired or was already used; get a fresh command from the App':'Workspace grant redemption failed; check the App before requesting a fresh command');}
+  let result;
+  try{
+    const chunks=[];let bytes=0;
+    if(!response.body)throw Error();
+    for await(const chunk of response.body){bytes+=chunk.length;if(bytes>33792)throw Error();chunks.push(chunk);}
+    result=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  }catch{throw Error('Invalid workspace setup response; get a fresh command from the App');}
+  if(typeof result?.payload!=='string' || !/^[A-Za-z0-9_-]{1,32768}$/.test(result.payload))throw Error('Invalid workspace setup response');
+  const payload=decodeWorkspacePayload(result.payload,Date.now(),env);
+  if(payload.appOrigin!==grant.appOrigin)throw Error('Workspace setup response origin mismatch');
+  return result.payload;
+}
+export function extractWorkspaceArgs(args){
+  const flags=['--setup-workspace','--setup-workspace-file','--workspace-fleet-bin','--fleet-settings'];const values={},rest=[];
+  for(let i=0;i<args.length;i++){const at=args[i].indexOf('='),flag=at<0?args[i]:args[i].slice(0,at);if(!flags.includes(flag)){rest.push(args[i]);continue;}if(values[flag]!==undefined)throw Error('Duplicate workspace flag');const value=at<0?args[++i]:args[i].slice(at+1);if(!value || value.startsWith('--'))throw Error('Workspace flag requires a value');values[flag]=value;}
+  if(values['--setup-workspace'] && values['--setup-workspace-file'])throw Error('Choose one private payload transport');
+  return {values,rest};
+}
+export async function runWorkspaceSetup(args,effects,runSetup,request=fetch){
+  const migrateAppOrigin=args.includes('--workspace-migrate-app-origin');
+  if(args.filter(arg=>arg==='--workspace-migrate-app-origin').length>1)throw Error('Duplicate workspace migration flag');
+  const {values,rest}=extractWorkspaceArgs(args.filter(arg=>arg!=='--workspace-migrate-app-origin'));let encoded;
+  if(values['--setup-workspace-file']){const path=resolve(values['--setup-workspace-file']),stat=lstatSync(path);if(!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1 || stat.uid!==process.getuid?.() || stat.size>32768 || (stat.mode&0o077)!==0)throw Error('Setup file must be owned and private (chmod 600)');encoded=readFileSync(path,'utf8').trim();}
+  else if(values['--setup-workspace']==='-'){const chunks=[];let bytes=0;for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>32768)throw Error('Private payload too large');chunks.push(chunk);}encoded=Buffer.concat(chunks).toString().trim();}
+  else encoded=values['--setup-workspace'];
+  const authority={OURS_ACCOUNT_ORIGIN:effects.env?.OURS_ACCOUNT_ORIGIN,OURS_WORKSPACE_HOST:effects.env?.OURS_WORKSPACE_HOST,OURS_WORKSPACE_DOMAIN:effects.env?.OURS_WORKSPACE_DOMAIN};
+  const grant=workspaceGrant(encoded,authority);
+  let p=grant?null:decodeWorkspacePayload(encoded,Date.now(),authority);const fleetBin=values['--workspace-fleet-bin'] || 'ours-fleet';
+  const parsed=parseSetupArgs(rest,{home:effects.home,validate:false});
+  if(parsed.scope==='server')throw Error('Workspace setup requires all or client scope');
+  if(parsed.identityName!==undefined || parsed.integrations!==undefined)throw Error('Workspace setup supplies identity and client integration selection');
+  // Check feature availability before changing an installation. Task acceptance uses
+  // an exact task-built binary; @latest cannot contain an unmerged feature.
+  const root=parsed.stateDir || join(effects.home,'.ours-network','workspace'),fleetSettings=values['--fleet-settings'];
+  // The saved gateway profile selects the actual host, including non-default server state.
+  // Reuse it directly: server/client reinstall would also rewrite or downgrade retained setup.
+  const managed=effects.readManagedClientProfile?.();
+  const managedPath=join(effects.home,'.ours-client','profile.json');
+  const existingProfile=parsed.config || effects.env?.OURS_CONFIG || (managed?managedPath:undefined);
+  const existing=Boolean(existingProfile);
+  const marker=join(effects.home,'.ours-client','workspace-setup-pending.json');
+  let pending;
+  if(existsSync(marker)){
+    const stat=lstatSync(marker);
+    if(!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1 || stat.uid!==process.getuid?.() || (stat.mode&0o077)!==0 || stat.size>4096)throw Error('Workspace retry marker must be owned and private');
+    pending=JSON.parse(readFileSync(marker,'utf8'));
+  }
+  const resumable=()=>{if(pending && (pending.version!==1 || pending.accountId!==p.challenge.accountId || pending.workspaceId!==p.challenge.workspaceId || pending.appOrigin!==p.appOrigin))throw Error('Pending fresh installation belongs to another workspace; identity was not changed. Resume the original workspace, or back up the host and remove only ~/.ours-client/workspace-setup-pending.json to treat it as existing (preserving its profile)');};
+  if(p)resumable();
+  const preserveProfile=existing && !pending;
+  if(existing && parsed.scope && parsed.scope!=='client')throw Error('Existing workspace setup requires client scope; root identity was not changed');
+  if(!existing && !pending && (existsSync(join(root,'installation.json')) || existsSync(join(effects.home,'fleet.yaml'))))throw Error('Existing host requires its gateway client profile; no new root was created');
+  const options=[...rest];
+  if(!parsed.scope)options.push('--scope',existing?'client':'all');
+  if(existing && !parsed.config)options.push('--config',existingProfile);
+  if(!existing){if(!parsed.mode)options.push('--mode','docker');if(!parsed.stateDir)options.push('--state-dir',root);}
+  options.push('--integrations','none');
+  // The App assigns the root identity on redemption. Before that, a well-formed stand-in validates the
+  // remaining options; explicit username/hostname options derive their own identity instead.
+  const setupOptions=identity=>existing || identity===undefined?options:[...options,'--identity-name',identity];
+  const standIn=parsed.localUsername===undefined?'workspace@preview':undefined;
+  parseSetupArgs(setupOptions(p?.rootName ?? standIn),{home:effects.home});
+  const fleetHome=effects.env?.OURS_FLEET_HOME || effects.home,fleetConfig=join(fleetHome,'fleet.yaml');
+  // Fresh setup and Fleet initialization would reject these only after redemption.
+  if(grant)await preflightSetup(existing?null:setupOptions(standIn),effects,{fleetSettingsPath:existsSync(fleetConfig)?undefined:fleetSettings});
+  const capable=async capability=>{
+    const version=await effects.run(fleetBin,['version','--json'],{sensitive:true});
+    let info;try{info=JSON.parse(version.stdout);}catch{}
+    return version.ok && Array.isArray(info?.capabilities) && info.capabilities.includes(capability);
+  };
+  const optionalProfile=()=>!preserveProfile && Boolean(p.fullName || !p.name || !p.surname);
+  const requireOptionalProfile=async()=>{if(optionalProfile() && !await capable('workspace.enroll.optional-profile-v1'))throw Error('Optional workspace profile requires an updated Fleet; update ours-fleet before retrying setup'+(grant?' with a fresh command from the App':''));};
+  if(p)await requireOptionalProfile();
+  if(preserveProfile && !await capable('workspace.enroll.preserve-profile-v1'))throw Error('Existing-host setup requires a profile-preserving Fleet release; nothing was changed');
+  const help=await effects.run(fleetBin,['workspace-enroll','--help'],{sensitive:true});if(!help.ok)throw Error('Fleet workspace enrollment is unavailable');
+  const tunnel=await effects.run('cloudflared',['--version'],{sensitive:true});if(!tunnel.ok)throw Error('Tunnel connector is unavailable');
+  if(options.includes('--dry-run')){
+    if(grant)effects.out('Preview only: the workspace setup grant was not redeemed; this command remains usable until it expires.');
+    if(!existing)return runSetup(setupOptions(p?.rootName ?? standIn),effects);return 0;
+  }
+  if(grant){
+    // Checks below depend on the private envelope, so a failure here leaves the grant spent.
+    encoded=await redeemWorkspaceGrant(grant,request,authority);p=decodeWorkspacePayload(encoded,Date.now(),authority);
+    resumable();
+    parseSetupArgs(setupOptions(p.rootName),{home:effects.home});
+    await requireOptionalProfile();
+  }
+  if(!existing){
+    if(!pending){mkdirSync(join(effects.home,'.ours-client'),{recursive:true,mode:0o700});writeFileSync(marker,JSON.stringify({version:1,accountId:p.challenge.accountId,workspaceId:p.challenge.workspaceId,appOrigin:p.appOrigin})+'\n',{mode:0o600,flag:'wx'});}
+    const result=await runSetup(setupOptions(p.rootName),effects);if(result!==0)return result;
+  }
+  const selected=existingProfile || effects.readManagedClientProfile();if(!selected)throw Error('Workspace client profile was not installed');
+  const env={...authority,OURS_CONFIG:existingProfile || managedPath};
+  for(const key of ['OURS_PORT','OURS_STATE_DIR','OURS_API_TOKEN','OURS_DAEMON_ID','OURS_DAEMON_URL','OURS_DAEMON_CREDENTIAL_PATH'])env[key]=undefined;
+  if(!existsSync(fleetConfig)){
+    const initArgs=['init',...(fleetSettings?['--settings',fleetSettings]:[])];
+    const initialized=fleetSettings?await effects.run(fleetBin,initArgs,{env}):await effects.runInteractive(fleetBin,initArgs,{env});if(!initialized.ok)throw Error('Fleet configuration incomplete');
+  }
+  mkdirSync(root,{recursive:true,mode:0o700});const temporary=mkdtempSync(join(root,'.workspace-payload-'));chmodSync(temporary,0o700);
+  const payloadFile=join(temporary,'payload');writeFileSync(payloadFile,encoded,{mode:0o600,flag:'wx'});
+  try{const enrolled=await effects.run(fleetBin,['workspace-enroll','--file',payloadFile,...(preserveProfile?['--preserve-profile']:[]),...(migrateAppOrigin?['--migrate-app-origin']:[])],{env,stream:true,sensitive:true});if(!enrolled.ok)throw Error('Workspace enrollment incomplete; existing identity and profile were retained');}
+  finally{rmSync(temporary,{recursive:true,force:true});}
+  if(pending || !existing)rmSync(marker);
+  effects.out('Workspace proof submitted. Check verified binding/tunnel status in your account, then scan or paste the private device code.');return 0;
+}

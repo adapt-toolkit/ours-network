@@ -1,0 +1,1785 @@
+import { selectServerPorts } from './server-ports.mjs';
+import { qualifyPodman } from './podman-preflight.mjs';
+import { engineName, bindPodman, runContainer, nativeBuildCommands } from './container-engine.mjs';
+// ours-install v3 — the real side effects.
+//
+// Every mutation the installer can perform lives here and nowhere else, behind
+// the same contract lib/orchestrate.mjs is tested against. Keeping them in one
+// small file is the point: it is the only place to audit for "does this touch
+// the machine", and it is what makes the fake used in the tests a faithful
+// stand-in rather than an approximation.
+//
+// NOTE: nothing here runs systemctl. systemd is reached ONLY through
+// `ours daemon install-service`, which owns the marker check, the baked
+// state-directory guard and the enable/reload. The installer never touches a
+// unit file or the service manager directly.
+
+import { publishClientCli } from './client-cli.mjs';
+import { commandFailure } from './diagnostics.mjs';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { randomUUID, createHash } from 'node:crypto';
+import { dirname, join, resolve } from 'node:path';
+import { connect as netConnect } from 'node:net';
+import { clientPackageNames, maintenanceServices, installationPaths, validateInstallation, consumerServiceState, unitNameForStateDir, launchdLabelForStateDir, messengerServicePlan, selectSourcePackages, resolveSourcePolicy, SERVER_SERVICES } from './plan.mjs';
+import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
+import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress, gatewayReadinessScript, describeGatewayReadiness } from './gateway.mjs';
+import { createServerOnboarding, retainedCredentialRefused } from './server-onboarding.mjs';
+import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
+import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
+import { classifyHarnessProbe } from './logic.mjs';
+import { qualifyDockerRuntime, refreshDockerPolicyCopy } from './docker-runtime-repair.mjs';
+import { refreshDockerRecovery, recoveryCompose, reconcileDockerRecovery } from './docker-recovery.mjs';
+import { reportBootReadiness } from './boot-readiness.mjs';
+import { classifyStateDir } from './detect.mjs';
+import { isPluginOnly, serverRole, pluginOnlyCompose, PLUGIN_ONLY_COMPOSE } from './product.mjs';
+import { OWNERS_FILE, OWNED_IMAGES_FILE, addOwner, ownedImagesRecord, changedImages } from './ownership.mjs';
+import { IMAGE_TARGETS } from './removal-plan.mjs';
+import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
+import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
+
+/** GET http://127.0.0.1:<port>/state-dir — the unauthenticated identity probe. */
+/** Whether anything accepts TCP connections on a loopback port: 'refused', 'open', or 'unknown' (timeout or other error). */
+function portState(port, { timeoutMs = 1500 } = {}) {
+  return new Promise(done => {
+    const socket = netConnect({ host: '127.0.0.1', port });
+    const finish = state => { socket.destroy(); done(state); };
+    socket.setTimeout(timeoutMs, () => finish('unknown'));
+    socket.once('connect', () => finish('open'));
+    socket.once('error', error => finish(error?.code === 'ECONNREFUSED' ? 'refused' : 'unknown'));
+  });
+}
+
+async function probePort(port, { timeoutMs = 1500 } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/state-dir`, { signal: controller.signal });
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+    const body = await res.json();
+    if (typeof body?.stateDir !== 'string') return { ok: false, reason: 'no stateDir in reply' };
+    return {
+      ok: true,
+      stateDir: body.stateDir,
+      version: typeof body.version === 'string' ? body.version : null,
+      compat: Number.isInteger(body.compat) ? body.compat : null,
+    };
+  } catch (error) {
+    return { ok: false, reason: error?.name === 'AbortError' ? 'timed out' : String(error?.message ?? error) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Is this port bound? Probed in a throwaway child so a bind attempt cannot leave
+ * a listener behind in this process — the same technique the existing installer
+ * uses (install.mjs portTakenSync).
+ */
+function portTakenSync(port) {
+  const src = `const net=require('net');const s=net.createServer();s.once('error',e=>{process.exit(e.code==='EADDRINUSE'?3:0)});s.listen(${port},'127.0.0.1',()=>{s.close(()=>process.exit(0))});`;
+  return spawnSync(process.execPath, ['-e', src], { stdio: 'ignore' }).status === 3;
+}
+
+function readJsonFile(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readTextFile(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function assertPrivateRegularFile(path, label) {
+  let stat;
+  try { stat = lstatSync(path); } catch { throw new Error(`Cannot read ${label} ${JSON.stringify(path)}.`); }
+  if (!stat.isFile()) throw new Error(`Invalid external host profile: ${label} ${JSON.stringify(path)} must be a regular file.`);
+  const currentUid = process.getuid?.();
+  if (currentUid === undefined || stat.uid !== currentUid) throw new Error(`Invalid external host profile: ${label} ${JSON.stringify(path)} must be owned by the current user.`);
+  if ((stat.mode & 0o077) !== 0) throw new Error(`Invalid external host profile: ${label} ${JSON.stringify(path)} must have private permissions.`);
+}
+
+function readHostProfileFile(path) {
+  let text;
+  try { text = readFileSync(path, 'utf8'); } catch { throw new Error(`Cannot read host profile ${JSON.stringify(path)}.`); }
+  let value;
+  try { value = JSON.parse(text); } catch { throw new Error(`Invalid external host profile: config ${JSON.stringify(path)} is not valid JSON.`); }
+  const profile = validateHostProfile(value);
+  if (profile === null) return null;
+  assertPrivateRegularFile(path, 'config');
+  return profile;
+}
+
+async function verifyHostProfile(configPath, { timeoutMs = 5000 } = {}) {
+  const profile = typeof configPath === 'string' ? readHostProfileFile(configPath) : validateHostProfile(configPath);
+  if (profile === null) throw new Error(`Config ${JSON.stringify(configPath)} is not a host profile.`);
+  const request = async (path, token = null) => {
+    const response = await fetch(`${profile.endpoint}${path}`, {
+      redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
+      headers: token === null ? {} : { 'x-ours-api-token': token },
+    });
+    if (!response.ok) throw new Error(`${path} answered HTTP ${response.status}`);
+    try { return await response.json(); } catch { throw new Error(`${path} returned invalid JSON`); }
+  };
+  const selection = await request('/selection');
+  const selectionKeys = selection && typeof selection === 'object' && !Array.isArray(selection) ? Object.keys(selection) : [];
+  if (selectionKeys.length !== 3
+    || selectionKeys.some((key) => !['schema', 'instanceId', 'capabilities'].includes(key))
+    || selection.schema !== 1
+    || selection.instanceId !== profile.expectedInstanceId
+    || !Array.isArray(selection.capabilities)
+    || selection.capabilities.some((capability) => typeof capability !== 'string')
+    || !selection.capabilities.includes('external-sessions-v1')) {
+    throw new Error('Daemon selection metadata is absent, incompatible or mismatched.');
+  }
+  assertPrivateRegularFile(profile.credentialPath, 'credential');
+  const token = readFileSync(profile.credentialPath, 'utf8').trim();
+  if (!token) throw new Error('Invalid external host profile: credential file is empty.');
+  const version = await request('/version', token);
+  return { profile, version };
+}
+
+function installedVersionOf(pkg, npmBin = 'npm') {
+  try {
+    const out = execFileSync(npmBin, ['ls', '-g', '--depth', '0', '--json', pkg], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return JSON.parse(out)?.dependencies?.[pkg]?.version ?? null;
+  } catch {
+    // Unreadable is NOT "new enough": the cowork gate fails closed on null.
+    return null;
+  }
+}
+
+function packageDependenciesOf(pkgSpec, npmBin = 'npm') {
+  const probe = capture(npmBin, ['view', pkgSpec, 'dependencies', '--json'], { timeout: 15_000 });
+  if (!probe.ok) return null;
+  try {
+    const parsed = JSON.parse(probe.stdout);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolvePackageVersion(pkg, channel, npmBin = 'npm') {
+  const tag = channel === 'nightly' ? 'nightly' : 'latest';
+  const probe = capture(npmBin, ['view', `${pkg}@${tag}`, 'version', '--json'], { timeout: 15_000 });
+  if (!probe.ok) return '';
+  try {
+    const parsed = JSON.parse(probe.stdout);
+    return typeof parsed === 'string' ? parsed : '';
+  } catch {
+    return /^\S+$/.test(probe.stdout.trim()) ? probe.stdout.trim() : '';
+  }
+}
+
+function codexMarketplace() {
+  const probe = capture('codex', ['plugin', 'marketplace', 'list', '--json'], { timeout: 6_000 });
+  if (!probe.ok) return null;
+  try {
+    return JSON.parse(probe.stdout)?.marketplaces?.find((m) => m?.name === 'ours-codex-marketplace') ?? null;
+  } catch { return null; }
+}
+
+function hasClaudePlugin() {
+  const probe = capture('claude', ['plugin', 'list', '--json'], { timeout: 6_000 });
+  if (!probe.ok) return false;
+  try { return JSON.parse(probe.stdout)?.some((p) => p?.id === 'ours@ours.network') ?? false; }
+  catch { return false; }
+}
+
+/**
+ * A read-only command probe that NEVER throws and NEVER inherits stdio.
+ *
+ * Separate from `run` on purpose. `run` is for mutations and throws on a
+ * non-zero exit, because a failed mutation is news. Detection is the opposite:
+ * a non-zero exit IS the answer, and a hung wrapper must be killed rather than
+ * waited on. Mixing the two would mean either detection crashes a run or a
+ * failed install passes silently.
+ */
+function capture(cmd, args, { timeout, env = process.env } = {}) {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'pipe'], env });
+  const timedOut = !!(r.error && (r.error.code === 'ETIMEDOUT' || r.signal === 'SIGTERM'));
+  return {
+    ok: !r.error && r.status === 0,
+    code: r.status ?? -1,
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+    timedOut,
+  };
+}
+
+// The two harnesses that are DRIVEN CLIs. The `name` is the one lib/extras.mjs
+// plans against; the `command` is what actually lives on PATH.
+export const DRIVEN_HARNESSES = [
+  { name: 'claude-code', command: 'claude', label: 'Claude Code' },
+  { name: 'codex', command: 'codex', label: 'Codex' },
+];
+
+/**
+ * Alias-safety, unchanged from v2: three read-only observations, then the pure
+ * classifier decides. The harness is NEVER called in a way that can hang —
+ * `--version` is spawned directly (no shell, so a real PATH binary) under a hard
+ * timeout, and the shell `type` lookup is timeout-guarded too.
+ */
+function detectDrivenHarness({ name, command, label }, env) {
+  const onPath = capture('bash', ['-c', `command -v ${command}`], { env }).ok;
+  const probe = capture(command, ['--version'], { timeout: 6000, env });
+  const versionOk = probe.ok && /\d+\.\d+/.test(probe.stdout);
+  const shell = env.SHELL || '/bin/bash';
+  const typeProbe = capture(shell, ['-ic', `type -t ${command} 2>/dev/null`], { timeout: 4000, env });
+  const verdict = classifyHarnessProbe({
+    onPath, versionOk, timedOut: probe.timedOut, shellType: (typeProbe.stdout || '').trim(),
+  });
+  return { name, command, label, ...verdict };
+}
+
+/**
+ * Hermes is detected DIFFERENTLY, and it is not an inconsistency. Its ours
+ * plugin never calls a `hermes` binary — `ours-hermes-install` writes
+ * ~/.hermes/config.yaml and the skills — so "can we drive it?" is the wrong
+ * question. Per the plugin's own prerequisites, presence IS the config
+ * directory. The CLI probe still runs, purely to enrich detection.
+ */
+function detectHermesHarness(env, home) {
+  const dir = env.HERMES_DIR || join(home, '.hermes');
+  const dirPresent = existsSync(dir);
+  const cli = detectDrivenHarness({ name: 'hermes', command: 'hermes', label: 'Hermes' }, env);
+  return {
+    name: 'hermes',
+    command: 'hermes',
+    label: 'Hermes',
+    status: dirPresent || cli.status === 'ok' ? 'ok' : 'absent',
+    detail: dirPresent ? `config dir ${dir} present` : cli.detail,
+  };
+}
+
+/**
+ * Best-effort clipboard copy (pbcopy / wl-copy / xclip / clip.exe). The hard
+ * timeout is load-bearing: xclip holds the selection and would otherwise keep
+ * the installer alive after its own summary.
+ */
+function copyToClipboard(text) {
+  const tools = [['pbcopy', []], ['wl-copy', []], ['xclip', ['-selection', 'clipboard']], ['clip.exe', []]];
+  for (const [bin, args] of tools) {
+    try {
+      const r = spawnSync(bin, args, { input: text, timeout: 2000 });
+      if (!r.error && (r.status === 0 || r.status == null)) return true;
+    } catch { /* try the next one */ }
+  }
+  return false;
+}
+
+/**
+ * Every DAEMON state directory on this machine.
+ *
+ * ONE DEFINITION OF WHAT A DAEMON IS, and this function is why that matters.
+ *
+ * It used to count any `~/.ours*` directory containing a config.json. Two of those
+ * are not daemons on a perfectly normal machine: `~/.ours-telegram/config.json` is
+ * the Telegram connector's and `~/.ours-cowork/config.json` is cowork's. So the
+ * uninstaller reported "@ours.network/cli kept — still used by the daemon at
+ * ~/.ours-telegram", and two things followed silently:
+ *
+ *   · planGlobalPackages kept cli, mcp and the plugin packages FOREVER on any
+ *     machine with the connector installed, naming a connector's config directory
+ *     as a daemon;
+ *   · worse, planPluginRemoval's `lastDaemon` went false, so the whole harness
+ *     plugin phase was skipped — with a reason that was not true. A plain
+ *     interactive `ours-uninstall` on a machine with the connector removed no
+ *     plugins at all.
+ *
+ * The selection screen had already closed exactly this: config.json is the one
+ * piece of evidence that is AMBIGUOUS, so it cannot be the test. That predicate
+ * lives in lib/detect.mjs and this now calls it rather than keeping a second,
+ * naive copy that drifted. A daemon is identified by an artefact only a daemon
+ * writes, or by a config whose SHAPE is a daemon's.
+ *
+ * Still deliberately conservative about WHERE it looks: only `~/.ours` and its
+ * `~/.ours*` siblings. A state directory somewhere else is not found, and an
+ * unreadable home means "there might be others", not "there are none" — because
+ * the caller uses this to decide whether a GLOBAL package is still needed, and
+ * being wrong the optimistic way uninstalls the CLI out from under a running
+ * daemon.
+ */
+function knownStateDirsIn(home) {
+  const found = [];
+  const io = { exists: existsSync, readJson: readJsonFile };
+  const consider = (dir) => { if (classifyStateDir(dir, io).isDaemon) found.push(dir); };
+  consider(join(home, '.ours'));
+  try {
+    for (const entry of readdirSync(home, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith('.ours') || entry.name === '.ours') continue;
+      consider(join(home, entry.name));
+    }
+  } catch { /* an unreadable home is not evidence that there are no others */ }
+  return found;
+}
+
+/**
+ * Build the real effects. `write` and `ttyFd` come from the caller's UI layer so
+ * the orchestrator never reaches for a terminal itself.
+ */
+export function realEffects({ write, ttyFd, env = process.env, home = homedir(), out, version = null } = {}) {
+  const npmBin = env.OURS_NPM?.trim() || 'npm';
+  let installationLockFd = null;
+  const effects = {
+    async withInstallationLock(root, operation) {
+      const { tryLock } = await import('../assets/scripts/maintenance/state-native.mjs');
+      if (installationLockFd !== null) throw new Error('Another installer operation is already active');
+      ensurePrivateDirectory(root);
+      const path = join(root, '.operation.lock');
+      const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+      try {
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) || stat.nlink !== 1) throw new Error('Unsafe installation lock');
+        if (!tryLock(fd)) throw new Error('Another installer operation is already active');
+        const current = lstatSync(path);
+        if (current.dev !== stat.dev || current.ino !== stat.ino) throw new Error('Installation lock changed during acquisition');
+        installationLockFd = fd;
+        return await operation();
+      } finally {
+        installationLockFd = null;
+        // Keep the inode. Closing the last inherited descriptor releases flock.
+        closeSync(fd);
+      }
+    },
+    /**
+     * Removal holds the installation lock of every root it removes for the
+     * whole run, so no installer operation can start inside a root being deleted.
+     */
+    async holdInstallationLocks(roots) {
+      const { tryLock } = await import('../assets/scripts/maintenance/state-native.mjs');
+      const held = [];
+      try {
+        for (const root of roots) {
+          if (!existsSync(root)) continue;
+          privateDirectory(root);
+          const path = join(root, '.operation.lock');
+          const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
+          held.push(fd);
+          const stat = fstatSync(fd);
+          if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) || stat.nlink !== 1) throw new Error(`Unsafe installation lock in ${root}`);
+          if (!tryLock(fd)) throw new Error(`Another installer operation is active in ${root}; try again when it has finished`);
+        }
+      } catch (error) {
+        for (const fd of held) closeSync(fd);
+        throw error;
+      }
+      return () => { for (const fd of held) { try { closeSync(fd); } catch { /* released */ } } };
+    },
+    /** lstat as a plain record; null when absent. Never follows a link. */
+    stat: (path) => {
+      try {
+        const st = lstatSync(path, { bigint: true });
+        return { type: st.isSymbolicLink() ? 'symlink' : st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other', uid: Number(st.uid), mode: Number(st.mode & 0o7777n), nlink: Number(st.nlink), size: Number(st.size), id: `${st.dev}:${st.ino}` };
+      } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
+    },
+    realpath: (path) => { try { return realpathSync(path); } catch { return null; } },
+    list: (path) => { try { return readdirSync(path); } catch { return null; } },
+    uid: process.getuid?.() ?? -1,
+    home,
+    env,
+    version,
+    interactive: ttyFd != null,
+    // Preflight reads the machine rather than asking the orchestrator to.
+    platform: { platform: osPlatform(), release: osRelease(), arch: osArch() },
+    nodeVersion: process.versions.node,
+    exists: (path) => existsSync(path),
+    knownStateDirs: () => knownStateDirsIn(home),
+    // The only irreversible effect in this package, and the reason it takes no
+    // pattern and no parent: the caller passes ONE resolved directory that the
+    // pure planner already gated four ways, and this deletes exactly that.
+    removeDir: (path) => { rmSync(resolve(path), { recursive: true, force: true }); },
+    removeFile: (path) => { rmSync(resolve(path), { force: true }); },
+    removeEmptyDir: (path) => { rmdirSync(resolve(path)); },
+    renamePath: (from, to) => { renameSync(resolve(from), resolve(to)); },
+    sleep: (ms) => new Promise(done => setTimeout(done, ms)),
+    copyDir: (source, destination) => {
+      mkdirSync(dirname(resolve(destination)), { recursive: true, mode: 0o700 });
+      cpSync(resolve(source), resolve(destination), {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+      });
+    },
+    // Rewrites a config file we do NOT own, so it keeps the file's own mode
+    // rather than imposing 0600: tightening the permissions of somebody else's
+    // ~/.codex/config.toml is a side effect nobody asked this to have.
+    //
+    // DO NOT "IMPROVE" THIS TO 0600. It looks like a security improvement, which
+    // is exactly why someone will try — but this file is the operator's, not
+    // ours, and the only thing we were invited to do to it is remove our own
+    // block. Changing its mode on the way past is an uninvited change to a file
+    // we happened to be holding, and a tool that does that once is a tool you
+    // cannot let near your configs.
+    writeText: (path, text) => {
+      const mode = (() => { try { return statSync(path).mode & 0o777; } catch { return 0o644; } })();
+      const temp = `${path}.tmp-${process.pid}`;
+      writeFileSync(temp, text, { encoding: 'utf8', mode });
+      renameSync(temp, path);
+    },
+    username: () => { try { return userInfo().username || 'me'; } catch { return 'me'; } },
+    detectHarnesses: () => [
+      ...DRIVEN_HARNESSES.map((h) => detectDrivenHarness(h, env)),
+      detectHermesHarness(env, home),
+    ],
+    clipboard: (text) => copyToClipboard(text),
+    brokerUrl: env.OURS_BROKER_URL ?? 'wss://broker1.ours.network',
+    now: () => Date.now(),
+    probe: (port) => probePort(port),
+    portState: (port) => portState(port),
+    isTaken: (port) => portTakenSync(port),
+    readJson: readJsonFile,
+    readProfile: readHostProfileFile,
+    verifyHostProfile: (path) => verifyHostProfile(path),
+    readText: readTextFile,
+    writeJson: (path, text) => {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      atomicWriteConfig(path, text);
+    },
+    // The two halves of a config rollback (lib/journal.mjs). Deliberately the
+    // SAME pair the nightly installer uses, from lib/config.mjs, rather than a
+    // second implementation: `snapshot` records bytes and mode, and `restore`
+    // either writes those bytes back at their original mode or DELETES a file
+    // that did not exist before this run. Both are ordinary reads and writes of a
+    // file this installer was already writing — no new class of side effect
+    // enters the package here.
+    snapshot: (path) => snapshotConfig(path),
+    restore: (path, snapshot) => restoreConfig(path, snapshot),
+    // `extraEnv` is the daemon pair (see daemonEnv). It is applied to THIS
+    // invocation only and never to the installer's own process: a state
+    // directory selected by one run must not leak into anything the operator
+    // starts afterwards.
+    run: async (cmd, args, { env: extraEnv = null, stream = false, cwd, sensitive = false, allowCodes = [], timeout, input } = {}) => {
+      // Always built from this layer's OWN env rather than left to spawnSync's
+      // implicit inheritance, so what a child receives is a property of the
+      // effects object a caller constructed and not of whatever ambient shell
+      // the installer happened to start in.
+      const childEnv = { ...env, ...(extraEnv ?? {}) };
+      delete childEnv.OURS_INSTALLER_LOCK_FD;
+      if (installationLockFd !== null) childEnv.OURS_INSTALLER_LOCK_FD = '3';
+      const executable = cmd === 'npm' ? npmBin : cmd;
+      const r = spawnSync(executable, args, {
+        cwd,
+        timeout,
+        encoding: 'utf8',
+        input,
+        stdio: [...(stream ? [input === undefined ? 'ignore' : 'pipe', 'inherit', 'inherit'] : [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']), ...(installationLockFd === null ? [] : [installationLockFd])],
+        env: childEnv,
+      });
+      if (r.error) {
+        const error = commandFailure(executable, args, r, { sensitive, cwd, env: childEnv });
+        error.code = r.error.code;
+        throw error;
+      }
+      if (r.status !== 0 && !allowCodes.includes(r.status)) {
+        throw commandFailure(executable, args, r, { sensitive, cwd, env: childEnv });
+      }
+      return { ok: true, code: r.status, stdout: r.stdout ?? '' };
+    },
+    // Commands with their own prompts, including Fleet's no-settings wizard,
+    // must keep the user's terminal; piping their stdio would hang them waiting
+    // on input nobody can type. Prepared Fleet settings use `run` above instead.
+    // It is otherwise the same contract as `run` — including the environment,
+    // so an interactive command reaches the same daemon a piped one would.
+    runInteractive: async (cmd, args, { env: extraEnv = null } = {}) => {
+      const childEnv = { ...env, ...(extraEnv ?? {}) };
+      delete childEnv.OURS_INSTALLER_LOCK_FD;
+      if (installationLockFd !== null) childEnv.OURS_INSTALLER_LOCK_FD = '3';
+      const r = spawnSync(cmd, args, { stdio: ['inherit', 'inherit', 'inherit', ...(installationLockFd === null ? [] : [installationLockFd])], env: childEnv });
+      if (r.error || r.status !== 0) throw commandFailure(cmd, args, r, { env: childEnv });
+      return { ok: true, code: r.status };
+    },
+    installedVersion: (pkg) => installedVersionOf(pkg, npmBin),
+    packageDependencies: (spec) => packageDependenciesOf(spec, npmBin),
+    resolvePackageVersion: (pkg, channel) => resolvePackageVersion(pkg, channel, npmBin),
+    codexMarketplace,
+    hasClaudePlugin,
+    out: out ?? ((line) => process.stdout.write(`${line}\n`)),
+    // Never called when assumeYes: the orchestrator takes the default itself.
+    select: async (question, choices, def) => selectOnTty(write, ttyFd, question, choices, def),
+    multiselect: async (question, choices, defaults = []) => multiselectOnTty(write, ttyFd, question, choices, defaults),
+    ask: async (question, def = false) => selectOnTty(write, ttyFd, question, [{ value: true, label: 'Yes' }, { value: false, label: 'No' }], def),
+    askLine: async (prompt, def = '') => (ttyFd == null ? def : askLineOnTty(write, ttyFd, `  ${prompt}  `, def)),
+  };
+  return Object.assign(effects, networkEffects(effects));
+}
+
+export const __testables = { probePort, portState, portTakenSync, readJsonFile, readTextFile, readHostProfileFile, verifyHostProfile, installedVersionOf, packageDependenciesOf, resolvePackageVersion, codexMarketplace, hasClaudePlugin, knownStateDirsIn };
+
+// -----------------------------------------------------------------------------
+// THE PAIR
+// -----------------------------------------------------------------------------
+
+/**
+ * The environment that names ONE daemon, for a single child invocation.
+ *
+ * A state directory and its endpoint always travel
+ * together; "endpoint selected, state directory defaulted" must be unreachable.
+ * Every consumer downstream — ours-mcp's proxy, ours-fleet's per-role resolver,
+ * ours-hermes-install — reads these three names and falls back to `~/.ours` for
+ * whichever one is missing. So a HALF pair does not fail: it silently attaches
+ * to the default daemon while the operator was told a different one was chosen.
+ *
+ * That is why this is a function and not three assignments at the call sites.
+ * There is exactly one place a daemon environment can be built, it takes both
+ * halves as arguments, and it refuses rather than emit a partial one.
+ *
+ * The three names, not two, are deliberate: OURS_CONFIG alone would leave the
+ * port to whatever config.json happens to say, which is exactly the stale-file
+ * divergence lib/target.mjs's second lookup exists to survive.
+ */
+export const DAEMON_ENV_KEYS = ['OURS_CONFIG', 'OURS_STATE_DIR', 'OURS_PORT'];
+
+export function daemonEnv(stateDir, port) {
+  const dir = typeof stateDir === 'string' ? stateDir.trim() : '';
+  if (!dir) throw new Error('daemonEnv requires a state directory: refusing to build half of the daemon pair');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('daemonEnv requires a port between 1 and 65535: refusing to build half of the daemon pair');
+  }
+  const resolved = resolve(dir);
+  return {
+    OURS_CONFIG: join(resolved, 'config.json'),
+    OURS_STATE_DIR: resolved,
+    OURS_PORT: String(port),
+  };
+}
+
+/** Is this environment a whole pair (or nothing at all)? Never one half. */
+export function isWholeDaemonEnv(env) {
+  if (env == null) return true;
+  const present = DAEMON_ENV_KEYS.filter((k) => typeof env[k] === 'string' && env[k] !== '');
+  if (present.length === 0) return true;
+  if (present.length !== DAEMON_ENV_KEYS.length) return false;
+  return env.OURS_CONFIG === join(resolve(env.OURS_STATE_DIR), 'config.json');
+}
+
+/** The state directory a default run targets, for callers that need it early. */
+export const defaultStateDir = (home = homedir()) => join(home, '.ours');
+
+export const INSTALLER_ASSETS = fileURLToPath(new URL('../assets/', import.meta.url));
+const PACKAGED_SOURCE_POLICY = join(INSTALLER_ASSETS, 'sources.json');
+
+function privateDirectory(path) {
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0) throw new Error(`Unsafe private installation directory: ${path}`);
+}
+
+function ensurePrivateDirectory(path) {
+  if (!existsSync(path)) mkdirSync(path, { recursive: true, mode: 0o700 });
+  privateDirectory(path);
+}
+
+function writePrivateNew(path, body) {
+  writeFileSync(path, body, { mode: 0o600, flag: 'wx' });
+  assertPrivateRegularFile(path, 'installation file');
+}
+
+/** Runtime IO remains in the installer effects seam. No host runtime on clients. */
+export function networkEffects(effects) {
+  const { env, home } = effects;
+  const buildRuntime = record => {
+    if (!record.buildTransition || existsSync(record.workDir)) return record;
+    const workDir = join(record.buildTransition.candidate.root, 'previous-runtime');
+    privateDirectory(workDir);
+    return { ...record, workDir };
+  };
+  const baseEnv = (record) => ({
+    OURS_DAEMON_ID: record.instanceId,
+    OURS_IMAGE: `${record.project}:runtime`,
+    OURS_GATEWAY_IMAGE: `${record.project}:gateway`,
+    OURS_MAINTENANCE_IMAGE: `${record.project}:maintenance`,
+    OURS_UID: String(record.uid ?? 1000), OURS_GID: String(record.gid ?? 1000),
+    OURS_HOST_PORT: String(record.port ?? 3050),
+    OURS_COWORK_PORT: String(record.coworkPort ?? 3052),
+    OURS_MESSENGER_PORT: String(record.messengerPort ?? 8420),
+    OURS_MESSENGER_IDENTITY: record.messengerIdentity ?? '',
+  });
+  const composeArgs = (record, args) => [
+    'compose', '--project-directory', record.workDir, '--file', join(record.workDir,
+      record.schema === 1 && existsSync(join(record.workDir, 'docker-compose.legacy.yaml'))
+        ? 'docker-compose.legacy.yaml' : 'docker-compose.yaml'),
+    ...(record.gateway ? ['--file', join(record.workDir, 'docker-compose.gateway.yaml')] : []),
+    ...(existsSync(join(record.workDir, 'compose.recovery.json')) ? ['--file', join(record.workDir, 'compose.recovery.json')] : []),
+    ...(engineName(record) === 'podman' ? ['--file', join(record.workDir, 'compose.podman.json')] : []),
+    ...(isPluginOnly(record) ? ['--file', join(record.workDir, PLUGIN_ONLY_COMPOSE)] : []),
+    '--project-name', record.project, ...args,
+  ];
+  const container = (record, args, options = {}) => runContainer(effects, record, args, options);
+  const compose = async (record, args, options = {}) => {
+    const selected = { ...options, env: { ...baseEnv(record), ...options.env } };
+    if (engineName(record) === 'podman' && args[0] === 'build') {
+      const result = await container(record, composeArgs(record, ['--profile', '*', 'config', '--format', 'json']), { env: selected.env });
+      for (const command of nativeBuildCommands(JSON.parse(result.stdout), args.slice(1), { ...env, ...selected.env })) await container(record, command, selected);
+      return { code: 0, stdout: '' };
+    }
+    if (engineName(record) === 'podman' && ['run', 'up'].includes(args[0])) {
+      const resolved = JSON.parse((await container(record, composeArgs(record, ['--profile', '*', 'config', '--format', 'json']), { env: selected.env })).stdout);
+      for (const [key, volume] of Object.entries(resolved.volumes ?? {})) {
+        if (volume.external) throw new Error('Unexpected external installation volume');
+        const name = volume.name ?? `${record.project}_${key}`;
+        const found = await container(record, ['volume', 'inspect', '--format', '{{json .}}', name], { allowCodes: [1] });
+        if (found.code === 1) continue;
+        const value = JSON.parse(found.stdout);
+        if (value.Name !== name || value.Labels?.['com.docker.compose.project'] !== record.project || value.Labels?.['com.docker.compose.volume'] !== key) throw new Error(`Refusing foreign volume: ${name}`);
+      }
+    }
+    // Compose run can implicitly build an absent administration image. Build
+    // its resolved target natively first, just like explicit build operations.
+    if (engineName(record) === 'podman' && args[0] === 'run') {
+      const resolved = JSON.parse((await container(record, composeArgs(record, ['--profile', '*', 'config', '--format', 'json']), { env: selected.env })).stdout);
+      const takesValue = new Set(['--name', '--entrypoint', '--env', '-e', '--user', '-u', '--workdir', '-w', '--volume', '-v', '--publish', '-p', '--label', '-l', '--pull']);
+      let name;
+      for (let i = 1; i < args.length; i++) {
+        if (takesValue.has(args[i])) { i++; continue; }
+        if (args[i].startsWith('-')) continue;
+        name = args[i]; break;
+      }
+      const service = resolved.services?.[name];
+      if (!service) throw new Error(`Unresolved Podman administration service: ${name}`);
+      if (service.build) {
+        const image = await container(record, ['image', 'inspect', service.image], { allowCodes: [1] });
+        if (image.code === 1) for (const command of nativeBuildCommands(resolved, [name], { ...env, ...selected.env })) await container(record, command, selected);
+      }
+    }
+    return container(record, composeArgs(record, args), selected);
+  };
+  const dockerStartupError = async (record, service, cause) => {
+    const args = ['logs', '--no-color', '--tail', '50', '--timestamps', service];
+    const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+    const engine = engineName(record);
+    const prefix = engine === 'podman' ? ['--remote', '--url', `unix://${record.containerBinding.socket}`] : [];
+    const command = `OURS_DAEMON_ID=${quote(record.instanceId)} ${engine} ${[...prefix, ...composeArgs(record, args)].map(quote).join(' ')}`;
+    let detail;
+    try {
+      const logs = await compose(record, args);
+      // Limit terminal diagnostics; container output must not inject terminal controls.
+      detail = (logs.stdout ?? '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').trim().slice(-6000);
+      detail = detail ? `Recent ${service} logs:\n${detail}` : 'The container produced no readable logs.';
+    } catch {
+      detail = 'Container logs could not be read.';
+    }
+    return new Error(`${engine === 'podman' ? 'Podman' : 'Docker'} service "${service}" failed to start or become healthy.\n${detail}\nStartup error: ${cause.message}\nInspect logs: ${command}`, { cause });
+  };
+  const bin = (record, name) => join(record.workDir, 'node_modules', '.bin', name);
+  const localEnv = (record, service = 'daemon') => {
+    const paths = installationPaths(record);
+    const state = paths[service];
+    const credentialPath = paths.credentials[service];
+    const common = { OURS_DAEMON_ID: record.instanceId, OURS_DAEMON_URL: `http://127.0.0.1:${record.port}`, OURS_DAEMON_CREDENTIAL_PATH: credentialPath };
+    if (service === 'daemon') return { OURS_CONFIG: record.configPath, OURS_STATE_DIR: state, OURS_PORT: String(record.port), OURS_DAEMON_ID: record.instanceId };
+    if (service === 'telegram') return { OURS_TG_CONFIG: join(state, 'config.json'), OURS_TG_STATE_DIR: state, OURS_TG_CONTROL_PORT: '3051', OURS_TG_DAEMON_URL: common.OURS_DAEMON_URL, OURS_TG_DAEMON_ID: record.instanceId, OURS_TG_DAEMON_CREDENTIAL_PATH: credentialPath };
+    if (service === 'cowork') return { ...common, OURS_COWORK_CONFIG: join(state, 'config.json'), OURS_COWORK_STATE_DIR: state, OURS_COWORK_REST_PORT: String(record.coworkPort) };
+    return { ...common, OURS_MESSENGER_STATE_DIR: state, ...(record.messengerIdentity ? { OURS_MESSENGER_IDENTITY: record.messengerIdentity } : {}), OURS_MESSENGER_PORT: String(record.messengerPort), OURS_MESSENGER_HOST: '127.0.0.1', OURS_MESSENGER_PUBLIC_ORIGIN: `http://127.0.0.1:${record.messengerPort}` };
+  };
+  const ownerCommand = (record, service, op, options = {}) => {
+    const daemonBinary = existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours';
+    const name = { daemon: daemonBinary, telegram: 'ours-tg-connector', cowork: 'ours-cowork' }[service];
+    const args = service === 'daemon' ? [...(daemonBinary === 'ours' ? ['daemon'] : []), op, ...(['install-service', 'uninstall-service'].includes(op) ? ['--yes'] : []), '--config', record.configPath, '--state-dir', installationPaths(record).daemon, '--json'] : [op];
+    return effects.run(bin(record, name), args, { ...options, env: localEnv(record, service) });
+  };
+  const statelessGateway = (record, detail) => {
+    const labels = detail?.Config?.Labels ?? {};
+    return labels['com.docker.compose.project'] === record.project && labels['com.docker.compose.service'] === 'gateway'
+      && detail.HostConfig?.ReadonlyRootfs === true && Array.isArray(detail.Mounts) && detail.Mounts.every(mount => mount.Type === 'tmpfs');
+  };
+  const requireCleanContainerExit = async (record, selected) => {
+    const containers = await compose(record, ['ps', '-aq', ...selected]);
+    for (const id of containers.stdout.split(/\s+/).filter(Boolean)) {
+      const result = await container(record, ['inspect', '--format', '{{json .State}}', id]);
+      const state = JSON.parse(result.stdout);
+      if (state.Status !== 'exited' || state.ExitCode !== 0 || state.OOMKilled !== false || state.Dead !== false) {
+        // A forced gateway stop cannot damage stored state: accept it only when
+        // the container itself proves it has a read-only root and tmpfs mounts.
+        if (state.Status === 'exited' && statelessGateway(record, JSON.parse((await container(record, ['inspect', '--format', '{{json .}}', id])).stdout))) continue;
+        throw new Error('Selected source container did not stop cleanly; state operation refused');
+      }
+    }
+  };
+  return {
+    credentialRefused: profile => retainedCredentialRefused(profile),
+    ...createServerOnboarding(effects, { compose, localEnv, bin }),
+    sourcePolicyHash(path) {
+      return createHash('sha256').update(readFileSync(path)).digest('hex');
+    },
+    packagedSourcePolicy() {
+      const policy = JSON.parse(readFileSync(PACKAGED_SOURCE_POLICY, 'utf8'));
+      const release = releaseBinding(policy);
+      if (release) {
+        const embedded = JSON.parse(readFileSync(join(INSTALLER_ASSETS, 'release.json'), 'utf8'));
+        if (JSON.stringify(release) !== JSON.stringify(embedded)) throw new Error('Packaged source policy differs from immutable release');
+      } else if (Object.values(policy.packages ?? {}).some(p => p.type === 'npm')) {
+        throw new Error('Packaged npm source policy is missing its release binding');
+      }
+      return policy;
+    },
+    async resolveSourcePolicy(policy, role, clients = []) {
+      return resolveSourcePolicy(policy, role, clients, async (name, range) => {
+        const result = await effects.run('npm', ['view', `${name}@${range}`, 'version', '--json']);
+        let versions;
+        try { versions = JSON.parse(result.stdout); }
+        catch { throw new Error(`npm returned malformed version metadata for ${name}@${range}`); }
+        const version = Array.isArray(versions) ? versions.at(-1) : versions;
+        if (typeof version !== 'string') throw new Error(`npm did not resolve ${name}@${range}`);
+        return version;
+      });
+    },
+    newInstallation(root, mode, { containerEngine, product } = {}) {
+      if (existsSync(root)) {
+        privateDirectory(root);
+        if (readdirSync(root).some(name => name !== '.operation.lock')) throw new Error('Installation root is not empty and has no selection record');
+      }
+      const instanceId = env.OURS_DAEMON_ID || randomUUID();
+      if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(instanceId)) throw new Error('OURS_DAEMON_ID must be a lowercase UUID');
+      const project = `ours-${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
+      if (isPluginOnly(product ?? 'workspace') && mode !== 'docker') throw new Error('Collaboration tools for existing agent apps run in Docker or Podman');
+      const services = isPluginOnly(product ?? 'workspace') ? ['daemon'] : [...SERVER_SERVICES, ...(mode === 'docker' ? ['gateway'] : [])];
+      const gateway = mode === 'docker' && !isPluginOnly(product ?? 'workspace');
+      return { schema: 2, root, mode, ...(isPluginOnly(product ?? 'workspace') ? { product } : {}), ...(containerEngine ? { containerEngine } : {}), instanceId, project, workDir: join(root, 'runtime'), configPath: installationPaths({ schema: 2, root }).config, sourcesPath: join(root, 'sources.json'), services, ...(gateway ? { gateway: { version: 1 } } : {}), port: 3050, coworkPort: 3052, messengerPort: 8420, messengerIdentity: env.OURS_MESSENGER_IDENTITY || null, uid: 1000, gid: 1000 };
+    },
+    async serverPreflight(record, operation, { existing, sourcePath = record.sourcesPath, sourceManifest, identityName, explicitPorts } = {}) {
+      if (!existing && operation === 'install' && Number.isInteger(record.port)) selectServerPorts(record, portTakenSync, explicitPorts, effects.out);
+      if (existing) {
+        privateDirectory(record.root);
+        assertPrivateRegularFile(join(record.root, 'installation.json'), 'selection');
+        assertPrivateRegularFile(record.sourcesPath, 'sources');
+        if (env.OURS_DAEMON_ID && env.OURS_DAEMON_ID !== record.instanceId) throw new Error('Conflicting instance ID');
+      }
+      if (record.mode === 'docker') {
+        if (engineName(record) === 'podman') {
+          await bindPodman(effects, record);
+          if (['install', 'start', 'restart', 'update', 'rebuild', 'gateway-enable'].includes(operation)) {
+            const userHome = userInfo().homedir;
+            for (const [key, expected] of Object.entries({ HOME: userHome, XDG_CONFIG_HOME: join(userHome, '.config'), XDG_DATA_HOME: join(userHome, '.local/share'), XDG_RUNTIME_DIR: `/run/user/${process.getuid()}` })) {
+              if (env[key] && env[key] !== expected) throw new Error(`${key} selects a custom Podman environment that the standard boot service does not retain`);
+            }
+            if (record.containerBinding.socket !== `/run/user/${process.getuid()}/podman/podman.sock`) throw new Error('The standard user boot service requires the default local Podman socket');
+            await effects.run('systemctl', ['--user', 'is-enabled', 'podman.socket']);
+            await effects.run('systemctl', ['--user', 'is-enabled', 'podman-restart.service']);
+            const restart = await effects.run('systemctl', ['--user', 'show', 'podman-restart.service', '--property=ExecStart', '--value']);
+            if (!/--filter[ =]+should-start-on-boot=true(?:[ ;}]|$)/.test(restart.stdout)) throw new Error('Installed podman-restart.service cannot recover unless-stopped workloads; use a Podman release with should-start-on-boot support');
+            const linger = await effects.run('loginctl', ['show-user', String(process.getuid()), '--property=Linger', '--value']);
+            if (linger.stdout.trim() !== 'yes') throw new Error('Rootless server requires user linger for logout/reboot recovery; ask your administrator to enable it');
+            await qualifyPodman(effects, record);
+          }
+        } else {
+          const nativeRoot = existing ? '/path/to/new-empty-directory' : record.root;
+          const quotedRoot = `'${String(nativeRoot).replaceAll("'", "'\\''")}'`;
+          const quotedName = `'${String(identityName ?? record.messengerIdentity ?? 'Your Name').replaceAll("'", "'\\''")}'`;
+          const recovery = [
+            'Please install Docker Desktop on macOS/Windows, or Docker Engine with the Compose plugin on Linux, and start Docker before retrying.',
+            'Docker is recommended for macOS and Windows.',
+            `Alternatively, use native installation: ours-install server install --mode packages --state-dir ${quotedRoot} --identity-name ${quotedName}`,
+            'Native mode requires systemd user services on Linux/WSL or a launchd GUI session on macOS.',
+            ...(existing ? ['Keep this existing Docker installation in Docker mode; use a separate empty directory for a new native installation.'] : []),
+          ].join('\n');
+          try {
+            await container(record, ['info', '--format', '{{.ServerVersion}}']);
+          } catch (cause) {
+            const problem = cause.code === 'ENOENT'
+              ? 'Docker command was not found in PATH.'
+              : `Docker Engine is not reachable. Start Docker and check that your user can access it.\nDetails: ${cause.message}`;
+            throw new Error(`${problem}\n${recovery}`, { cause });
+          }
+          let version;
+          try {
+            version = await container(record, ['compose', 'version', '--short']);
+          } catch (cause) {
+            throw new Error(`Docker Compose 2.35 or newer is required, but the Compose plugin could not run. Update Docker Desktop or install the Docker Compose plugin.\n${recovery}`, { cause });
+          }
+          const match = /^v?(\d+)\.(\d+)/.exec(version.stdout.trim());
+          if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 35)) {
+            throw new Error(`Docker Compose 2.35 or newer is required. Update Docker Desktop or the Docker Compose plugin.\n${recovery}`);
+          }
+        }
+        if (operation !== 'status') {
+          // Compose clients can disappear while their Engine-owned command continues.
+          const active = await container(record, ['ps', '--filter', `label=com.docker.compose.project=${record.project}`, '--filter', 'label=com.docker.compose.oneoff=True', '--format', '{{.ID}}']);
+          if (active.stdout.trim()) throw new Error('Another server installation operation is still running in Docker');
+        }
+      } else {
+        if (!['linux', 'darwin'].includes(effects.platform.platform)) throw new Error('Package mode requires systemd-user or launchd');
+        await effects.run(effects.platform.platform === 'linux' ? 'systemctl' : 'launchctl', effects.platform.platform === 'linux' ? ['--user', 'show-environment'] : ['print', `gui/${process.getuid()}`]);
+        if (operation === 'install') {
+          for (const command of ['node', 'npm']) await effects.run(command, ['--version']);
+          const packages = selectSourcePackages(sourceManifest ?? effects.readJson(existing ? record.sourcesPath : sourcePath), serverRole(record));
+          if (Object.values(packages).some(selection => selection.source)) {
+            // Native dependencies in source builds still use their own toolchains.
+            for (const command of ['python3', 'git', 'make', 'cc']) await effects.run(command, ['--version']);
+          }
+        }
+      }
+    },
+    async prepareLegacyDockerImport(record) {
+      if (record.mode === 'docker') await compose(record, ['build', 'legacy-import'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+    },
+    async importLegacyDockerState(record) {
+      if (record.mode !== 'docker') return;
+      const source = join(record.root, 'storage', 'state');
+      if (source.includes(':')) throw new Error('Docker migration requires an installation path without colon characters');
+      await compose(record, ['run', '--rm', '--no-deps', '-T', '--volume', `${source}:/legacy-import:ro`,
+        '--env', `OURS_LEGACY_TARGET_ROOT=${record.root}`, 'legacy-import']);
+    },
+    async initializeSelection(record, manifest, { retainConfig = false } = {}) {
+      if (typeof manifest === 'string') manifest = JSON.parse(readFileSync(manifest, 'utf8'));
+      selectSourcePackages(manifest, serverRole(record));
+      const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+      ensurePrivateDirectory(record.root);
+      if (record.schema === 2) {
+        for (const path of [join(record.root, 'storage'), installationPaths(record).state, installationPaths(record).daemon]) ensurePrivateDirectory(path);
+      }
+      if (!retainConfig || !existsSync(record.sourcesPath)) writePrivateNew(record.sourcesPath, bytes);
+      else if (!readFileSync(record.sourcesPath).equals(bytes)) throw new Error('Migration source selection changed');
+      if (!retainConfig) writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
+    },
+    async qualifyDockerRuntime(record) { return qualifyDockerRuntime(record, effects); },
+    async prepareGateway(record) {
+      atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
+      atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
+      atomicWriteConfig(join(record.workDir, 'gateway-entrypoint.sh'), readFileSync(join(INSTALLER_ASSETS, 'gateway-entrypoint.sh'), 'utf8'));
+      atomicWriteConfig(join(record.workDir, 'Dockerfile.gateway'), readFileSync(join(INSTALLER_ASSETS, 'Dockerfile.gateway'), 'utf8'));
+      await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+    },
+    async removeGatewayContainer(record) { await compose(record, ['rm', '-f', 'gateway']); },
+    async verifyGateway(record) {
+      const { prefix } = gatewayAddress(record);
+      const script = gatewayReadinessScript({ base: 'http://gateway:8080' + prefix, instanceId: record.instanceId });
+      const result = await compose(record, ['exec', '-T', 'daemon', 'node', '-e', script], { sensitive: true, allowCodes: [1] });
+      if (result.code === 1) {
+        const described = describeGatewayReadiness(result.stdout);
+        const detail = described ? ` (${described})` : '';
+        throw new Error(`Gateway readiness failed${detail}. Keep installation state intact; check the managed gateway startup and network connection, then retry setup.`);
+      }
+    },
+    async qualifyGatewayRuntime(record) {
+      for (const [name, args, capability] of [
+        ['cowork', ['--json', 'capabilities'], 'cowork.http-management-v1'],
+        ['messenger-server', ['capabilities'], 'messenger.gateway-prefix-v1'],
+        ['tg-connector', ['capabilities'], 'telegram.gateway-listener-v1'],
+      ]) {
+        const probe = await container(record, ['run', '--rm', '--network', 'none', '--read-only', '--entrypoint', 'node', `${record.project}:runtime`, `/opt/ours/node_modules/@ours.network/${name}/dist/cli.js`, ...args]);
+        let value; try { value = JSON.parse(probe.stdout); } catch {}
+        const capabilities = value?.result?.capabilities ?? value?.capabilities;
+        if (!Array.isArray(capabilities) || !capabilities.includes(capability))
+          throw new Error(`Selected ${name} artifact lacks ${capability}; select a compatible release before enabling the gateway`);
+      }
+    },
+    async prepareInstallation(record, { runtimeOnly = false } = {}) {
+      if (!runtimeOnly) await reportBootReadiness(effects, record);
+      let copied = false;
+      if (!existsSync(record.workDir)) {
+        cpSync(INSTALLER_ASSETS, record.workDir, { recursive: true, errorOnExist: true, force: false });
+        chmodSync(record.workDir, 0o700);
+        copied = true;
+      }
+      const retained = readFileSync(record.sourcesPath);
+      const materialized = join(record.workDir, 'sources.json');
+      if (copied) rmSync(materialized);
+      if (!existsSync(materialized)) writePrivateNew(materialized, retained);
+      else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
+      if (record.mode === 'docker') {
+        // Image IDs before this run builds anything: only what it creates or changes becomes proof.
+        const imagesBefore = runtimeOnly ? null : await effects.imageIds(record);
+        if (isPluginOnly(record)) atomicWriteConfig(join(record.workDir, PLUGIN_ONLY_COMPOSE), pluginOnlyCompose());
+        if (engineName(record) === 'podman') atomicWriteConfig(join(record.workDir, 'compose.podman.json'), JSON.stringify({ services: Object.fromEntries(record.services.map(name => [name, { restart: 'unless-stopped' }])) }));
+        const rebuildPrivateScripts = refreshDockerPolicyCopy(record);
+        const rebuildRecovery = refreshDockerRecovery(record);
+        atomicWriteConfig(join(record.workDir, 'compose.recovery.json'), JSON.stringify(recoveryCompose(record)));
+        if (record.gateway) {
+          atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
+          atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
+          for (const file of ['Dockerfile.gateway', 'gateway-entrypoint.sh']) atomicWriteConfig(join(record.workDir, file), readFileSync(join(INSTALLER_ASSETS, file), 'utf8'));
+        }
+        // The installer owns these dependencies in both installation modes.
+        const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+        writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
+        const image = await container(record, ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
+        if (image.code !== 0 || rebuildPrivateScripts || rebuildRecovery) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+        await effects.qualifyDockerRuntime(record);
+        if (rebuildPrivateScripts) rmSync(join(record.workDir, '.script-permissions-rebuild'));
+        if (rebuildRecovery) rmSync(join(record.workDir, '.recovery-rebuild'));
+        if (record.gateway) {
+          await effects.qualifyGatewayRuntime(record);
+          await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+        }
+        if (runtimeOnly) return;
+        await effects.prepareServerVolumes(record);
+        // Volume preparation may build the maintenance image; record after it.
+        const imagesAfter = await effects.imageIds(record);
+        await effects.recordOwnedImages(record, changedImages(imagesBefore, imagesAfter));
+      } else {
+        if (!existsSync(join(record.workDir, '.packages-ready'))) {
+          const sourceRoot = join(record.root, `build-${randomUUID()}`);
+          ensurePrivateDirectory(sourceRoot);
+          try {
+            await effects.run(process.execPath, [join(record.workDir, 'scripts/build/build.mjs')], { stream: true, cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir, OURS_SOURCE_ROOT: sourceRoot } });
+            await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { stream: true, cwd: record.workDir });
+            await effects.run(process.execPath, [join(record.workDir, 'scripts/build/record-build.mjs')], { cwd: record.workDir, env: { OURS_BUILD_ROOT: record.workDir } });
+            writePrivateNew(join(record.workDir, '.packages-ready'), 'ready\n');
+          } finally { rmSync(sourceRoot, { recursive: true, force: true }); }
+        }
+        await effects.recordRuntimeBuild(record);
+        if (runtimeOnly) return;
+        const paths = installationPaths(record);
+        ensurePrivateDirectory(join(paths.state, 'credentials'));
+        for (const dir of [paths.daemon, paths.telegram, paths.cowork, paths.messenger, paths.mcp,
+          ...Object.values(paths.credentials).map(path => dirname(path))]) ensurePrivateDirectory(dir);
+        const profilePath = join(installationPaths(record).mcp, 'profile.json');
+        if (!existsSync(profilePath)) writePrivateNew(profilePath, JSON.stringify({ endpoint: `http://127.0.0.1:${record.port}`, expectedInstanceId: record.instanceId, credentialPath: join(installationPaths(record).daemon, 'daemon-token') }));
+        const config = JSON.parse(readFileSync(record.configPath, 'utf8'));
+        effects.writeJson(record.configPath, JSON.stringify(config, null, 2) + '\n');
+        const cowork = join(installationPaths(record).cowork, 'config.json');
+        if (!existsSync(cowork)) writePrivateNew(cowork, JSON.stringify({ version: 1, stateDir: installationPaths(record).cowork, rest: { enabled: true, host: '127.0.0.1', port: record.coworkPort } }));
+      }
+    },
+    async prepareServerVolumes(record) {
+      if (record.mode !== 'docker') return;
+      await compose(record, ['run', '--rm', '--no-deps', '-T', 'prepare', 'prepare']);
+    },
+    async prepareServerBuild(record, args) {
+      validateInstallation(record, record.root);
+      if (record.schema !== 2 || record.layoutConversion || !['update', 'rebuild'].includes(args.operation)) {
+        throw new Error('Select a converted installation for update or rebuild');
+      }
+      const sources = args.operation === 'update'
+        ? (args.resolvedSources
+          ? Buffer.from(`${JSON.stringify(args.resolvedSources, null, 2)}\n`)
+          : readFileSync(args.sources))
+        : readFileSync(record.sourcesPath);
+      selectSourcePackages(JSON.parse(sources), serverRole(record));
+      privateDirectory(record.root);
+      const root = mkdtempSync(join(record.root, '.build-'));
+      const candidate = { ...record, root, workDir: join(root, 'runtime'), sourcesPath: join(root, 'sources.json'),
+        configPath: installationPaths({ schema: 2, root }).config,
+        project: `ours-build${randomUUID().replaceAll('-', '')}`,
+        sourcePolicyHash: args.sources ? effects.sourcePolicyHash(args.sources) : undefined };
+      try {
+        writePrivateNew(candidate.sourcesPath, sources);
+        await effects.prepareInstallation(candidate, { runtimeOnly: true });
+        if (candidate.mode === 'docker') {
+          await compose(candidate, ['build', 'state-operation']);
+          // The candidate's project name is new for this build: every image under it was
+          // built now. Record them with the installation so removal can prove them.
+          await effects.recordOwnedImages(record, await effects.imageIds(candidate));
+          await effects.copyDockerBuildRecords(candidate, candidate.workDir);
+        }
+        // npm emits readable build records; maintenance consumes private copies.
+        for (const file of [...BASE_RECORDS, ...(existsSync(join(candidate.workDir, CONTEXT)) ? [CONTEXT] : [])]) {
+          const path = join(candidate.workDir, file), stat = lstatSync(path);
+          if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o7002)) {
+            throw new Error('Unsafe candidate build record');
+          }
+          JSON.parse(readFileSync(path, 'utf8'));
+          chmodSync(path, 0o600);
+        }
+        readBuildRecords(candidate.workDir, { privateFiles: true });
+        return candidate;
+      } catch (error) {
+        rmSync(root, { recursive: true, force: true });
+        throw error;
+      }
+    },
+    async copyDockerBuildRecords(record, directory) {
+      // Inspect immutable image metadata; never reinterpret a failed context copy as legacy.
+      const label = (await container(record, ['image', 'inspect', '--format', '{{ index .Config.Labels "network.ours.build-context" }}', `${record.project}:runtime`])).stdout.trim();
+      if (!['', '<no value>', '1'].includes(label)) throw new Error('Unsupported image build-context schema');
+      const names = [...BASE_RECORDS, ...(label === '1' ? [CONTEXT] : [])];
+      const stage = mkdtempSync(join(directory, '.records-'));
+      const name = `${record.project}-records`;
+      let created = false;
+      // An interrupted earlier run can leave its stopped helper behind; clear only that.
+      const stale = await container(record, ['container', 'inspect', name], { allowCodes: [1] });
+      const [value] = stale.code === 0 ? (() => { try { return JSON.parse(stale.stdout); } catch { return []; } })() : [];
+      if (value) {
+        const helper = value?.State?.Running === false && JSON.stringify(value?.Config?.Entrypoint) === JSON.stringify(['/bin/true'])
+          && value?.Config?.Image === `${record.project}:runtime`;
+        if (!helper) throw new Error(`A container named ${name} exists and is not this installer's stopped build-record helper; remove or rename it, then run the installer again`);
+        await container(record, ['rm', name]);
+      }
+      try {
+        await container(record, ['create', '--name', name, '--entrypoint', '/bin/true', `${record.project}:runtime`]);
+        created = true;
+        for (const file of names) {
+          await container(record, ['cp', `${name}:/opt/ours/${file}`, join(stage, file)]);
+          const st = lstatSync(join(stage, file));
+          if (!st.isFile() || st.uid !== process.getuid() || (st.mode & 0o7002)) throw new Error('Unsafe copied build record');
+          chmodSync(join(stage, file), 0o600);
+        }
+        readBuildRecords(stage, { privateFiles: true });
+        // Destination is unpublished candidate storage; any copy error aborts activation.
+        for (const file of names) renameSync(join(stage, file), join(directory, file));
+        if (label !== '1' && existsSync(join(directory, CONTEXT))) throw new Error('Legacy image conflicts with retained build context');
+      } finally {
+        try { if (created) await container(record, ['rm', name]); }
+        finally { rmSync(stage, { recursive: true, force: true }); }
+      }
+    },
+    async checkServerBuild(record, candidate, compatible, operation = 'update') {
+      const sameSources = readFileSync(record.sourcesPath).equals(readFileSync(candidate.sourcesPath));
+      if (operation === 'rebuild' && !sameSources) throw new Error('Rebuild must retain the selected sources');
+      if (!sameSources && operation !== 'rebuild' && !compatible) throw new Error('Changed sources require reviewed storage compatibility (--compatible)');
+      let current = record.workDir;
+      if (record.mode === 'docker') {
+        current = join(candidate.root, 'previous-build');
+        ensurePrivateDirectory(current);
+        await effects.copyDockerBuildRecords(record, current);
+      }
+      const currentRecords = readBuildRecords(current), candidateRecords = readBuildRecords(candidate.workDir);
+      if (compatible && operation !== 'rebuild') return;
+      if (!equalBuildRecords(currentRecords, candidateRecords)) {
+        throw new Error('Different build or missing verified context requires reviewed storage compatibility; use server update with --compatible');
+      }
+    },
+    async serverBuildTransition(record, args) {
+      const { serverBuildTransition } = await import('./build-transition.mjs');
+      return serverBuildTransition(record, args, effects);
+    },
+    async retireServerBuildRuntime(record) {
+      const selected = buildRuntime(record);
+      if (record.mode === 'docker') {
+        await effects.serverLifecycle(selected, 'stop');
+        await requireCleanContainerExit(selected, record.services);
+        await compose(selected, ['rm', '-f', ...record.services]);
+      } else await nativeLifecycle(selected, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
+    },
+    async updateServerBuildState(record, candidate, compatible, operation = 'update') {
+      const command = [operation, 'server', ...(compatible ? ['--compatible'] : [])];
+      if (record.mode === 'docker') {
+        await compose({ ...record, workDir: candidate.workDir }, ['run', '--rm', '--no-deps', '-T', 'state-operation', ...command], {
+          env: { OURS_MAINTENANCE_IMAGE: `${candidate.project}:maintenance`, OURS_STATE_DOMAIN: 'server', OURS_LIVE_ROOT: '/storage/state' },
+        });
+      } else {
+        const paths = installationPaths(record);
+        await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/maintenance/state-operation.mjs'), ...command], {
+          env: { ...localEnv(record), OURS_STATE_DOMAIN: 'server', OURS_STATE_ROOT: join(record.root, 'storage'),
+            OURS_LIVE_ROOT: paths.state, OURS_BUILD_ROOT: candidate.workDir,
+            OURS_COWORK_CLI_PATH: bin(record, 'ours-cowork'), OURS_COWORK_CONFIG: join(paths.cowork, 'config.json'),
+            OURS_COWORK_STATE_DIR: paths.cowork },
+        });
+      }
+    },
+    async recoverServerBuildNotifications(record, candidate, phase) {
+      const transition = record.buildTransition;
+      if (record.mode !== 'docker' || transition?.operation !== 'update' || !transition.compatible
+        || !['prepared', 'state-updated', 'runtime-activated'].includes(phase)
+        || transition.phase !== phase
+        || transition.candidate.root !== candidate.root) throw new Error('Notifications recovery requires the retained compatible Docker update');
+      const previous = join(candidate.root, 'previous-build');
+      privateDirectory(previous);
+      let active = phase === 'runtime-activated' ? record.workDir : candidate.workDir;
+      // Publication can move both directories before its journal save. Resume
+      // from the protected active copy only when the previous runtime was kept.
+      if (phase === 'state-updated' && !existsSync(candidate.workDir)) {
+        privateDirectory(join(candidate.root, 'previous-runtime'));
+        active = record.workDir;
+      }
+      privateDirectory(active);
+      const encode = directory => Object.fromEntries(Object.entries(readBuildRecords(directory, { privateFiles: true })).map(([name, bytes]) => [name, bytes.toString('base64')]));
+      const input = JSON.stringify({ phase, previous: encode(previous), target: encode(active) });
+      // Execute shipped maintenance against the retained image and its selected
+      // volume/user contract. No image retag, build replacement or host bind mount.
+      const source = readFileSync(join(INSTALLER_ASSETS, 'scripts/maintenance/state-operation.mjs'), 'utf8')
+        .replaceAll("from './", "from 'file:///opt/ours/docker/");
+      const module = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+      const helper = readFileSync(join(INSTALLER_ASSETS, 'scripts/maintenance/recover-notifications.mjs'), 'utf8')
+        .replace("'./state-operation.mjs'", JSON.stringify(module));
+      const result = await compose({ ...record, workDir: active }, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'node', 'state-operation', '--input-type=module', '-e', helper], {
+        input, env: { OURS_MAINTENANCE_IMAGE: `${candidate.project}:maintenance`, OURS_STATE_DOMAIN: 'server', OURS_LIVE_ROOT: '/storage/state' },
+      });
+      const recovered = JSON.parse(result.stdout);
+      if (!recovered || Object.keys(recovered).join(',') !== 'stateUpdated' || typeof recovered.stateUpdated !== 'boolean') throw new Error('Invalid Notifications recovery result');
+      return recovered.stateUpdated;
+    },
+    async publishServerBuild(record, candidate) {
+      const previous = join(candidate.root, 'previous-runtime');
+      const built = {};
+      if (record.mode === 'docker') {
+        const proven = effects.ownedImages(record);
+        const before = await effects.imageIds(record);
+        for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
+          const retained = `${candidate.project}:previous-${target}`;
+          const found = await container(record, ['image', 'inspect', retained], { allowCodes: [1] });
+          if (found.code !== 0) {
+            const current = await container(record, ['image', 'inspect', `${record.project}:${target}`], { allowCodes: [1] });
+            if (current.code === 0) await container(record, ['tag', `${record.project}:${target}`, retained]);
+          }
+          // A retained copy is proven only when the image it copies already was.
+          const tag = `${record.project}:${target}`;
+          if (before[tag] && proven[tag] === before[tag]) built[retained] = before[tag];
+        }
+        // The candidate project name is a random per-build name kept in the private
+        // record; its images were built by this update.
+        Object.assign(built, Object.fromEntries(Object.entries(await effects.imageIds(candidate, ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]))
+          .map(([tag, id]) => [`${record.project}:${tag.slice(candidate.project.length + 1)}`, id])));
+      }
+      if (!existsSync(previous)) {
+        privateDirectory(record.workDir);
+        privateDirectory(candidate.workDir);
+        renameSync(record.workDir, previous);
+      }
+      privateDirectory(previous);
+      if (existsSync(candidate.workDir)) {
+        if (existsSync(record.workDir)) throw new Error('Both candidate and active runtimes exist after retaining the previous build');
+        privateDirectory(candidate.workDir);
+        renameSync(candidate.workDir, record.workDir);
+      } else privateDirectory(record.workDir);
+      if (record.mode === 'docker') {
+        for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
+          await container(candidate, ['tag', `${candidate.project}:${target}`, `${record.project}:${target}`]);
+        }
+      }
+      atomicWriteConfig(record.sourcesPath, readFileSync(candidate.sourcesPath));
+      if (record.mode === 'docker') await effects.recordOwnedImages(record, built);
+    },
+    /** Current image IDs of this project's tags (only those that exist). */
+    async imageIds(record, targets = IMAGE_TARGETS) {
+      const images = {};
+      for (const target of targets) {
+        const tag = `${record.project}:${target}`;
+        const found = await container(record, ['image', 'inspect', '--format', '{{.Id}}', tag], { allowCodes: [1] });
+        if (found.code === 0 && /^sha256:[0-9a-f]{64}$/.test(found.stdout.trim())) images[tag] = found.stdout.trim();
+      }
+      return images;
+    },
+    ownedImages(record) {
+      const path = join(record.root, OWNED_IMAGES_FILE);
+      try { const value = JSON.parse(readFileSync(path, 'utf8')); return value?.schema === 1 && value.images && typeof value.images === 'object' ? value.images : {}; } catch { return {}; }
+    },
+    /** Add the IDs of images this run built; never adopts a tag it did not produce. */
+    async recordOwnedImages(record, built) {
+      const path = join(record.root, OWNED_IMAGES_FILE);
+      const next = ownedImagesRecord(existsSync(path) ? readFileSync(path, 'utf8') : null, built);
+      if (next) atomicWriteConfig(path, next);
+    },
+    async validateServerBuildState(record) {
+      if (record.mode === 'docker') {
+        return effects.runDockerConversion(record, { target: `${record.project}_server-storage` }, 'validate');
+      }
+      const { validateConvertedPackageState } = await import('./layout-conversion.mjs');
+      validateConvertedPackageState(record);
+    },
+    async discardServerBuild(candidate) {
+      if (candidate.mode === 'docker') {
+        for (const target of ['runtime', 'maintenance', 'previous-runtime', 'previous-maintenance', ...(candidate.gateway ? ['gateway', 'previous-gateway'] : [])]) {
+          const image = `${candidate.project}:${target}`;
+          const found = await container(candidate, ['image', 'inspect', image], { allowCodes: [1] });
+          if (found.code === 0) await container(candidate, ['image', 'rm', image]);
+        }
+      }
+      privateDirectory(candidate.root);
+      rmSync(candidate.root, { recursive: true });
+    },
+    async serverAccess(record, operation, { output, migrate = false } = {}) {
+      if (record.mode === 'docker') {
+        // Retained images contain the old helper that discarded CLI errors.
+        // Execute the shipped installer helper against the SAME selected image
+        // and Compose volume/user/environment contract, without retag/rebuild.
+        const diagnosticsUrl = `data:text/javascript;base64,${readFileSync(join(INSTALLER_ASSETS, 'scripts/runtime/diagnostics.mjs')).toString('base64')}`;
+        const helper = `process.argv.splice(1, 0, '/opt/ours/docker/client-setup.mjs');\n` + readFileSync(join(INSTALLER_ASSETS, 'scripts/runtime/client-setup.mjs'), 'utf8')
+          .replace("'../maintenance/build-context.mjs'", "'/opt/ours/maintenance/build-context.mjs'")
+          .replace("'./diagnostics.mjs'", JSON.stringify(diagnosticsUrl));
+        const accessArgs = (...args) => ['--entrypoint', 'node', 'access', '--input-type=module', '-e', helper, '--', ...args];
+        if (!output) return compose(record, ['run', '--rm', '--no-deps', '-T', ...accessArgs(operation)], { sensitive: true, env: { OURS_ACCESS_MIGRATE: migrate ? '1' : '0' } });
+        privateDirectory(dirname(output));
+        if (existsSync(output)) throw new Error('Credential output already exists');
+        const name = `${record.project}-issue-${randomUUID()}`;
+        const issuedPath = `/var/lib/ours/.issued-${randomUUID()}`;
+        const staging = join(dirname(output), `.ours-issued-${randomUUID()}`);
+        ensurePrivateDirectory(staging);
+        try {
+          await compose(record, ['run', '--name', name, '--no-deps', '-T', ...accessArgs('access-issue', issuedPath)], { sensitive: true });
+          const file = join(staging, 'credential');
+          await container(record, ['cp', `${name}:${issuedPath}`, file], { sensitive: true });
+          assertPrivateRegularFile(file, 'issued credential');
+          // Exclusive publication never overwrites an unrelated credential.
+          writePrivateNew(output, readFileSync(file));
+        } finally {
+          await compose(record, ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'rm', 'access', '-f', issuedPath], { sensitive: true });
+          await container(record, ['rm', '-f', name], { sensitive: true });
+          rmSync(staging, { recursive: true, force: true });
+        }
+        return;
+      }
+      const options = { env: localEnv(record), sensitive: true };
+      if (operation !== 'access-issue') return effects.run(bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'), ['config', operation, '--config', record.configPath, ...(operation === 'access-replace' ? ['--confirm'] : migrate ? ['--migrate'] : []), '--json'], options);
+      const outputs = output ? [output] : [join(installationPaths(record).daemon, 'daemon-token'), ...['telegram', 'cowork', 'messenger'].map(s => installationPaths(record).credentials[s])];
+      for (const path of outputs) await effects.run(bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'), ['config', operation, '--config', record.configPath, '--output', path, ...(output ? [] : ['--replace']), '--json'], options);
+    },
+    async recordRuntimeBuild(record) {
+      if (record.mode === 'docker') return; // Image preparation records its build.
+      verifyRuntimeRelease(record.workDir);
+      const tree = join(record.workDir, 'dependency-tree.json');
+      if (!existsSync(tree)) {
+        const result = await effects.run('npm', ['ls', '--omit=dev', '--all', '--json'], { cwd: record.workDir });
+        JSON.parse(result.stdout);
+        writePrivateNew(tree, result.stdout);
+      }
+    },
+    async recordInstallationBuild(record) {
+      if (record.mode === 'docker') return;
+      await effects.recordRuntimeBuild(record);
+      const paths = installationPaths(record);
+      const records = readBuildRecords(record.workDir);
+      for (const service of SERVER_SERVICES) {
+        const marker = join(paths[service], '.ours-provenance');
+        initializeBuildMarker(marker, records);
+      }
+    },
+    async serverMaintenance(record, args) {
+      if (record.schema !== 2 || record.layoutConversion) throw new Error('Finish managed layout conversion before maintenance');
+      if (!['server', 'daemon', 'telegram', 'cowork', 'messenger'].includes(args.domain) || !['backup', 'restore', 'reset'].includes(args.operation) || (args.domain === 'server' && args.operation === 'reset')) {
+        throw new Error('Addressed shared-state maintenance is not yet available');
+      }
+      const selected = maintenanceServices(record, args.domain);
+      if (!selected.length) throw new Error('Selected component is not part of this installation');
+      const running = await effects.serverLifecycle(record, 'status', selected);
+      await effects.serverLifecycle(record, 'stop', selected);
+      const command = [args.operation, args.domain, ...(args.operation === 'reset' ? ['--confirm'] : [args.label]), ...(args.compatible ? ['--compatible'] : [])];
+      if (record.mode === 'docker') {
+        await requireCleanContainerExit(record, selected);
+        // Parent replacement invalidates every retained subpath mount.
+        if (['restore', 'reset'].includes(args.operation)) await compose(record, ['rm', '-f', ...selected]);
+        await compose(record, ['run', '--rm', '--no-deps', '-T', 'state-operation', ...command], {
+          env: { OURS_STATE_DOMAIN: args.domain, OURS_LIVE_ROOT: ['server', 'daemon'].includes(args.domain) ? '/storage/state' : `/storage/state/${args.domain}` },
+        });
+      } else {
+        const paths = installationPaths(record);
+        await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/maintenance/state-operation.mjs'), ...command], {
+          env: { ...localEnv(record), OURS_STATE_DOMAIN: args.domain,
+            OURS_STATE_ROOT: join(record.root, 'storage'), OURS_LIVE_ROOT: ['server', 'daemon'].includes(args.domain) ? paths.state : paths[args.domain],
+            OURS_BUILD_ROOT: record.workDir, OURS_CLI_PATH: bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'),
+            OURS_DAEMON_CONFIG: record.configPath, OURS_COWORK_CLI_PATH: bin(record, 'ours-cowork'),
+            OURS_COWORK_CONFIG: join(paths.cowork, 'config.json'), OURS_COWORK_STATE_DIR: paths.cowork },
+        });
+      }
+      await effects.serverLifecycle(record, 'start', running);
+    },
+    async selectConversionVolumes(record, { allowMissingSources = false } = {}) {
+      if (record.schema !== 1 || record.mode !== 'docker') {
+        throw new Error('Select the recorded legacy Docker source');
+      }
+      const result = await compose(record, ['config', '--format', 'json']);
+      const configuration = JSON.parse(result.stdout);
+      const sources = {};
+      const inspectOwned = async (name, key, optional = false) => {
+        if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
+          throw new Error('Invalid conversion volume name');
+        }
+        const result = await container(record, ['volume', 'inspect', '--format', '{{json .}}', name], {
+          ...(optional ? { allowCodes: [1] } : {}),
+        });
+        if (result.code !== 0) {
+          if (optional) {
+            const inventory = await container(record, ['volume', 'ls', '--format', '{{.Name}}']);
+            if (inventory.code === 0 && !inventory.stdout.split(/\s+/).includes(name)) return false;
+          }
+          throw new Error(`Source volume is missing or unavailable: ${name}`);
+        }
+        const volume = JSON.parse(result.stdout);
+        if (volume.Name !== name || volume.Labels?.['com.docker.compose.project'] !== record.project
+          || volume.Labels?.['com.docker.compose.volume'] !== key) {
+          throw new Error(`Conversion volume ownership differs: ${name}`);
+        }
+        if (volume.Driver !== 'local' || Object.keys(volume.Options ?? {}).length) {
+          throw new Error(`External or custom volume storage requires explicit ownership resolution: ${name}`);
+        }
+        return true;
+      };
+      for (const service of SERVER_SERVICES) {
+        const mounts = configuration.services?.[service]?.volumes ?? [];
+        const selected = [{ key: `${service}-state`, alias: service,
+          target: service === 'daemon' ? '/var/lib/ours' : `/var/lib/ours-${service}`, subpath: 'data' }];
+        if (service !== 'daemon') selected.push({
+          key: `${service}-credential`, alias: `${service}-credential`, target: `/credentials/${service}`,
+        });
+        for (const selection of selected) {
+          const mount = mounts.find(mount => mount.target === selection.target);
+          const declared = configuration.volumes?.[selection.key];
+          if (mount?.type !== 'volume' || mount.source !== selection.key
+            || mount.volume?.subpath !== selection.subpath || !declared || declared.external) {
+            throw new Error(`Unexpected legacy source mount for ${selection.alias}`);
+          }
+          if ((declared.driver && declared.driver !== 'local') || Object.keys(declared.driver_opts ?? {}).length) {
+            throw new Error(`External or custom volume storage requires explicit ownership resolution: ${selection.key}`);
+          }
+          if (!await inspectOwned(declared.name, selection.key, allowMissingSources)) continue;
+          if (Object.values(sources).includes(declared.name)) throw new Error('Conversion source volumes alias each other');
+          sources[selection.alias] = declared.name;
+        }
+      }
+      const target = `${record.project}_server-storage`;
+      if (Object.values(sources).includes(target)) throw new Error('Conversion destination aliases a source volume');
+      const targetExists = await inspectOwned(target, 'server-storage', true);
+      if (targetExists && !record.layoutConversion) throw new Error('Unreserved conversion destination already exists');
+      return { sources, target, targetExists };
+    },
+    async prepareDockerConversionRuntime(record) {
+      const { prepareDockerConversionRuntime } = await import('./docker-conversion-runtime.mjs');
+      await prepareDockerConversionRuntime(record, effects, INSTALLER_ASSETS);
+    },
+    async runDockerConversion(record, volumes, operation, label) {
+      const { runDockerConversion } = await import('./docker-conversion-runtime.mjs');
+      return runDockerConversion(record, volumes, operation, label, effects);
+    },
+    async convertDockerInstallation(record, operation) {
+      const { convertDockerInstallation } = await import('./docker-layout-installation.mjs');
+      return convertDockerInstallation(record, operation, effects);
+    },
+    async confirmDockerWritersStopped(record) {
+      await requireCleanContainerExit(record, record.services);
+    },
+    async prepareLegacyPackageSource(record) {
+      await ownerCommand(record, 'cowork', 'prepare-backup');
+    },
+    async retainConvertedPackageAuthority(record, daemon) {
+      await effects.run(bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'), [
+        'config', 'access-retain', '--config', record.configPath,
+        '--target-state-dir', daemon, '--json',
+      ], { env: localEnv(record), sensitive: true });
+    },
+    async convertPackageInstallation(record, operation) {
+      const { convertPackageInstallation } = await import('./layout-conversion.mjs');
+      return convertPackageInstallation(record, operation, effects);
+    },
+    async stopPendingConversion(record) {
+      validateInstallation(record, record.root);
+      if (!record.layoutConversion) throw new Error('Select a pending layout conversion');
+      const source = record.layoutConversion.sourceRecord;
+      const selections = record.schema === 1 ? [source] : [record, source];
+      for (const selection of selections) {
+        if (record.mode === 'docker') {
+          await effects.serverLifecycle(selection, 'stop', SERVER_SERVICES);
+        } else {
+          // Cleanup can already have removed former state. Never recreate it.
+          const paths = installationPaths(selection);
+          const retired = record.schema === 2 && selection === source;
+          const selected = selection.services.filter(service => {
+            if (!existsSync(paths[service])) return false;
+            // Published conversion already retired old registrations. Partial
+            // cleanup may leave directories without usable owner configuration.
+            if (!retired || service === 'messenger') return true;
+            return existsSync(service === 'daemon' ? selection.configPath : join(paths[service], 'config.json'));
+          });
+          await nativeLifecycle(selection, 'stop', selected, { effects, localEnv, ownerCommand, bin, stopSelections: selections });
+        }
+      }
+    },
+    async retireLegacyServices(record) {
+      if (record.schema !== 1 || !['packages', 'docker'].includes(record.mode)) {
+        throw new Error('Select a legacy managed installation for service retirement');
+      }
+      if (record.mode === 'docker') {
+        await effects.serverLifecycle(record, 'stop');
+        await requireCleanContainerExit(record, record.services);
+        await compose(record, ['rm', '-f', ...record.services]);
+        return;
+      }
+      await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
+    },
+    async serverUninstall(record) {
+      if (record.schema !== 2 || record.layoutConversion || record.buildTransition) throw new Error('Complete retained installation transitions before uninstall');
+      if (record.mode === 'docker') {
+        await effects.serverLifecycle(record, 'stop');
+        await requireCleanContainerExit(record, record.services);
+        await compose(record, ['rm', '-f', ...record.services]);
+      } else await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
+      effects.out('Managed services removed; installation selection, stored identities, credentials and volumes retained.');
+    },
+    /**
+     * Stop a managed installation's services before its complete removal.
+     * Docker writers stop through Compose; containers are removed by project
+     * label afterwards. Native services are retired through their owners, which
+     * also removes their boot registrations.
+     */
+    async serverStopForRemoval(record) {
+      if (record.mode === 'docker') {
+        if (existsSync(record.workDir)) await effects.serverLifecycle(record, 'stop');
+        return;
+      }
+      await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
+    },
+    async serverLifecycle(record, operation, selected = record.services) {
+      record = buildRuntime(record);
+      if (record.mode === 'docker') {
+        if (operation === 'status') {
+          const result = await compose(record, ['ps', '--format', 'json', ...selected]);
+          const raw = result.stdout.trim();
+          const rows = !raw ? [] : raw.startsWith('[') ? JSON.parse(raw) : raw.split('\n').map(line => JSON.parse(line));
+          return rows.filter(row => row.State === 'running').map(row => row.Service).filter(s => selected.includes(s));
+        }
+        if (operation === 'stop') {
+          const consumers = selected.filter(s => s !== 'daemon').reverse();
+          // Gateways created before stop_signal was set still stop with nginx's
+          // SIGQUIT, which waits for open streams beyond the grace period and
+          // ends in SIGKILL. SIGTERM is nginx's fast shutdown; it exits cleanly.
+          if (consumers.includes('gateway')) await compose(record, ['kill', '-s', 'SIGTERM', 'gateway']);
+          if (consumers.length) await compose(record, ['stop', ...consumers]);
+          if (selected.includes('daemon')) await compose(record, ['stop', 'daemon']);
+          if ((await effects.serverLifecycle(record, 'status', selected)).length) throw new Error('Writers did not stop');
+          return;
+        }
+        if (existsSync(record.workDir)) atomicWriteConfig(join(record.workDir, 'compose.recovery.json'), JSON.stringify(recoveryCompose(record)));
+        await reconcileDockerRecovery(record, effects);
+        const start = async service => {
+          effects.out(`Starting ${service}; waiting for readiness...`);
+          // Gateway has no persistent state. Recreate its network endpoint on each
+          // managed start, including retries after an interrupted/failed bind.
+          try { await compose(record, ['up', '-d', '--no-build', '--no-deps', ...(service === 'gateway' ? ['--force-recreate'] : []), '--wait', service]); }
+          catch (cause) { throw await dockerStartupError(record, service, cause); }
+          effects.out(`${service} is ready.`);
+        };
+        if (selected.includes('daemon')) await start('daemon');
+        const failures = [];
+        for (const service of selected.filter(s => s !== 'daemon')) {
+          try { await start(service); }
+          catch (error) { failures.push({ service, error }); }
+        }
+        if (!failures.length && record.gateway && ['daemon', 'cowork', 'gateway'].every(service => selected.includes(service))) await effects.verifyGateway(record);
+        if (failures.length) throw new Error(`Application readiness failed: ${failures.map(f => f.service).join(', ')}. Check the selected application prerequisites.\n${failures.map(f => f.error.message).join('\n\n')}`);
+        return;
+      }
+      return nativeLifecycle(record, operation, selected, { effects, localEnv, ownerCommand, bin });
+    },
+    readManagedClientProfile() {
+      const path = join(home, '.ours-client', 'profile.json');
+      try { lstatSync(path); }
+      catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+      privateDirectory(dirname(path));
+      if (!readHostProfileFile(path)) throw new Error('Managed client profile must contain a complete network profile');
+      return JSON.parse(readFileSync(path, 'utf8'));
+    },
+    async discoverClientProfile(endpoint, credentialPath) {
+      const base = serverBase(endpoint);
+      const request = path => fetch(`${base}${path}`, { redirect: 'error', signal: AbortSignal.timeout(5000) });
+      const discovery = await request('/.well-known/ours');
+      if (discovery.ok) return validateGatewayDiscovery(base, await discovery.json(), resolve(credentialPath));
+      throw new Error(`Gateway discovery answered HTTP ${discovery.status}; enable the gateway. Direct daemon fallback is not supported.`);
+    },
+    importClientProfile({ profile, sourcesPath, sources: resolvedSources, integrations, fleetSettingsPath, disableFleetAgentsSetup = false, refresh = false, notificationsProducerPath }) {
+      profile = validateGatewayClientProfile(profile);
+      const root = join(home, '.ours-client');
+      const configPath = join(root, 'profile.json');
+      const credentialPath = join(root, 'credential');
+      const current = effects.readManagedClientProfile();
+      if (current && current.expectedInstanceId !== profile.expectedInstanceId)
+        throw new Error('Managed client already selects another server; existing default was not changed');
+      assertPrivateRegularFile(profile.credentialPath, 'credential');
+      const credential = readFileSync(profile.credentialPath, 'utf8');
+      if (!credential.trim()) throw new Error('Client credential is empty');
+      // Read every supplied input before any publication. Existing setup settings win on retry.
+      const sources = current && !refresh ? null : resolvedSources
+        ? Buffer.from(`${JSON.stringify(resolvedSources, null, 2)}\n`)
+        : readFileSync(sourcesPath);
+      const fleetSettings = (!current || refresh) && fleetSettingsPath ? readFileSync(fleetSettingsPath) : null;
+      if (fleetSettings) JSON.parse(fleetSettings.toString());
+      let producer = null;
+      if (notificationsProducerPath) {
+        assertPrivateRegularFile(notificationsProducerPath, 'notification producer credential');
+        producer = readFileSync(notificationsProducerPath, 'utf8');
+        let bound; try { bound = JSON.parse(producer); } catch { bound = null; }
+        if (bound?.schema !== 1 || bound.serverUrl !== profile.serverUrl || bound.expectedInstanceId !== profile.expectedInstanceId || !/^[A-Za-z0-9_-]{32,256}$/.test(bound.token ?? ''))
+          throw new Error('Notification producer credential does not match the selected server');
+      }
+      ensurePrivateDirectory(root);
+      // Written before the profile it belongs to is published or changed.
+      let notificationsProducerChanged = false;
+      if (producer !== null) {
+        const producerPath = join(root, 'notifications-producer.json');
+        if (!existsSync(producerPath) || readFileSync(producerPath, 'utf8') !== producer) { atomicWriteConfig(producerPath, producer); notificationsProducerChanged = true; }
+      }
+      if (current && !refresh) {
+        assertPrivateRegularFile(credentialPath, 'managed credential');
+        if (readFileSync(credentialPath, 'utf8') !== credential) atomicWriteConfig(credentialPath, credential);
+        const saved = { ...current, ...profile, credentialPath };
+        if (current.endpoint !== saved.endpoint || current.serverUrl !== saved.serverUrl)
+          atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
+        return { configPath, profile: validateGatewayClientProfile(saved), settings: current.installer, notificationsProducerChanged };
+      }
+      const settings = { sourcesPath: join(root, 'sources.json'), integrations, ...(disableFleetAgentsSetup ? { disableFleetAgentsSetup: true } : {}) };
+      if (fleetSettings) settings.fleetSettingsPath = join(root, 'fleet-settings.json');
+      // Publish the profile last: clients cannot select incomplete imported inputs.
+      atomicWriteConfig(settings.sourcesPath, sources);
+      if (fleetSettings) atomicWriteConfig(settings.fleetSettingsPath, fleetSettings);
+      atomicWriteConfig(credentialPath, credential);
+      const saved = { ...profile, credentialPath, installer: settings };
+      atomicWriteConfig(configPath, JSON.stringify(saved, null, 2) + '\n');
+      return { configPath, profile: validateHostProfile(saved), settings, notificationsProducerChanged };
+    },
+    async qualifyInstalledGatewayClient(profile) {
+      if (!profile.installer?.integrations?.includes('fleet')) return;
+      let info;
+      try { info = JSON.parse((await effects.run('ours-fleet', ['version', '--json'])).stdout); } catch {}
+      if (!Array.isArray(info?.capabilities) || !info.capabilities.includes('cowork.http-management-v1'))
+        throw new Error('Installed Fleet does not support gateway HTTP management; upgrade Fleet before gateway-enable');
+    },
+    async qualifyGatewayClient({ profile, sourcesPath, sources, integrations, refresh = false }) {
+      if (!profile.serverUrl || !integrations.includes('fleet')) return;
+      // Acquire into the retained package cache without publishing a profile,
+      // credential, native command, or integration. Normal acquisition rechecks it.
+      const staging = mkdtempSync(join(home, '.ours-gateway-client-'));
+      try {
+        const stagedSources = join(staging, 'sources.json');
+        writeFileSync(stagedSources, sources ? JSON.stringify(sources, null, 2) + '\n' : readFileSync(sourcesPath), { mode: 0o600 });
+        await effects.acquireClientPackages(join(home, '.ours-client/profile.json'), stagedSources, integrations,
+          { refresh, gatewayServerUrl: profile.serverUrl, qualifyOnly: true });
+      } finally { rmSync(staging, { recursive: true, force: true }); }
+    },
+    async acquireClientPackages(configPath, sourcesPath, integrations, { refresh = false, hostCliOnly = false, gatewayServerUrl, qualifyOnly = false } = {}) {
+      const manifest = JSON.parse(readFileSync(sourcesPath, 'utf8'));
+      // Every client installation includes the native CLI and its SDK dependency.
+      const selected = clientPackageNames(integrations);
+      const packages = selectSourcePackages(manifest, 'client', selected);
+      const selectionKey = JSON.stringify([hostCliOnly ? 'host-cli-private-v1' : 'host-cli-v1', configPath, ...(hostCliOnly ? [manifest] : []), ...(refresh ? [manifest, integrations] : [])]);
+      const root = join(home, '.ours-client-install', createHash('sha256').update(selectionKey).digest('hex').slice(0, 16));
+      const hasGit = Object.values(packages).some(selection => selection.source);
+      await effects.run('npm', ['--version']);
+      if (hasGit) {
+        for (const command of ['python3', 'git', 'make', 'cc']) await effects.run(command, ['--version']);
+      }
+      // This directory retains active executables, not disposable download cache.
+      ensurePrivateDirectory(join(home, '.ours-client-install'));
+      ensurePrivateDirectory(root);
+      // Record which installation this acquisition serves, for complete removal.
+      let owner = null;
+      try { owner = readHostProfileFile(configPath)?.expectedInstanceId ?? null; } catch { /* not yet imported */ }
+      const ownersPath = join(root, OWNERS_FILE);
+      try {
+        const ownerRecord = owner ? addOwner(existsSync(ownersPath) ? readFileSync(ownersPath, 'utf8') : null, owner) : null;
+        if (ownerRecord) atomicWriteConfig(ownersPath, ownerRecord);
+      } catch (error) { effects.out?.(`! ${error.message}; complete removal will leave ${root} in place and say so.`); }
+      const retained = join(root, 'sources.json');
+      const bytes = readFileSync(sourcesPath);
+      if (!existsSync(retained)) writePrivateNew(retained, bytes);
+      else if (!readFileSync(retained).equals(bytes)) throw new Error('Client installation has another exact source selection; select a distinct client profile');
+      const selectionPath = join(root, 'integrations.json');
+      const selectionBytes = JSON.stringify(integrations);
+      if (existsSync(selectionPath) && readFileSync(selectionPath, 'utf8') !== selectionBytes) throw new Error('Client installation has another integration selection; retain its settings or select a distinct profile');
+      if (!existsSync(selectionPath)) writePrivateNew(selectionPath, selectionBytes);
+      if (!existsSync(join(root, '.packages-ready'))) {
+        if (hasGit) {
+          const sourceRoot = join(root, `build-${randomUUID()}`);
+          ensurePrivateDirectory(sourceRoot);
+          try {
+            await effects.run(process.execPath, [join(INSTALLER_ASSETS, 'scripts/build/build.mjs')], { stream: true, cwd: root, env: { OURS_BUILD_ROOT: root, OURS_SOURCE_ROOT: sourceRoot, OURS_BUILD_PACKAGES: selected.join(',') } });
+          } finally { rmSync(sourceRoot, { recursive: true, force: true }); }
+        } else {
+          writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ours-native-clients', private: true, dependencies: Object.fromEntries(Object.entries(packages).map(([name, selection]) => [name, selection.version])) }), { mode: 0o600 });
+        }
+        await effects.run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], { stream: true, cwd: root });
+        verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
+        writePrivateNew(join(root, '.packages-ready'), 'ready\n');
+      }
+      verifyReleaseGraph(root, manifest, { requiredPackages: Object.keys(packages) });
+      if (integrations.includes('fleet') && (gatewayServerUrl || readHostProfileFile(configPath)?.serverUrl)) {
+        let info;
+        try { info = JSON.parse(readFileSync(join(root, 'node_modules/@ours.network/fleet/dist/build-info.json'), 'utf8')); } catch {}
+        if (!Array.isArray(info?.capabilities) || !info.capabilities.includes('cowork.http-management-v1'))
+          throw new Error('Selected Fleet artifact does not support gateway HTTP management; select a compatible client release');
+      }
+      if (qualifyOnly) return;
+      const cliPolicy = hostCliOnly ? null : hostCliPolicy(manifest);
+      // Local acquisition alone does not publish native commands. Use the user's
+      // configured npm prefix and retained dependency closure, including on retry.
+      for (const name of integrations.filter(name => name === 'fleet' || name === 'codex')) {
+        await effects.run('npm', ['install', '--global', '--install-links=false', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(root, 'node_modules', '@ours.network', name)]);
+      }
+      let cliBin = join(root, 'node_modules/.bin/ours');
+      if (cliPolicy) {
+        const cliSources = join(root, 'host-cli-sources.json');
+        const cliBytes = JSON.stringify(cliPolicy, null, 2) + '\n';
+        if (!existsSync(cliSources)) writePrivateNew(cliSources, cliBytes);
+        else if (readFileSync(cliSources, 'utf8') !== cliBytes) throw new Error('Retained host CLI source selection differs');
+        const acquired = await effects.acquireClientPackages(configPath, cliSources, [], { refresh, hostCliOnly: true });
+        cliBin = acquired.cliBin;
+      } else {
+        // Publish last so optional integration installation cannot downgrade ours.
+        await publishClientCli(effects, join(root, 'node_modules', '@ours.network/cli'), { policy: manifest, isolated: hostCliOnly });
+      }
+      const localPackages = Object.fromEntries(integrations.filter(n => n !== 'fleet').map(name => [name, join(root, 'node_modules', '@ours.network', name)]));
+      return { localPackages, packages: {}, cliBin, fleetBin: integrations.includes('fleet') ? join(root, 'node_modules/.bin/ours-fleet') : null };
+    },
+    /** Capability tokens the given Fleet executable reports for itself; [] when it reports none. */
+    async fleetCapabilities(fleetBin, env = null) {
+      try {
+        const capabilities = JSON.parse((await effects.run(fleetBin, ['version', '--json'], { env })).stdout).capabilities;
+        return Array.isArray(capabilities) ? capabilities.filter(item => typeof item === 'string') : [];
+      } catch { return []; }
+    },
+    async prepareClientMarketplace(name, packagePath) {
+      const acquisitionRoot = dirname(dirname(dirname(packagePath)));
+      const sourcePath = join(acquisitionRoot, 'sources.json');
+      const policy = existsSync(sourcePath) ? JSON.parse(readFileSync(sourcePath, 'utf8')) : {}; // Retained pre-release client acquisitions.
+      const release = releaseBinding(policy);
+      const integrationsPath = join(acquisitionRoot, 'integrations.json');
+      const integrations = existsSync(integrationsPath) ? JSON.parse(readFileSync(integrationsPath, 'utf8')) : null;
+      const requiredPackages = integrations ? clientPackageNames(integrations).map(name => '@ours.network/' + name) : Object.keys(policy.packages ?? {});
+      verifyReleaseGraph(acquisitionRoot, policy, { requiredPackages });
+      const root = join(acquisitionRoot, 'marketplaces', name);
+      const plugin = join(root, 'plugins', 'ours');
+      if (!existsSync(plugin)) {
+        mkdirSync(dirname(plugin), { recursive: true, mode: 0o700 });
+        cpSync(packagePath, plugin, { recursive: true });
+        const manifestPath = join(plugin, 'package.json');
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        for (const dependency of release ? [] : ['sdk', 'cli', 'mcp']) {
+          const name = `@ours.network/${dependency}`;
+          if (manifest.dependencies?.[name]) manifest.dependencies[name] = `file:${join(dirname(packagePath), dependency)}`;
+        }
+        writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+      }
+      if (release && JSON.stringify(JSON.parse(readFileSync(join(plugin, 'package.json'), 'utf8'))) !== JSON.stringify(JSON.parse(readFileSync(join(packagePath, 'package.json'), 'utf8')))) {
+        throw new Error('Marketplace package differs from verified release acquisition');
+      }
+      // Native caches copy plugin contents; local SDK/CLI dependencies must not
+      // remain links to acquisition paths. Repeating setup also repairs an interrupted install.
+      await effects.run('npm', ['install', '--install-links', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: plugin });
+      verifyReleaseGraph(plugin, policy);
+      const value = name === 'codex'
+        ? { name: 'ours-codex-marketplace', plugins: [{ name: 'ours', source: { source: 'local', path: './plugins/ours' }, policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' }, category: 'Productivity' }] }
+        : { name: 'ours.network', owner: { name: 'Adapt Toolkit' }, plugins: [{ name: 'ours', source: './plugins/ours' }] };
+      const manifestPath = name === 'codex' ? join(root, '.agents/plugins/marketplace.json') : join(root, '.claude-plugin/marketplace.json');
+      effects.writeJson(manifestPath, JSON.stringify(value, null, 2) + '\n');
+      return root;
+    },
+
+  };
+}
+
+async function nativeLifecycle(record, operation, selected, { effects, localEnv, ownerCommand, bin, stopSelections }) {
+  const linux = effects.platform.platform === 'linux';
+  const daemonState = installationPaths(record).daemon;
+  const daemonService = linux ? unitNameForStateDir(daemonState) : launchdLabelForStateDir(daemonState);
+  if (!daemonService.ok) throw new Error('Cannot derive selected daemon service');
+  const messenger = messengerServicePlan(record, effects.platform.platform, effects.home, bin(record, 'ours-messenger-server'), localEnv(record, 'messenger'), process.getuid());
+  const plans = {
+    daemon: {
+      name: linux ? daemonService.unit : daemonService.label,
+      path: linux
+        ? join(effects.home, '.config/systemd/user', daemonService.unit)
+        : join(effects.home, 'Library/LaunchAgents', `${daemonService.label}.plist`),
+    },
+    telegram: { name: linux ? 'ours-telegram.service' : 'solutions.adaptframework.ours-telegram', state: installationPaths(record).telegram },
+    cowork: { name: linux ? 'ours-cowork.service' : 'network.ours.cowork', state: installationPaths(record).cowork },
+    messenger,
+  };
+  for (const [service, plan] of Object.entries(plans)) {
+    plan.path ??= linux ? join(effects.home, '.config/systemd/user', plan.name) : join(effects.home, 'Library/LaunchAgents', `${plan.name}.plist`);
+    if (service === 'daemon') continue;
+    if (existsSync(plan.path)) {
+      const text = readFileSync(plan.path, 'utf8');
+      const allowedStates = stopSelections?.map(selection => installationPaths(selection)[service]) ?? [plan.state];
+      if (service === 'messenger' ? !text.includes(messenger.marker) : !allowedStates.includes(consumerServiceState(text, service, effects.platform.platform))) throw new Error(`Refusing unrelated existing ${service} service: ${plan.path}`);
+    }
+  }
+  const manager = async (service, op) => {
+    const plan = plans[service];
+    if (!existsSync(plan.path)) return;
+    if (linux) return effects.run('systemctl', ['--user', op, plan.name]);
+    if (op === 'stop') {
+      const found = await effects.run('launchctl', ['print', `gui/${process.getuid()}/${plan.name}`], { allowCodes: [113] });
+      if (found.code === 0) await effects.run('launchctl', ['bootout', `gui/${process.getuid()}`, plan.path]);
+    } else {
+      const found = await effects.run('launchctl', ['print', `gui/${process.getuid()}/${plan.name}`], { allowCodes: [113] });
+      if (found.code !== 0) await effects.run('launchctl', ['bootstrap', `gui/${process.getuid()}`, plan.path]);
+      await effects.run('launchctl', ['kickstart', `gui/${process.getuid()}/${plan.name}`]);
+    }
+  };
+  const health = async service => {
+    if (service === 'daemon') {
+      const profilePath = join(installationPaths(record).mcp, 'profile.json');
+      await effects.verifyHostProfile(profilePath);
+      return;
+    }
+    if (service === 'cowork') { await ownerCommand(record, service, 'status'); return; }
+    const endpoint = { telegram: 'http://127.0.0.1:3051/health', messenger: `http://127.0.0.1:${record.messengerPort}/api/healthz` }[service];
+    const response = await fetch(endpoint, { redirect: 'error', signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error(`${service} health check failed`);
+  };
+  if (operation === 'status') {
+    const running = [];
+    for (const service of selected) {
+      if (service === 'messenger') {
+        if (!existsSync(messenger.path)) continue;
+        const result = linux ? await effects.run('systemctl', ['--user', 'is-active', messenger.name], { allowCodes: [3, 4] }) : await effects.run('launchctl', ['print', `${messenger.domain}/${messenger.name}`], { allowCodes: [113] });
+        if (result.code === 0 && (linux || /pid = \d+/.test(result.stdout))) running.push(service);
+      } else {
+        const result = await ownerCommand(record, service, 'status', { allowCodes: service === 'daemon' ? [3] : service === 'cowork' ? [6] : [1] });
+        if (result.code === 0) running.push(service);
+      }
+    }
+    return running;
+  }
+  if (operation === 'stop' || operation === 'retire') {
+    for (const service of [...selected].reverse()) {
+      if (operation === 'retire' && linux && service !== 'daemon' && existsSync(plans[service].path)) {
+        await effects.run('systemctl', ['--user', 'disable', plans[service].name]);
+      }
+      if (service !== 'daemon') await manager(service, 'stop');
+      else await ownerCommand(record, service, 'uninstall-service');
+      if (service !== 'messenger') await ownerCommand(record, service, 'stop');
+      if (service === 'daemon') {
+        const stateDir = installationPaths(record).daemon;
+        const derived = linux ? unitNameForStateDir(stateDir) : launchdLabelForStateDir(stateDir);
+        if (!derived.ok) throw new Error('Cannot verify selected daemon service shutdown');
+        const observed = linux
+          ? await effects.run('systemctl', ['--user', 'is-active', derived.unit], { allowCodes: [3, 4] })
+          : await effects.run('launchctl', ['print', `gui/${process.getuid()}/${derived.label}`], { allowCodes: [113] });
+        if (observed.code === 0) throw new Error('Selected daemon service is still loaded or active; authority operation refused');
+      }
+    }
+    if ((await nativeLifecycle(record, 'status', selected, { effects, localEnv, ownerCommand, bin, stopSelections })).length) throw new Error('Selected writers did not stop');
+    if (operation === 'retire') {
+      // Daemon registration removal belongs to its existing uninstall-service command.
+      // Consumer definitions were checked against this installation before any stop.
+      for (const service of selected.filter(service => service !== 'daemon')) {
+        rmSync(plans[service].path, { force: true });
+      }
+      if (linux) await effects.run('systemctl', ['--user', 'daemon-reload']);
+    }
+    return;
+  }
+  const failures = [];
+  for (const service of selected) {
+    try {
+      if (service === 'messenger') {
+        if (!existsSync(messenger.path)) {
+          mkdirSync(dirname(messenger.path), { recursive: true });
+          writePrivateNew(messenger.path, messenger.text);
+          if (linux) {
+            await effects.run('systemctl', ['--user', 'daemon-reload']);
+            await effects.run('systemctl', ['--user', 'enable', messenger.name]);
+          }
+        }
+        await manager(service, 'start');
+      } else if (service === 'daemon') {
+        await ownerCommand(record, service, 'install-service');
+        await manager(service, 'start');
+      } else if (!existsSync(plans[service].path)) {
+        await ownerCommand(record, service, 'install-service');
+      } else await manager(service, 'start');
+      let ready = false;
+      // Restoring existing identities can take longer than 30 seconds.
+      const readinessDeadline = Date.now() + 120_000;
+      while (Date.now() < readinessDeadline) {
+        try { await health(service); ready = true; break; } catch { await new Promise(resolve => setTimeout(resolve, 1000)); }
+      }
+      if (!ready) throw new Error('Application is not ready');
+    } catch {
+      if (service === 'daemon') throw new Error('Daemon API is not ready; consumers were not started');
+      failures.push(service);
+    }
+  }
+  if (failures.length) throw new Error(`Application readiness failed: ${failures.join(', ')}. Check the selected application prerequisites.`);
+}

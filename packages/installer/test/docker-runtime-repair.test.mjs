@@ -1,0 +1,165 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { qualifyDockerRuntime, refreshDockerPolicyCopy } from '../lib/docker-runtime-repair.mjs';
+
+function fixture(t, options = {}) {
+  const root = fs.mkdtempSync(join(tmpdir(), 'ours-repair-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workDir = join(root, 'runtime'); fs.mkdirSync(workDir, { mode: 0o700 });
+  const source = '{"packages":{}}\n';
+  const record = { root, workDir, project: 'ours-fixture', sourcesPath: join(root, 'sources.json'), uid: 12345, gid: 12345 };
+  fs.writeFileSync(record.sourcesPath, source, { mode: 0o600 });
+  fs.writeFileSync(join(workDir, 'Dockerfile'), 'FROM node:24\nCOPY sources.json /opt/ours/sources.json\n');
+  const hash = createHash('sha256').update(source).digest('hex');
+  const id = 'sha256:' + 'a'.repeat(64), repairedId = 'sha256:' + 'b'.repeat(64);
+  const config = { User: '1000:1000', Env: ['X=y'], Entrypoint: ['/bin/sh', '/entrypoint'], Cmd: null, Labels: { 'network.ours.build-context': '1' } };
+  const base = { Id: id, Config: config, RootFS: { Layers: ['original-layer'] } };
+  const candidate = { Id: repairedId, Config: options.changedConfig ? { ...config, User: '0' } : config, RootFS: { Layers: ['original-layer', 'permissions-layer'] } };
+  const report = { uid: 0, gid: 0, mode: 0o600, regular: true, links: 1, policyHash: hash, records: { 'package-lock.json': 'lockhash', 'dependency-tree.json': 'treehash', 'build-context.json': 'contextHash' } };
+  let current = options.healthy ? candidate : base;
+  let injected = false;
+  const calls = [];
+  const effects = { out: () => {}, async run(command, args, runOptions = {}) {
+    calls.push({ command, args, options: runOptions });
+    if (args[0] === 'image' && args[1] === 'inspect') {
+      const target = args.at(-1);
+      const value = target === 'ours-fixture:runtime' ? current : target === id || target.endsWith(':base') ? base : candidate;
+      return { code: 0, stdout: JSON.stringify([value]) };
+    }
+    if (args[0] === 'run') {
+      assert(args.includes('--read-only') && args.includes('--cap-drop') && args.includes('none'));
+      assert(!args.includes('--mount') && !args.includes('--volume'));
+      assert.equal(runOptions.timeout, 60000);
+      const rootProbe = args[args.indexOf('--user') + 1] === '0:0';
+      const image = args[args.indexOf('--entrypoint') + 2];
+      if (image === id && !rootProbe) return { code: options.unknownFailure ? 1 : 74, stdout: '' };
+      const result = { ...report, mode: image === repairedId ? 0o644 : options.unsafeMode ? 0o666 : 0o600 };
+      if (options.policyMismatch && rootProbe) result.policyHash = 'different';
+      if (options.recordsChanged && image === repairedId) result.records = { ...report.records, 'package-lock.json': 'changed' };
+      Object.assign(result, options.reportOverride);
+      return { code: 0, stdout: JSON.stringify(result) };
+    }
+    if (args[0] === 'build') {
+      assert.match(fs.readFileSync(join(args.at(-1), 'Dockerfile'), 'utf8'), /COPY --chmod=644 sources.json \/opt\/ours\/sources.json/);
+      if (options.buildFailure) throw new Error('build failed');
+      if (options.race) current = { ...base, Id: 'sha256:' + 'c'.repeat(64) };
+    }
+    if (args[0] === 'image' && args[1] === 'tag' && args.at(-1) === 'ours-fixture:runtime') {
+      current = candidate;
+      if (options.interruptAfterTag && !injected) { injected = true; throw new Error('interrupted after tag'); }
+    }
+    return { code: 0, stdout: '' };
+  } };
+  return { record, effects, calls, base, candidate, current: () => current };
+}
+
+for (const [field, value, detail] of [
+  ['mode', 0o600, 'mode=0600; expectedMode=0644; policyMatch=true'],
+  ['policyHash', 'private-policy-body-must-not-appear', 'mode=0644; expectedMode=0644; policyMatch=false'],
+  ['uid', 12345, 'mode=0644; expectedMode=0644; policyMatch=true'],
+  ['regular', false, 'mode=0644; expectedMode=0644; policyMatch=true'],
+  ['links', 2, 'mode=0644; expectedMode=0644; policyMatch=true'],
+]) {
+  test(`ordinary image refusal identifies ${field} without disclosing policy or mutating the image`, async t => {
+    const f = fixture(t, { healthy: true, reportOverride: { [field]: value } });
+    await assert.rejects(qualifyDockerRuntime(f.record, f.effects), error => {
+      assert(error.message.includes(`stage=ordinary; engine=docker; mismatched=${field}; ${detail}`));
+      assert(!error.message.includes('private-policy-body-must-not-appear'));
+      return true;
+    });
+    assert(!f.calls.some(call => ['build', 'tag'].includes(call.args[0]) || call.args[1] === 'tag'));
+  });
+}
+
+test('privileged refusal identifies a policy mismatch without attempting repair', async t => {
+  const f = fixture(t, { policyMismatch: true });
+  await assert.rejects(qualifyDockerRuntime(f.record, f.effects), /stage=privileged; engine=docker; mismatched=policyHash; mode=0600; expectedMode=0600; policyMatch=false/);
+  assert(!f.calls.some(call => call.args[0] === 'build' || call.args[1] === 'tag'));
+});
+
+test('private retained script copies require a persistent image rebuild marker', t => {
+  const f = fixture(t);
+  for (const directory of ['maintenance', 'runtime']) fs.mkdirSync(join(f.record.workDir, 'scripts', directory), { recursive: true, mode: 0o700 });
+  const module = join(f.record.workDir, 'scripts/maintenance/release-graph.mjs');
+  fs.writeFileSync(module, 'export const fixture = true;', { mode: 0o600 });
+  const dockerfile = join(f.record.workDir, 'Dockerfile');
+  fs.writeFileSync(dockerfile, 'FROM node:24\nCOPY scripts/runtime/entrypoint.sh /opt/ours/docker/entrypoint.sh\n');
+  assert.equal(refreshDockerPolicyCopy(f.record), true);
+  assert.match(fs.readFileSync(dockerfile, 'utf8'), /COPY --chmod=644 scripts/);
+  assert.equal(fs.statSync(module).mode & 0o777, 0o600);
+  assert.equal(refreshDockerPolicyCopy(f.record), true, 'interrupted rebuild remains required');
+  fs.unlinkSync(join(f.record.workDir, '.script-permissions-rebuild'));
+  assert.equal(refreshDockerPolicyCopy(f.record), false);
+});
+
+test('repair qualifies exact owner image without mounting state and preserves host privacy', async t => {
+  const f = fixture(t);
+  refreshDockerPolicyCopy(f.record);
+  await qualifyDockerRuntime(f.record, f.effects);
+  assert.equal(f.current().Id, f.candidate.Id);
+  assert.equal(fs.statSync(f.record.sourcesPath).mode & 0o777, 0o600);
+  assert.match(fs.readFileSync(join(f.record.workDir, 'Dockerfile'), 'utf8'), /COPY --chmod=644/);
+  const count = f.calls.filter(x => x.args[0] === 'build').length;
+  await qualifyDockerRuntime(f.record, f.effects);
+  assert.equal(f.calls.filter(x => x.args[0] === 'build').length, count);
+});
+
+for (const option of ['unknownFailure', 'unsafeMode', 'policyMismatch', 'recordsChanged', 'changedConfig', 'race', 'buildFailure']) {
+  test(`repair refuses ${option} without replacing the selected image`, async t => {
+    const f = fixture(t, { [option]: true });
+    await assert.rejects(qualifyDockerRuntime(f.record, f.effects));
+    assert(!f.calls.some(x => x.args[0] === 'image' && x.args[1] === 'tag' && x.args.at(-1) === 'ours-fixture:runtime'));
+  });
+}
+
+test('retry after tag publication interruption retains the repaired image', async t => {
+  const f = fixture(t, { interruptAfterTag: true });
+  await assert.rejects(qualifyDockerRuntime(f.record, f.effects), /interrupted/);
+  const id = f.current().Id;
+  await qualifyDockerRuntime(f.record, f.effects);
+  assert.equal(f.current().Id, id);
+  assert.equal(f.calls.filter(x => x.args[0] === 'build').length, 1);
+});
+
+test('retained Dockerfile normalization is narrow and refuses links', async t => {
+  const f = fixture(t);
+  refreshDockerPolicyCopy(f.record);
+  const path = join(f.record.workDir, 'Dockerfile'), fixed = fs.readFileSync(path, 'utf8');
+  refreshDockerPolicyCopy(f.record);
+  assert.equal(fs.readFileSync(path, 'utf8'), fixed);
+  fs.unlinkSync(path); fs.symlinkSync(f.record.sourcesPath, path);
+  assert.throws(() => refreshDockerPolicyCopy(f.record), /Unsafe/);
+});
+
+test('owner asset copied with mode0664 inside private runtime is normalized and refreshed', t => {
+  const f = fixture(t), path = join(f.record.workDir, 'Dockerfile');
+  const unrelated = join(f.record.root, 'unrelated'); fs.writeFileSync(unrelated, 'keep', { mode: 0o640 });
+  fs.chmodSync(path, 0o664);
+  refreshDockerPolicyCopy(f.record);
+  assert.equal(fs.statSync(path).mode & 0o777, 0o600);
+  assert.match(fs.readFileSync(path, 'utf8'), /COPY --chmod=644/);
+  assert.equal(fs.readFileSync(unrelated, 'utf8'), 'keep');
+  assert.equal(fs.statSync(unrelated).mode & 0o777, 0o640);
+  fs.chmodSync(path, 0o664); // Current instruction still needs mode normalization.
+  refreshDockerPolicyCopy(f.record);
+  assert.equal(fs.statSync(path).mode & 0o777, 0o600);
+});
+
+for (const boundary of ['shared-directory', 'linked-directory', 'hardlinked-file', 'special-mode', 'fifo']) {
+  test(`Dockerfile normalization refuses ${boundary}`, t => {
+    const f = fixture(t), path = join(f.record.workDir, 'Dockerfile');
+    if (boundary === 'shared-directory') fs.chmodSync(f.record.workDir, 0o775);
+    if (boundary === 'linked-directory') {
+      const alias = f.record.root + '-alias'; fs.symlinkSync(f.record.root, alias); t.after(() => fs.unlinkSync(alias)); f.record.workDir = alias;
+    }
+    if (boundary === 'hardlinked-file') fs.linkSync(path, join(f.record.root, 'other-link'));
+    if (boundary === 'fifo') { fs.unlinkSync(path); execFileSync('mkfifo', [path]); }
+    if (boundary === 'special-mode') fs.chmodSync(path, 0o2644);
+    assert.throws(() => refreshDockerPolicyCopy(f.record), /Unsafe/);
+  });
+}

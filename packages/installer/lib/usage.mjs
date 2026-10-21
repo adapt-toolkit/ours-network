@@ -1,0 +1,105 @@
+// Public setup and maintenance commands.
+export const USAGE = `ours-install — interactive setup with optional CLI presets.
+
+  ours-install
+    Asks what you would like to do: add collaboration tools to the agent apps
+    you already use, install the complete Ours workspace, connect to a workspace
+    on another computer, or another setup. When Ours is already installed it
+    offers Update (recommended), Repair, Remove or Cancel instead, keeping the
+    installation's product, runtime and connected apps. Your existing agent
+    configuration, skills, plugins and settings are kept.
+    Full setup runs the server in Docker or Podman, which provide the gateway local clients need.
+    Native mode is offered for server-only setup. Windows uses WSL.
+
+  Collaboration tools only (one Ours service in Docker, plugins for Claude Code and Codex):
+    ours-install --plugin-only --state-dir ~/.ours-install --identity-name "Your Name" --integrations claude-code,codex
+
+  Remove Ours completely (lists everything first; asks you to type "remove ours"):
+    ours-install remove [--state-dir PATH] [--dry-run]
+
+  Install now, configure Fleet agents in the App after linking:
+    ours-install --username alex --name Alex --surname Taylor --disable-fleet-agents-setup
+    Remaining installation choices are prompted on a terminal. No enrollment credentials or expiry.
+
+  Full stack, with every required answer preset (no prompts):
+    ours-install --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json
+
+  Server preset (native is an alias for packages):
+    ours-install server --mode native --state-dir /private/ours --identity-name "Your Name"
+    ours-install server install --mode docker --state-dir /private/ours --identity-name "Your Name"
+
+  Client preset for an existing server:
+    ours-install client --config /private/profile.json --integrations codex,fleet --fleet-settings /private/fleet.json
+
+  Update a retained installation, preserving its identities:
+    ours-install all update --mode docker --state-dir /private/ours --identity-name "Your Name" --integrations codex,fleet --fleet-settings /private/fleet.json --compatible
+
+  --plugin-only             collaboration tools only: the daemon service and the Claude Code/Codex
+                            plugins; no workspace apps, Fleet, Telegram or gateway (Docker or Podman)
+  --scope all|server|client   preset which parts to configure (default all)
+  --action install|update    equivalent to the positional operation
+  --mode docker|native      packages is also accepted for native mode
+  --container-engine docker|podman  server container backend (default Docker); retained for maintenance
+  --state-dir PATH          installation root; required for all/server
+  --username USERNAME       local username; no global uniqueness check
+  --name NAME               Messenger given name
+  --surname SURNAME         Messenger family name
+  --hostname NAME           optional host/workspace name; defaults to this machine
+  --disable-fleet-agents-setup  install Fleet CLI without its roles/model wizard
+  --identity-name NAME      desired Human name for a fresh server; existing root is retained
+  --integrations LIST       codex,claude-code,fleet; use none to skip clients explicitly
+  --fleet-settings PATH     JSON settings for Fleet; required unless Fleet agents setup is disabled
+  --fleet-task-workflow A[,B]  let these Fleet agents run Fleet task commands outside their command sandbox
+  --config PATH             complete connection profile for client-only setup
+  --sources PATH            explicit full development source policy override
+  --port N                  public gateway port for Docker (default 3050; e.g. 4050)
+  --server-url URL          external gateway URL (Docker install; configure authenticated entry separately)
+  --cowork-port N           cowork port (default 3052)
+  --messenger-port N        messenger port (default 8420)
+  --compatible              required for server updates and legacy state migration
+  --migrate-from CONFIG     migrate an existing daemon into a new managed root; install only
+                           requires an absolute config path and --compatible
+  --migrate                 explicit legacy credential migration; separate from --migrate-from
+  --dry-run                 show the validated plan without changing anything
+  --help, -h                show help
+  --version, -V             print installer version
+
+Partial CLI presets on a terminal ask for the remaining choices. Without a terminal,
+or with OURS_ASSUME_YES, supply complete CLI presets; missing answers fail before installation. Both input modes run the same
+installer with preparation, identity restoration, update and readiness progress.
+Fleet is configured but left stopped for operator review.
+
+Scoped maintenance:
+  ours-install server status|start|stop|restart|rebuild|uninstall --state-dir PATH
+  ours-install server gateway-enable --state-dir PATH [--server-url URL]
+  ours-install server access-issue --state-dir PATH --output PATH
+  ours-install server access-replace --state-dir PATH --confirm
+  ours-install server backup|restore server|daemon|telegram|cowork|messenger LABEL --state-dir PATH
+  ours-install server reset daemon|telegram|cowork|messenger --state-dir PATH --confirm
+
+Install the selected channel with npm install -g @ours.network/install@nightly
+(or @latest for a qualified stable release). Component versions come from the
+installer's embedded release manifest. Node.js 22+ is required.
+`;
+
+export const UNINSTALL_USAGE = `ours-uninstall — remove one ours daemon and what attaches to it.
+
+  ours-uninstall [--state-dir PATH] [--purge] [--dry-run] [--help] [--version]
+
+Removes the boot service, stops the daemon, and removes the global packages —
+but ONLY when no other daemon on this machine still needs them. A component
+still pointing at this daemon stops the run before anything is removed, so a
+run that refuses leaves the daemon whole rather than half-dismantled.
+
+  --state-dir  which daemon to remove (default ~/.ours). A daemon IS its state
+               directory, so this is the only thing that names one.
+  --purge      also delete the state directory itself. Never the default, never
+               done non-interactively, and it asks you to type the full path —
+               identity keys exist nowhere else and no peer can give them back.
+  --dry-run    print what it WOULD remove and remove nothing
+  --help       show this help and exit
+  --version    print the version and exit
+
+When OURS_CONFIG selects a prepared host profile, remove selected client
+attachments only. The shared profile/credential and Compose daemon are kept,
+including under --purge.`;

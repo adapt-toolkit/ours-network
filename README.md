@@ -58,6 +58,13 @@ MCP-capable agent harness.
 |------|------------|
 | **[ours-donate](https://github.com/adapt-toolkit/ours-donate)** | Canonical donation channels — GitHub Sponsors + crypto addresses, verifiable via git history. |
 
+## Cross-product nightly tests
+
+The [nightly E2E suite](e2e/nightly/GETTING_STARTED.md) exercises the published SDK,
+daemon, CLI, MCP, Telegram, Cowork and Fleet together in disposable Docker projects.
+Run `python3 e2e/nightly/run_all.py --build` or use the **Nightly E2E** workflow.
+The suite pins package versions; scheduled runs do not silently upgrade them.
+
 ## Learn more
 
 - **How it works — the protocol, in depth:** the shared agent-to-agent core and
@@ -98,3 +105,52 @@ The FSL permits any use **except a Competing Use** — broadly, offering a comme
 Security reports: [SECURITY.md](./SECURITY.md) · Contributing & CLA: [CONTRIBUTING.md](./CONTRIBUTING.md) · Trademarks: [TRADEMARKS.md](./TRADEMARKS.md)
 
 Copyright 2026 Adapt Framework Solutions Ltd.
+
+
+## Installer development and release ownership
+
+`packages/installer` owns `@ours.network/install` and its `ours-install` command.
+The installer source, tests, Docker/native assets and versioning now live here;
+MCP no longer bumps or publishes this package. Run `npm ci`, `npm test` and
+`npm run test:release` from this repository.
+
+The product release inputs are [stable](releases/stable.json) and
+[nightly](releases/nightly.json). A release packs one channel-matching exact
+component set into its immutable npm archive; it does not fetch mutable manifests
+from GitHub at installation time. See [release preparation](releases/README.md).
+The nightly manifest selects published component versions and SHA-512 integrity
+values. Stable remains unbound until a stable component set is selected.
+
+PR CI verifies the selected registry archives and nested ours dependency graph,
+then packs and inspects the installer archive. Runtime acquisition checks the
+release-bound ours packages before activating server builds or client integrations.
+This fixes the ours component set; third-party dependencies are still resolved
+by npm for the target platform rather than replayed from one universal lockfile.
+
+Installer versions advance automatically in CI: prerelease uses ephemeral
+nightly versions, while main uses a Conventional Commits bump committed by the
+GitHub App. Both update the installer and release manifest version together,
+without changing the selected component versions. Required publication secrets:
+`NPM_TOKEN`, `VERSION_BUMP_APP_ID`, `VERSION_BUMP_APP_PRIVATE_KEY`.
+
+### Host CLI for Docker and remote servers
+
+Client setup installs the native `ours` command on the client machine, including
+when `--integrations none` is selected. It uses the saved private
+`~/.ours-client/profile.json` and issued credential to reach the selected daemon.
+Optional MCP, Codex and Fleet integrations share that selection. No container
+shell is needed for API commands. Server lifecycle and master-access administration
+remain server-side operations.
+
+The host command can use a newer CLI than the server and integrations. The release
+manifest records its exact CLI/SDK pair separately. Setup retains those packages
+under `~/.ours-client-install/` and exposes `ours` in the configured npm prefix.
+This directory contains active installed executables, not disposable cache: keep
+it while the client is installed. Optional integration installs use their own
+selected dependencies; they do not change the host command's SDK.
+
+When replacing an installer-managed `ours` launcher, setup saves its verified bytes
+in `~/.ours-client/previous-cli-<sha256>.cjs`. Server installation maintenance remains
+available through `ours-install server`. Unknown executables are never overwritten.
+These changes require a released CLI with client-profile support in the selected
+source policy; source CI alone does not update an installed or published package.

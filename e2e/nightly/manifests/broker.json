@@ -1,0 +1,9 @@
+{
+  "name": "ours-nightly-e2e-broker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@adapt-toolkit/sdk": "0.12.1",
+    "@adapt-toolkit/broker": "0.12.1"
+  }
+}
