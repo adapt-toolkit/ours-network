@@ -27,12 +27,23 @@ registry SHA-512 integrity of the published archive.
 
 ## Breaking changes
 
-- The installer is published from `ours-network` instead of `ours-mcp`.
-- It installs the major releases above (SDK 5, CLI 4, daemon 5 and the
-  dependent 2.0.0 services and integrations).
-- Setup is unified and interactive. Server runtimes use the standalone daemon
-  behind a one-port Docker gateway, and existing installations are migrated
-  from their legacy state.
+These are changes to the command-line contract of the published
+`@ours.network/install` 1.1.1:
+
+- **Non-interactive runs.** In 1.1.1, `OURS_ASSUME_YES=1` accepted safe
+  defaults without prompting. Now a non-terminal or `OURS_ASSUME_YES` run
+  needs a complete preset (for example `--identity-name` and the chosen
+  integrations) and fails instead of guessing.
+- **`--state-dir`.** In 1.1.1 it named the daemon state directory, with
+  `~/.ours` as the default. Now it names the managed installation root and is
+  required for `all` and `server` setups.
+- **`--port`.** In 1.1.1 it was the port used when creating the daemon. In
+  Docker mode it is now the public port of the one-port gateway.
+
+Automation written for 1.1.1 that relies on these behaviours has to be
+updated. The installer also moves from `ours-mcp` to `ours-network` and now
+installs the SDK 5 / CLI 4 / daemon 5 component set; neither of those is the
+reason for the major version.
 
 ## Features promoted from prerelease
 
