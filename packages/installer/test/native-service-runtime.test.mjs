@@ -158,6 +158,17 @@ for (const [name, text] of Object.entries(PUBLISHED_PLISTS)) test(`the published
 const rootJob = (inner, extra = '') => `<plist version="1.0"><dict><key>Label</key><string>network.ours.cowork</string>${inner}${extra}</dict></plist>`;
 const ARGS = '<key>ProgramArguments</key><array><string>/opt/node/bin/node</string><string>/x/cli.js</string></array>';
 const ENV = '<key>EnvironmentVariables</key><dict><key>A</key><string>b</string></dict>';
+test('the guard goes into the root job environment at its offset in the original document', () => {
+  const guard = '/srv/ours/node-floor-guard.cjs';
+  // Comments and a header before the root environment must not shift the insertion point.
+  const text = `<?xml version="1.0" encoding="UTF-8"?>\n<!-- <dict> a comment with tags -->\n${rootJob(`<!-- x -->${ARGS}<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>${ENV}`)}`;
+  const guarded = plistWithGuard(text, guard);
+  const entry = `<key>NODE_OPTIONS</key><string>--require &quot;${guard}&quot;</string>`;
+  assert.equal(guarded, text.replace('<key>EnvironmentVariables</key><dict>', `<key>EnvironmentVariables</key><dict>${entry}`));
+  assert.equal(plistWithGuard(guarded, guard), guarded, 'a second run leaves the guarded plist as it is');
+  assert.deepEqual(parsePlistJob(guarded).job.programArguments, parsePlistJob(text).job.programArguments);
+});
+
 test('the guard goes into the root job environment, after other dictionaries', () => {
   const guard = '/srv/ours/node-floor-guard.cjs';
   const text = rootJob(`<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>${ARGS}${ENV}`);

@@ -162,7 +162,12 @@ export function plistWithGuard(text, guardPath) {
   if (state !== 'absent') return null;
   const at = parsePlistJob(text).job.environmentOpenEnd;
   const entry = `<key>NODE_OPTIONS</key><string>${guardNodeOptions(guardPath).replaceAll('&', '&amp;').replaceAll('"', '&quot;')}</string>`;
-  return text.slice(0, at) + entry + text.slice(at);
+  const guarded = text.slice(0, at) + entry + text.slice(at);
+  // The result must satisfy the same root-job contract, with the guard as its only addition.
+  const before = parsePlistJob(text).job, after = parsePlistJob(guarded).job;
+  const same = after && after.programArguments.join('\0') === before.programArguments.join('\0')
+    && JSON.stringify(after.environment.filter(([key]) => key !== 'NODE_OPTIONS')) === JSON.stringify(before.environment);
+  return same && plistGuardState(guarded, guardPath) === 'present' ? guarded : null;
 }
 
 /**
