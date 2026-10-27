@@ -16,7 +16,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Exact patched release: the runner's cached 22.x can predate the security floor.
+          node-version: '22.23.4'
           cache: npm
       - run: npm ci
       - run: npm run test:release
@@ -88,7 +89,8 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Exact patched release: the runner's cached 22.x can predate the security floor.
+          node-version: '22.23.4'
       - name: Compute and commit stable installer version
         id: bump
         env:
@@ -107,7 +109,8 @@ jobs:
           ref: ${{ needs.version-bump.outputs.new-sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Exact patched release: the runner's cached 22.x can predate the security floor.
+          node-version: '22.23.4'
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
@@ -131,7 +134,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Exact patched release: the runner's cached 22.x can predate the security floor.
+          node-version: '22.23.4'
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
