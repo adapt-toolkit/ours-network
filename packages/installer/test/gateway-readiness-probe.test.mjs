@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import vm from 'node:vm';
 import { gatewayReadinessScript, describeGatewayReadiness, GATEWAY_READINESS_WAIT_MS } from '../lib/gateway.mjs';
 import { realEffects } from '../lib/effects.mjs';
 
@@ -142,6 +143,61 @@ test('a persistently dropped body fails transiently with the socket code', async
   assert.match(result.stdout, /^gateway-readiness:authenticated-daemon:(UND_ERR_SOCKET|TIMEOUT):\d+:transient$/);
   assert.match(describeGatewayReadiness(result.stdout), /^authenticated-daemon, (UND_ERR_SOCKET|TIMEOUT); still not ready/);
   assert(g.calls['/daemon/identities'] >= 2, 'a dropped body must be retried');
+});
+
+// The reporting contract, decided by the generated script itself: it runs in
+// a VM with a scripted fetch and a virtual clock, so no case depends on timing.
+async function simulate(route, { deadlineMs = 5_500, retryMs = 1_000 } = {}) {
+  let now = 0, output = '';
+  const seen = {};
+  const sandbox = {
+    require: () => ({ readFileSync: () => `${TOKEN}
+` }),
+    Date: { now: () => now },
+    AbortSignal: { timeout: budget => ({ budget }) },
+    setTimeout: (fn, ms) => { now += ms; fn(); },
+    process: { stdout: { write: text => { output += text; } } },
+    fetch: async (url, options = {}) => {
+      const path = new URL(url).pathname.replace(/^\/base/, '');
+      const auth = Boolean(options.headers?.['x-ours-api-token']);
+      const key = path === '/cowork/management/rpc' && !auth ? 'unauthenticated' : path;
+      seen[key] = (seen[key] ?? 0) + 1;
+      const answer = route(key, seen[key]) ?? ({ '/daemon/selection': [200, { schema: 1, instanceId: INSTANCE }], unauthenticated: [401, {}],
+        '/daemon/identities': [200, { identities: [] }], '/cowork/management/rpc': [200, { version: 1, id: 'installer-readiness', result: [] }] })[key];
+      const timeout = () => { now += options.signal.budget; throw Object.assign(new Error('timeout'), { name: 'TimeoutError' }); };
+      if (answer === 'timeout') return timeout();
+      if (answer === 'body-timeout') return { ok: true, status: 200, json: async () => { now += options.signal.budget; throw Object.assign(new Error('aborted'), { name: 'AbortError' }); } };
+      if (answer?.reset) { now += answer.after ?? 0; throw Object.assign(new Error('reset'), { cause: { code: answer.reset } }); }
+      const [status, body] = answer;
+      return { ok: status >= 200 && status < 300, status, json: async () => body };
+    },
+  };
+  const script = gatewayReadinessScript({ base: 'http://gateway.test/base', instanceId: INSTANCE, tokenPath: '/fixture/token', deadlineMs, retryMs });
+  await vm.runInNewContext(`(async () => { ${script} })()`, sandbox);
+  await new Promise(resolve => setImmediate(resolve));
+  return { output, code: sandbox.process.exitCode, seen };
+}
+// Every second attempt fails differently from the first; the first fails at authenticated-daemon with 503.
+const second = (key, failing) => (path, n) => path === '/daemon/identities' && (n === 1 || key !== path) ? [503, {}] : path === key && n >= (key === '/daemon/identities' ? 2 : 2) ? failing : undefined;
+
+for (const [label, route, options, expected] of [
+  // The only deferral: the deadline shortened the request, in an earlier stage than the last observed failure.
+  ['a deadline-cut timeout in an earlier stage keeps the previous observed failure', second('/daemon/selection', 'timeout'), {}, 'gateway-readiness:authenticated-daemon:HTTP_503:2:transient'],
+  ['a timeout with its full own limit in an earlier stage reports itself', second('/daemon/selection', 'timeout'), { deadlineMs: 60_000, retryMs: 50_000 }, 'gateway-readiness:selection:TIMEOUT:2:transient'],
+  ['a deadline-cut request timeout in the same stage reports itself', second('/daemon/identities', 'timeout'), {}, 'gateway-readiness:authenticated-daemon:TIMEOUT:2:transient'],
+  ['a deadline-cut body timeout in the same stage reports itself', second('/daemon/identities', 'body-timeout'), {}, 'gateway-readiness:authenticated-daemon:TIMEOUT:2:transient'],
+  ['a deadline-cut timeout in a later stage reports itself', (path, n) => path === '/daemon/identities' && n === 1 ? [503, {}] : path === '/cowork/management/rpc' && n >= 1 ? 'timeout' : undefined, {}, 'gateway-readiness:authenticated-management:TIMEOUT:2:transient'],
+  ['a first attempt cut by the deadline reports its own stage', path => path === '/daemon/selection' ? 'timeout' : undefined, { deadlineMs: 4_500 }, 'gateway-readiness:selection:TIMEOUT:1:transient'],
+  ['a wrong instance in an earlier stage reports itself at once', second('/daemon/selection', [200, { schema: 1, instanceId: 'another' }]), {}, 'gateway-readiness:selection:INVALID:2'],
+  ['a rejected credential reports itself at once', (path, n) => path === '/daemon/identities' ? (n === 1 ? [503, {}] : [401, {}]) : undefined, {}, 'gateway-readiness:authenticated-daemon:HTTP_401:2'],
+  ['an RPC error reports itself at once', (path, n) => path === '/daemon/identities' && n === 1 ? [503, {}] : path === '/cowork/management/rpc' ? [503, { version: 1, id: null, error: { code: 'fixture' } }] : undefined, {}, 'gateway-readiness:authenticated-management:RPC_ERROR:2'],
+  ['a connection reset in an earlier stage reports itself', second('/daemon/selection', { reset: 'ECONNRESET', after: 5_000 }), {}, 'gateway-readiness:selection:ECONNRESET:2:transient'],
+  ['a transient status in an earlier stage at the deadline reports itself', second('/daemon/selection', [503, {}]), { deadlineMs: 1_500 }, 'gateway-readiness:selection:HTTP_503:2:transient'],
+]) test(`readiness reporting: ${label}`, async () => {
+  const result = await simulate(route, options);
+  assert.equal(result.code, 1);
+  assert.equal(result.output, expected);
+  assert.ok(describeGatewayReadiness(result.output), 'the operator text still parses');
 });
 
 test('a gateway that is not listening yet is waited for', async t => {
