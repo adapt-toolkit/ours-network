@@ -8,7 +8,7 @@ import { realEffects } from '../lib/effects.mjs';
 import { installationPaths } from '../lib/plan.mjs';
 import {
   definitionConflict, dropInDirectoryNames, guardNodeOptions, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE,
-  plistCanonical, plistEnvironment, plistExecutableConflict, plistGuardState, plistWithGuard, recordedInterpreter, systemdUserSearchPath,
+  parsePlistJob, plistCanonical, plistEnvironment, plistExecutableConflict, plistGuardState, plistWithGuard, recordedInterpreter, systemdUserSearchPath,
 } from '../lib/service-runtime.mjs';
 
 const ADVISORY = 'https://nodejs.org/en/blog/vulnerability/october-2026-security-releases';
@@ -154,6 +154,42 @@ for (const [name, text] of Object.entries(PUBLISHED_PLISTS)) test(`the published
   assert.equal(plistGuardState(guarded, guard), 'present');
 });
 
+// The root job dictionary is identified structurally; keys launchd reads from it count only there.
+const rootJob = (inner, extra = '') => `<plist version="1.0"><dict><key>Label</key><string>network.ours.cowork</string>${inner}${extra}</dict></plist>`;
+const ARGS = '<key>ProgramArguments</key><array><string>/opt/node/bin/node</string><string>/x/cli.js</string></array>';
+const ENV = '<key>EnvironmentVariables</key><dict><key>A</key><string>b</string></dict>';
+test('the guard goes into the root job environment, after other dictionaries', () => {
+  const guard = '/srv/ours/node-floor-guard.cjs';
+  const text = rootJob(`<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>${ARGS}${ENV}`);
+  const guarded = plistWithGuard(text, guard);
+  assert.deepEqual(parsePlistJob(guarded).job.environment, [['NODE_OPTIONS', guardNodeOptions(guard)], ['A', 'b']]);
+  assert.equal(plistGuardState(guarded, guard), 'present');
+});
+for (const [label, text, expected] of [
+  ['EnvironmentVariables only under Metadata', rootJob(ARGS, '<key>Metadata</key><dict><key>EnvironmentVariables</key><dict><key>A</key><string>b</string></dict></dict>'), /nested under Metadata/],
+  ['EnvironmentVariables at root and nested', rootJob(ARGS + ENV, '<key>Metadata</key><dict><key>EnvironmentVariables</key><dict></dict></dict>'), /nested under Metadata/],
+  ['a nested ProgramArguments', rootJob(ARGS + ENV, '<key>Sockets</key><dict><key>ProgramArguments</key><array><string>/usr/bin/env</string></array></dict>'), /nested under Sockets/],
+  ['a nested Program', rootJob(ARGS + ENV, '<key>Metadata</key><array><dict><key>Program</key><string>/usr/bin/env</string></dict></array>'), /nested under Metadata/],
+  ['a NODE_OPTIONS outside the environment', rootJob(ARGS + ENV, '<key>Metadata</key><dict><key>NODE_OPTIONS</key><string></string></dict>'), /nested under Metadata/],
+  ['ProgramArguments that is not a list', rootJob('<key>ProgramArguments</key><string>/opt/node/bin/node</string>' + ENV), /ProgramArguments is not a non-empty list of strings/],
+  ['an empty ProgramArguments', rootJob('<key>ProgramArguments</key><array></array>' + ENV), /ProgramArguments is not a non-empty list of strings/],
+  ['a non-string environment value', rootJob(ARGS + '<key>EnvironmentVariables</key><dict><key>A</key><true/></dict>'), /EnvironmentVariables is not a dictionary of strings/],
+  ['an EnvironmentVariables that is not a dictionary', rootJob(ARGS + '<key>EnvironmentVariables</key><array></array>'), /EnvironmentVariables is not a dictionary of strings/],
+  ['a repeated root key', rootJob(ARGS + ENV, '<key>Label</key><string>other</string>'), /repeated key Label/],
+  ['a root that is not a dictionary', '<plist version="1.0"><array><string>x</string></array></plist>', /the root is not a dictionary/],
+  ['a second value in the plist', rootJob(ARGS + ENV).replace('</plist>', '<dict></dict></plist>'), /expected <\/plist>/],
+  ['text between values', rootJob(ARGS + ENV).replace('<key>Label</key>', 'stray<key>Label</key>'), /expected <key>/],
+  ['a key without a value', rootJob(ARGS + ENV, '<key>Dangling</key>'), /unsupported value/],
+]) test(`a launchd plist with ${label} is not a supported structure`, () => {
+  const guard = '/srv/ours/node-floor-guard.cjs';
+  assert.match(parsePlistJob(text).error ?? '', expected);
+  assert.match(plistExecutableConflict(text) ?? '', /has a plist structure the installer does not read/);
+  assert.equal(plistEnvironment(text), null);
+  assert.equal(plistGuardState(text, guard), 'conflict');
+  assert.equal(plistWithGuard(text, guard), null);
+  assert.equal(recordedInterpreter(text, 'darwin'), null);
+});
+
 test('systemd drop-ins are collected from every user search path and name form', () => {
   assert.deepEqual(dropInDirectoryNames('ours-data-abc.service'), ['ours-data-abc.service.d', 'ours-data-.service.d', 'ours-.service.d', 'service.d']);
   const path = systemdUserSearchPath({}, '/home/me', 1000);
@@ -170,8 +206,10 @@ test('recorded interpreters are read as text from both definition formats', () =
   for (const unit of ['[Service]\nExecStart=-/usr/bin/node x\n', '[Service]\nExecStart=node x\n', '[Service]\nExecStart=/a x\nExecStart=/b y\n',
     '[Service]\nExecStart=$NODE x\n', '[Unit]\nExecStart=/usr/bin/node\n', 'not a unit'])
     assert.equal(recordedInterpreter(unit, 'linux'), null, unit);
-  assert.equal(recordedInterpreter('<key>ProgramArguments</key><array><string>/opt/node/bin/node</string></array>', 'darwin'), '/opt/node/bin/node');
-  assert.equal(recordedInterpreter('<key>ProgramArguments</key><array><string>node</string></array>', 'darwin'), null);
+  const job = first => `<plist version="1.0"><dict><key>ProgramArguments</key><array><string>${first}</string></array></dict></plist>`;
+  assert.equal(recordedInterpreter(job('/opt/node/bin/node'), 'darwin'), '/opt/node/bin/node');
+  assert.equal(recordedInterpreter(job('node'), 'darwin'), null);
+  assert.equal(recordedInterpreter('<key>ProgramArguments</key><array><string>/opt/node/bin/node</string></array>', 'darwin'), null, 'a fragment is not a plist');
 });
 
 test('environment and command overrides make the effective runtime ambiguous', () => {
@@ -551,6 +589,17 @@ for (const [label, spell] of [
   assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
   assert.equal(recordedInterpreter(text, 'darwin'), null);
   assert.equal(plistEnvironment(text), null);
+});
+
+test('darwin: an EnvironmentVariables nested under Metadata is refused before any change', async t => {
+  const host = nativeHost(t, 'darwin');
+  const state = installationPaths(host.record).cowork;
+  const text = `<plist version="1.0"><dict><key>Label</key><string>network.ours.cowork</string><key>ProgramArguments</key><array><string>${process.execPath}</string><string>/opt/cowork/cli.js</string><string>serve</string></array><key>Metadata</key><dict><key>EnvironmentVariables</key><dict><key>OURS_COWORK_STATE_DIR</key><string>${state}</string></dict></dict></dict></plist>`;
+  host.write(text);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /has a plist structure the installer does not read \(a launchd job key is nested under Metadata\)\. Nothing was started or changed\./);
+  assert.equal(readFileSync(host.cowork, 'utf8'), text);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
 });
 
 test('darwin: an internal DTD subset is refused before any change', async t => {

@@ -929,7 +929,10 @@ effective configuration it cannot verify. This covers:
   use: the standard XML header and Apple DOCTYPE, `<plist version="1.0">`, and
   plain `dict`, `key`, `string`, `array`, `integer`, `true` and `false` tags with
   no whitespace or attributes inside them, named entities only, and closed
-  comments. Every key is then found exactly where launchd finds it;
+  comments. The plist is then read structurally as one root job dictionary:
+  `ProgramArguments` and `EnvironmentVariables` count only there, and the guard is
+  written only into the root `EnvironmentVariables`. Repeated keys, wrong value
+  types, and any of the job keys nested below the root are refused;
 - in a launchd plist: `NODE_OPTIONS` anywhere outside the installer's single
   active guard entry, including in comments; numeric character references;
   entities in keys; repeated keys; and a `Program` or `RootDirectory` key, which

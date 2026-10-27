@@ -52,67 +52,131 @@ export function plistCanonical(text) {
 }
 
 const decodeXml = value => value.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[entity]);
-const ENVIRONMENT_KEY = '<key>EnvironmentVariables</key>';
 const count = (text, part) => text.split(part).length - 1;
+// Keys launchd reads from the root job dictionary; anywhere else they are not supported.
+const JOB_KEYS = new Set(['Program', 'ProgramArguments', 'EnvironmentVariables', 'RootDirectory', 'NODE_OPTIONS']);
 
 /**
- * The active key/value pairs of a launchd plist's single EnvironmentVariables dictionary,
- * parsed with comments excluded, or null when that dictionary is missing, repeated (also
- * inside a comment), holds anything but string values, repeats a key, or uses any character
- * reference in a key or a numeric one anywhere. Every launchd decision uses this one parse.
+ * The root launchd job of a canonical plist, parsed structurally: the single `<plist>`
+ * value must be a dictionary, every dictionary has unique keys and one value per key,
+ * values are strings, integers, booleans, arrays or dictionaries, and only whitespace and
+ * closed comments separate them. ProgramArguments (a non-empty string array) and
+ * EnvironmentVariables (a string dictionary) are taken from the root job only, and none of
+ * the job keys may appear deeper. Returns { job } or { error }; nothing is executed.
  */
-export function plistEnvironment(text) {
-  if (!plistCanonical(text)) return null;
-  const clean = text.replace(/<!--[\s\S]*?-->/g, '');
-  // Numeric character references could spell any key (NODE_&#79;PTIONS); they are not accepted.
-  if (clean.includes('<!--') || clean.includes('<![CDATA[') || text.includes('&#') || count(clean, ENVIRONMENT_KEY) !== 1 || count(text, ENVIRONMENT_KEY) !== 1) return null;
-  const body = clean.match(/<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/)?.[1];
-  if (body === undefined || body.includes('<dict')) return null;
-  const pairs = [...body.matchAll(/\s*<key>([^<]*)<\/key>\s*<string>([^<]*)<\/string>/gy)];
-  if (pairs.map(match => match[0]).join('') !== body.replace(/\s+$/, '')) return null;
-  // Keys are taken literally: an entity in a key, or a key repeated, is not a supported form.
-  if (pairs.some(([, key]) => key.includes('&'))) return null;
-  const keys = pairs.map(([, key]) => key);
-  if (new Set(keys).size !== keys.length) return null;
-  return pairs.map(([, key, value]) => [key, decodeXml(value)]);
+export function parsePlistJob(text) {
+  if (!plistCanonical(text)) return { error: 'non-canonical syntax' };
+  const tokens = [...text.matchAll(/<!--[\s\S]*?-->|<[^<>]*>|[^<]+/g)].map(m => ({ value: m[0], end: m.index + m[0].length }));
+  if (tokens.map(t => t.value).join('') !== text) return { error: 'unrecognized content' };
+  let i = 0;
+  const fail = error => { throw Object.assign(new Error(error), { plist: true }); };
+  const skip = () => { while (i < tokens.length && (tokens[i].value.startsWith('<!--') || (!tokens[i].value.startsWith('<') && !tokens[i].value.trim()))) i++; };
+  const expect = tag => { if (tokens[i]?.value !== tag) fail(`expected ${tag}`); i++; };
+  const content = () => (tokens[i] && !tokens[i].value.startsWith('<') ? decodeXml(tokens[i++].value) : '');
+  const value = () => {
+    skip();
+    const tag = tokens[i]?.value;
+    if (tag === '<string>') { i++; const v = content(); expect('</string>'); return { type: 'string', value: v }; }
+    if (tag === '<integer>') { i++; const v = content(); expect('</integer>'); if (!/^-?\d+$/.test(v)) fail('invalid integer'); return { type: 'integer', value: v }; }
+    if (tag === '<true/>' || tag === '<false/>') { i++; return { type: 'boolean', value: tag === '<true/>' }; }
+    if (tag === '<array>') {
+      i++; const items = [];
+      for (;;) { skip(); if (tokens[i]?.value === '</array>') { i++; return { type: 'array', items }; } items.push(value()); }
+    }
+    if (tag === '<dict>') {
+      const openEnd = tokens[i].end; i++; const entries = new Map();
+      for (;;) {
+        skip();
+        if (tokens[i]?.value === '</dict>') { i++; return { type: 'dict', entries, openEnd }; }
+        // Keys are taken literally: an entity in a key is not a supported form.
+        expect('<key>'); if (tokens[i]?.value.includes('&')) fail('an entity in a key'); const key = content(); expect('</key>');
+        if (!key || entries.has(key)) fail(key ? `repeated key ${key}` : 'empty key');
+        entries.set(key, value());
+      }
+    }
+    fail('unsupported value');
+  };
+  let root;
+  try {
+    skip();
+    if (tokens[i]?.value.startsWith('<?xml')) { i++; skip(); }
+    if (tokens[i]?.value.startsWith('<!DOCTYPE')) { i++; skip(); }
+    expect('<plist version="1.0">');
+    root = value();
+    skip(); expect('</plist>'); skip();
+    if (i !== tokens.length) fail('content after the plist');
+    if (root.type !== 'dict') fail('the root is not a dictionary');
+  } catch (error) {
+    if (error?.plist) return { error: error.message };
+    throw error;
+  }
+  // Below the root job, the job keys are not supported anywhere (except NODE_OPTIONS in its environment).
+  const nested = (node, environment = false) => {
+    if (node.type === 'array') return node.items.some(item => nested(item));
+    if (node.type !== 'dict') return false;
+    return [...node.entries].some(([key, child]) => (!environment && JOB_KEYS.has(key)) || nested(child));
+  };
+  for (const [key, child] of root.entries) if (nested(child, key === 'EnvironmentVariables')) return { error: `a launchd job key is nested under ${key}` };
+  if (root.entries.has('NODE_OPTIONS')) return { error: 'NODE_OPTIONS is a root key' };
+  const args = root.entries.get('ProgramArguments');
+  if (!args || args.type !== 'array' || !args.items.length || args.items.some(item => item.type !== 'string')) return { error: 'ProgramArguments is not a non-empty list of strings' };
+  const env = root.entries.get('EnvironmentVariables');
+  if (env && (env.type !== 'dict' || [...env.entries.values()].some(item => item.type !== 'string'))) return { error: 'EnvironmentVariables is not a dictionary of strings' };
+  return { job: {
+    keys: new Set(root.entries.keys()),
+    programArguments: args.items.map(item => item.value),
+    environment: env ? [...env.entries].map(([key, item]) => [key, item.value]) : null,
+    environmentOpenEnd: env?.openEnd ?? null,
+  } };
 }
 
 /**
- * Whether a launchd plist carries the installer's guard: 'present' only when the single
- * active EnvironmentVariables dictionary has exactly one NODE_OPTIONS holding exactly the
- * guard and NODE_OPTIONS appears nowhere else, including comments; 'absent' when
- * NODE_OPTIONS appears nowhere; otherwise 'conflict', including every plist that
- * plistEnvironment does not accept.
+ * The root job's EnvironmentVariables as key/value pairs, or null when the plist is not
+ * accepted by parsePlistJob, has no root EnvironmentVariables, or (as before) spells
+ * `<key>EnvironmentVariables</key>` anywhere else, including inside a comment.
+ */
+export function plistEnvironment(text) {
+  if (typeof text !== 'string' || text.includes('&#') || count(text, '<key>EnvironmentVariables</key>') !== 1) return null;
+  return parsePlistJob(text).job?.environment ?? null;
+}
+
+/**
+ * Whether a launchd plist carries the installer's guard: 'present' only when the root job's
+ * EnvironmentVariables has exactly one NODE_OPTIONS holding exactly the guard and
+ * NODE_OPTIONS appears nowhere else, including comments; 'absent' when NODE_OPTIONS appears
+ * nowhere; otherwise 'conflict', including every plist that plistEnvironment does not accept.
  */
 export function plistGuardState(text, guardPath) {
-  if (plistEnvironment(text) === null) return 'conflict';
+  const environment = plistEnvironment(text);
+  if (environment === null) return 'conflict';
   const mentions = count(text, 'NODE_OPTIONS');
   if (mentions === 0) return 'absent';
-  const options = (plistEnvironment(text) ?? []).filter(([key]) => key === 'NODE_OPTIONS');
+  const options = environment.filter(([key]) => key === 'NODE_OPTIONS');
   return mentions === 1 && options.length === 1 && options[0][1] === guardNodeOptions(guardPath) ? 'present' : 'conflict';
 }
 
-/** Adds the guard to a launchd plist's single active EnvironmentVariables dictionary, or returns null. */
+/** Adds the guard to the root job's EnvironmentVariables dictionary, or returns null. */
 export function plistWithGuard(text, guardPath) {
-  if (plistEnvironment(text) === null) return null;
   const state = plistGuardState(text, guardPath);
   if (state === 'present') return text;
   if (state !== 'absent') return null;
+  const at = parsePlistJob(text).job.environmentOpenEnd;
   const entry = `<key>NODE_OPTIONS</key><string>${guardNodeOptions(guardPath).replaceAll('&', '&amp;').replaceAll('"', '&quot;')}</string>`;
-  return text.replace(/<key>EnvironmentVariables<\/key>(\s*)<dict>/, (match) => `${match}${entry}`);
+  return text.slice(0, at) + entry + text.slice(at);
 }
 
 /**
- * Why a launchd plist runs something other than its first ProgramArguments entry, or null.
- * Program takes precedence over ProgramArguments[0], and RootDirectory changes what every
- * path names; neither is interpreted, so either refuses. A plist that is not in canonical
- * form is refused first, so no spelling of a key can hide it.
+ * Why a launchd plist runs something other than its root job's first ProgramArguments entry,
+ * or null. The plist must be canonical and structurally a single root job; Program takes
+ * precedence over ProgramArguments[0] and RootDirectory changes what every path names, so
+ * neither is interpreted and either refuses.
  */
 export function plistExecutableConflict(text) {
   if (typeof text !== 'string' || text.includes('&#')) return 'uses a numeric character reference';
   if (!plistCanonical(text)) return 'uses plist syntax the installer does not read (only the canonical tags of published definitions are accepted)';
-  const clean = text.replace(/<!--[\s\S]*?-->/g, '');
-  for (const key of ['Program', 'RootDirectory']) if (clean.includes(`<key>${key}</key>`)) return `sets ${key}, which changes the program launchd runs`;
+  const parsed = parsePlistJob(text);
+  if (parsed.error) return `has a plist structure the installer does not read (${parsed.error})`;
+  for (const key of ['Program', 'RootDirectory']) if (parsed.job.keys.has(key)) return `sets ${key}, which changes the program launchd runs`;
   return null;
 }
 
@@ -120,11 +184,8 @@ export function plistExecutableConflict(text) {
 export function recordedInterpreter(text, platform) {
   if (typeof text !== 'string') return null;
   if (platform === 'darwin') {
-    if (plistExecutableConflict(text)) return null;
-    const clean = text.replace(/<!--[\s\S]*?-->/g, '');
-    const lists = [...clean.matchAll(/<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/g)];
-    if (lists.length !== 1 || count(text, '<key>ProgramArguments</key>') !== 1) return null;
-    const value = decodeXml(lists[0][1]);
+    if (plistExecutableConflict(text) || count(text, '<key>ProgramArguments</key>') !== 1) return null;
+    const value = parsePlistJob(text).job.programArguments[0];
     return isAbsolute(value) && !/[\0\n\r]/.test(value) ? value : null;
   }
   if (platform !== 'linux') return null;
