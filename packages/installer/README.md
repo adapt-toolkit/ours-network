@@ -894,21 +894,45 @@ then check `cloudflared --version` again.
 
 **Native services.** In package mode the installer registers the daemon,
 Telegram, Cowork and Messenger services on the Node.js executable that passed
-its own check. Before every start it also checks the interpreter that each
-existing service definition records. A retained definition naming an
-unpatched or unverifiable Node.js is registered again on the verified runtime,
-and a service that still does not pass is not started. Each service process
-also loads an installer-owned guard (`node-floor-guard.cjs` in the
-installation directory) through `NODE_OPTIONS`. On Linux this is a systemd
-drop-in `ours-node-floor.conf`; on macOS it is an `EnvironmentVariables`
-entry in the launchd plist. Any later start or restart by systemd or launchd
-therefore refuses an interpreter that has become unpatched. The installer
-refuses to change, and does not start, a definition it cannot verify. This
-covers unparseable commands, an existing `NODE_OPTIONS`, `EnvironmentFile=`,
-`UnsetEnvironment=` or `PassEnvironment=`, an environment reset or
-`ExecStart` override in another drop-in, and linked or foreign-owned guard
-files. Docker installations rebuild their image on the patched `node:24.22.1`
-base on the next installer run.
+its own check. Before anything changes, it checks every selected service
+definition and the Node.js that each retained definition records. If any of
+them names an unpatched or unverifiable Node.js, nothing is started or
+changed. The error names the recorded executable and the version it reports,
+when that version can be read. To continue, update that Node.js, or remove the
+definition so the installer registers it again, then rerun the installer. The
+installer rewrites only its own Messenger definition onto the verified
+runtime.
+
+Each service process also loads an installer-owned guard
+(`node-floor-guard.cjs` in the installation directory) through `NODE_OPTIONS`.
+Any later start or restart by systemd or launchd therefore refuses an
+interpreter that has become unpatched.
+
+- On Linux, the guard is a systemd drop-in `ours-node-floor.conf`. It is in
+  place before a package's own `install-service` command starts the service.
+  Retiring a service removes the drop-in only when it is byte-for-byte this
+  installation's own. Other drop-ins are left alone.
+- On macOS, the guard is an `EnvironmentVariables` entry in the launchd plist.
+  It is added right after registration and reloaded before the installer
+  starts the service. That first start, inside `install-service`, runs on the
+  installer's verified Node.js.
+
+The installer refuses to change, and does not start, a definition whose
+effective configuration it cannot verify. This covers:
+
+- unparseable commands;
+- `NODE_OPTIONS` outside the installer's single active guard entry, including
+  in comments;
+- `EnvironmentFile=`, `UnsetEnvironment=` or `PassEnvironment=`, an environment
+  reset, or an `ExecStart` override in any drop-in systemd would apply (unit,
+  dash-prefix and type-wide drop-ins in every user unit search path);
+- a same-named unit ahead of the installer's own, or `SYSTEMD_UNIT_PATH`;
+- a guard drop-in that this installation did not write;
+- linked, foreign-owned or group- or world-writable guard files and
+  directories.
+
+Docker installations rebuild their image on the patched `node:24.22.1` base on
+the next installer run.
 
 These checks do not install or upgrade prerequisites, disable TLS
 verification, rotate credentials or restart services. A process that is

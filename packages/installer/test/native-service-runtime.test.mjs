@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realEffects } from '../lib/effects.mjs';
 import { installationPaths } from '../lib/plan.mjs';
 import {
-  definitionConflict, guardNodeOptions, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE,
-  plistWithGuard, recordedInterpreter,
+  definitionConflict, dropInDirectoryNames, guardNodeOptions, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE,
+  plistEnvironment, plistGuardState, plistWithGuard, recordedInterpreter, systemdUserSearchPath,
 } from '../lib/service-runtime.mjs';
 
 const ADVISORY = 'https://nodejs.org/en/blog/vulnerability/october-2026-security-releases';
@@ -56,12 +56,36 @@ test('systemd drop-in loads the guard through the unit environment', () => {
     '# Managed by @ours.network/install: refuse an unpatched Node.js before every start.\n[Service]\nEnvironment="NODE_OPTIONS=--require \\"/srv/ours team/node-floor-guard.cjs\\""\n');
 });
 
-test('launchd plists get the guard in their single environment dictionary', () => {
+test('launchd plists get the guard in their single active environment dictionary', () => {
+  const guard = '/srv/ours/node-floor-guard.cjs';
   const plist = '<plist><dict><key>ProgramArguments</key><array><string>/opt/node/bin/node</string><string>/x/cli.js</string></array><key>EnvironmentVariables</key>\n  <dict><key>A</key><string>b</string></dict></dict></plist>';
-  const guarded = plistWithGuard(plist, '/srv/ours/node-floor-guard.cjs');
+  const guarded = plistWithGuard(plist, guard);
   assert.ok(guarded.includes('<key>EnvironmentVariables</key>\n  <dict><key>NODE_OPTIONS</key><string>--require &quot;/srv/ours/node-floor-guard.cjs&quot;</string><key>A</key>'), guarded);
-  assert.equal(plistWithGuard(guarded, '/srv/ours/node-floor-guard.cjs'), null, 'an existing NODE_OPTIONS is never rewritten');
+  assert.deepEqual(plistEnvironment(guarded), [['NODE_OPTIONS', guardNodeOptions(guard)], ['A', 'b']]);
+  assert.equal(plistGuardState(plist, guard), 'absent');
+  assert.equal(plistGuardState(guarded, guard), 'present');
+  assert.equal(plistWithGuard(guarded, guard), guarded, 'its own active guard is recognized');
+  assert.equal(plistGuardState(guarded, '/srv/other/node-floor-guard.cjs'), 'conflict', 'another installation\'s guard is not this one');
+  assert.equal(plistWithGuard(plistWithGuard(plist, '/srv/other/node-floor-guard.cjs'), guard), null);
+  // Comments are not active configuration: neither an entry nor a dictionary inside one counts.
+  const entry = guarded.slice(guarded.indexOf('<key>NODE_OPTIONS</key>'), guarded.indexOf('<key>A</key>'));
+  const commented = plist.replace('<dict><key>A</key>', `<dict><!-- ${entry} --><key>A</key>`);
+  assert.equal(plistGuardState(commented, guard), 'conflict');
+  assert.equal(plistWithGuard(commented, guard), null);
+  assert.equal(plistEnvironment(plist.replace('<plist>', '<plist><!-- <key>EnvironmentVariables</key><dict> -->')), null);
+  assert.equal(plistWithGuard(plist.replace('<plist>', '<plist><!-- <key>EnvironmentVariables</key><dict> -->'), guard), null);
+  assert.equal(plistWithGuard(plist.replace('<string>b</string>', '<true/>'), guard), null, 'only string values are understood');
   assert.equal(plistWithGuard('<plist><dict></dict></plist>', '/srv/g.cjs'), null);
+});
+
+test('systemd drop-ins are collected from every user search path and name form', () => {
+  assert.deepEqual(dropInDirectoryNames('ours-data-abc.service'), ['ours-data-abc.service.d', 'ours-data-.service.d', 'ours-.service.d', 'service.d']);
+  const path = systemdUserSearchPath({}, '/home/me', 1000);
+  assert.equal(path[0], '/home/me/.config/systemd/user.control');
+  for (const dir of ['/run/user/1000/systemd/transient', '/home/me/.config/systemd/user', '/etc/xdg/systemd/user', '/etc/systemd/user', '/run/systemd/user', '/home/me/.local/share/systemd/user', '/usr/share/systemd/user', '/usr/lib/systemd/user', '/run/user/1000/systemd/generator.late'])
+    assert.ok(path.includes(dir), dir);
+  assert.ok(path.indexOf('/home/me/.config/systemd/user.control') < path.indexOf('/home/me/.config/systemd/user'));
+  assert.ok(systemdUserSearchPath({ XDG_CONFIG_HOME: '/cfg', XDG_RUNTIME_DIR: '/rt' }, '/home/me', 1000).includes('/rt/systemd/transient'));
 });
 
 test('recorded interpreters are read as text from both definition formats', () => {
@@ -80,7 +104,7 @@ test('environment and command overrides make the effective runtime ambiguous', (
   for (const [text, drop, expected] of [
     [unit + 'Environment=NODE_OPTIONS=--inspect\n', [], /already sets NODE_OPTIONS/],
     [unit + 'EnvironmentFile=/home/me/secret.env\n', [], /uses EnvironmentFile/],
-    [unit + 'UnsetEnvironment=NODE_OPTIONS\n', [], /NODE_OPTIONS/],
+    [unit + 'UnsetEnvironment=NODE_OPTIONS\n', [], /uses UnsetEnvironment/],
     [unit + 'UnsetEnvironment=PATH\n', [], /uses UnsetEnvironment/],
     [unit, [{ name: 'zz.conf', text: '[Service]\nEnvironment=\n' }], /zz\.conf.*empty Environment= reset/],
     [unit, [{ name: 'override.conf', text: '[Service]\nExecStart=\nExecStart=/old/node /x\n' }], /override\.conf.*overrides ExecStart/],
@@ -96,10 +120,11 @@ test('environment and command overrides make the effective runtime ambiguous', (
 function nativeHost(t, platform, versions = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'ours-native-guard-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const effects = realEffects({ env: {}, home: root });
+  // The runtime directory is the fixture's own, so host units never take part.
+  const effects = realEffects({ env: { XDG_RUNTIME_DIR: join(root, 'run') }, home: root });
   effects.platform = { platform };
   const record = effects.newInstallation(join(root, 'server'), 'packages');
-  mkdirSync(record.root, { recursive: true });
+  mkdirSync(record.root, { recursive: true, mode: 0o700 });
   const calls = [];
   const unitDir = join(root, '.config/systemd/user'), agentDir = join(root, 'Library/LaunchAgents');
   const cowork = platform === 'linux' ? join(unitDir, 'ours-cowork.service') : join(agentDir, 'network.ours.cowork.plist');
@@ -107,7 +132,7 @@ function nativeHost(t, platform, versions = {}) {
   const coworkDefinition = interpreter => platform === 'linux'
     ? `[Unit]\nDescription=ours-cowork\n[Service]\nType=simple\nExecStart="${interpreter}" "/opt/cowork/cli.js" serve\nEnvironment="OURS_COWORK_STATE_DIR=${coworkState}"\nRestart=on-failure\n`
     : `<plist version="1.0"><dict><key>Label</key><string>network.ours.cowork</string><key>ProgramArguments</key><array><string>${interpreter}</string><string>/opt/cowork/cli.js</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>OURS_COWORK_STATE_DIR</key><string>${coworkState}</string></dict></dict></plist>\n`;
-  let reinstall = true;
+  let reinstall = true, recorded = process.execPath, running = true;
   effects.run = async (command, args) => {
     calls.push([command, ...args]);
     if (args[0] === '-p' && args[1] === 'process.versions.node') {
@@ -115,8 +140,8 @@ function nativeHost(t, platform, versions = {}) {
       return { ok: true, code: 0, stdout: `${versions[command]}\n` };
     }
     // Published cowork install-service records the Node.js that runs it.
-    if (command === process.execPath && args[0]?.endsWith('/ours-cowork') && args[1] === 'install-service' && reinstall) { mkdirSync(join(cowork, '..'), { recursive: true }); writeFileSync(cowork, coworkDefinition(process.execPath)); }
-    if (command === process.execPath && args[0]?.endsWith('/ours-cowork') && args[1] === 'status') return { ok: true, code: 0, stdout: '' };
+    if (command === process.execPath && args[0]?.endsWith('/ours-cowork') && args[1] === 'install-service' && reinstall) { mkdirSync(join(cowork, '..'), { recursive: true }); writeFileSync(cowork, coworkDefinition(recorded)); }
+    if (command === process.execPath && args[0]?.endsWith('/ours-cowork') && args[1] === 'status') return { ok: true, code: running ? 0 : 6, stdout: '' };
     if (command === 'launchctl' && args[0] === 'print') return { ok: true, code: 0, stdout: '' };
     return { ok: true, code: 0, stdout: '' };
   };
@@ -125,23 +150,52 @@ function nativeHost(t, platform, versions = {}) {
     guard: join(record.root, NODE_FLOOR_GUARD), dropIn: `${cowork}.d/${NODE_FLOOR_DROP_IN}`,
     write: text => { mkdirSync(join(cowork, '..'), { recursive: true }); writeFileSync(cowork, text); },
     noReinstall: () => { reinstall = false; },
+    registerWith: interpreter => { recorded = interpreter; },
+    stopped: () => { running = false; },
+    stops: () => calls.filter(call => (call[0] === 'systemctl' && call[2] === 'stop') || (call[0] === 'launchctl' && call[1] === 'bootout')),
     starts: () => calls.filter(call => (call[0] === 'systemctl' && call[2] === 'start') || (call[0] === 'launchctl' && call[1] === 'kickstart')),
     installs: () => calls.filter(call => call[0] === process.execPath && call[2] === 'install-service'),
   };
 }
 
 for (const platform of ['linux', 'darwin']) {
-  test(`${platform}: a retained Cowork definition on an unpatched Node.js is rebound to the verified runtime and guarded`, async t => {
+  test(`${platform}: a retained Cowork definition on an unpatched Node.js is refused before any change, naming it`, async t => {
     const host = nativeHost(t, platform, { '/usr/bin/node': '22.23.2' });
-    host.write(host.coworkDefinition('/usr/bin/node'));
-    await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+    const text = host.coworkDefinition('/usr/bin/node');
+    host.write(text);
+    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), error => {
+      assert.match(error.message, /Refusing to start cowork: .* records \/usr\/bin\/node \(Node\.js 22\.23\.2\), which is not a patched Node\.js\. Nothing was started or changed\./);
+      assert.ok(error.message.includes(ADVISORY));
+      return true;
+    });
+    assert.equal(readFileSync(host.cowork, 'utf8'), text);
+    assert.equal(existsSync(host.guard), false);
+    assert.equal(existsSync(`${host.cowork}.d`), false);
+    // Only the read-only version query ran: no registration, manager or start.
+    assert.deepEqual(host.calls, [['/usr/bin/node', '-p', 'process.versions.node']]);
+  });
+
+  test(`${platform}: a retained interpreter whose version cannot be verified is refused before any change`, async t => {
+    const host = nativeHost(t, platform);
+    const text = host.coworkDefinition('/opt/missing/node');
+    host.write(text);
+    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /records \/opt\/missing\/node \(its version could not be verified\), which is not a patched Node\.js\. Nothing was started or changed\./);
+    assert.equal(readFileSync(host.cowork, 'utf8'), text);
+    assert.equal(existsSync(host.guard), false);
+    assert.equal(host.starts().length + host.installs().length, 0);
+  });
+
+  test(`${platform}: a fresh registration that records an unpatched Node.js is stopped again and reported truthfully`, async t => {
+    const host = nativeHost(t, platform, { '/usr/bin/node': '22.23.2' });
+    host.registerWith('/usr/bin/node');
+    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), error => {
+      assert.match(error.message, /records \/usr\/bin\/node \(Node\.js 22\.23\.2\), which is not a patched Node\.js\. Its install-service command registered and started it; the installer stopped it again and did not start it\./);
+      assert.doesNotMatch(error.message, /Nothing was started or changed/);
+      return true;
+    });
     assert.equal(host.installs().length, 1);
-    assert.equal(recordedInterpreter(readFileSync(host.cowork, 'utf8'), platform), process.execPath);
-    assert.equal(readFileSync(host.guard, 'utf8'), NODE_FLOOR_GUARD_SOURCE);
-    if (platform === 'linux') assert.equal(readFileSync(host.dropIn, 'utf8'), nodeFloorDropIn(host.guard));
-    else assert.ok(readFileSync(host.cowork, 'utf8').includes(`<key>NODE_OPTIONS</key><string>--require &quot;${host.guard}&quot;</string>`));
-    const install = host.calls.indexOf(host.installs()[0]);
-    assert.ok(host.starts().length >= 1 && host.calls.indexOf(host.starts().at(-1)) > install);
+    assert.ok(host.calls.indexOf(host.stops().at(-1)) > host.calls.indexOf(host.installs()[0]));
+    assert.equal(host.starts().length, 0);
   });
 
   test(`${platform}: an already patched retained definition is kept and only guarded; repeated starts are stable`, async t => {
@@ -157,14 +211,6 @@ for (const platform of ['linux', 'darwin']) {
     assert.equal(readFileSync(host.cowork, 'utf8'), guarded);
     assert.equal(host.installs().length, 0);
     assert.equal(host.calls.some(call => call[0] === 'systemctl' && call[2] === 'daemon-reload'), false);
-  });
-
-  test(`${platform}: a definition still unpatched after migration is refused before it starts`, async t => {
-    const host = nativeHost(t, platform, { '/usr/bin/node': '22.23.2' });
-    host.noReinstall();
-    host.write(host.coworkDefinition('/usr/bin/node'));
-    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /Refusing to start cowork: .*runs \/usr\/bin\/node, which is not a verified patched Node\.js/);
-    assert.equal(host.starts().length, 0);
   });
 
   test(`${platform}: an unverifiable interpreter is refused and an unparseable definition is left unchanged`, async t => {
@@ -198,13 +244,165 @@ for (const [label, drop] of [
   assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
 });
 
-test('linux: a fresh Cowork registration on the verified runtime is guarded before it is started', async t => {
+test('linux: the guard drop-in is in place before install-service performs its own first start', async t => {
   const host = nativeHost(t, 'linux');
+  let dropInAtRegistration = null;
+  const run = host.effects.run;
+  host.effects.run = async (command, args, options) => {
+    if (args[1] === 'install-service') dropInAtRegistration = existsSync(host.dropIn) ? readFileSync(host.dropIn, 'utf8') : null;
+    return run(command, args, options);
+  };
   await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
   assert.equal(host.installs().length, 1);
-  assert.equal(readFileSync(host.dropIn, 'utf8'), nodeFloorDropIn(host.guard));
-  const reload = host.calls.findIndex(call => call[0] === 'systemctl' && call[2] === 'daemon-reload');
+  // Published install-service runs daemon-reload and enable --now itself, so the drop-in must already apply.
+  assert.equal(dropInAtRegistration, nodeFloorDropIn(host.guard));
+  assert.equal(readFileSync(host.guard, 'utf8'), NODE_FLOOR_GUARD_SOURCE);
+  const reload = host.calls.findLastIndex(call => call[0] === 'systemctl' && call[2] === 'daemon-reload');
   assert.ok(reload > host.calls.indexOf(host.installs()[0]) && reload < host.calls.indexOf(host.starts().at(-1)));
+});
+
+test('darwin: a fresh registration gets the guard and is reloaded before the installer starts it', async t => {
+  const host = nativeHost(t, 'darwin');
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  assert.equal(plistGuardState(readFileSync(host.cowork, 'utf8'), host.guard), 'present');
+  const install = host.calls.indexOf(host.installs()[0]), stop = host.calls.indexOf(host.stops().at(-1)), start = host.calls.indexOf(host.starts().at(-1));
+  assert.ok(install < stop && stop < start, JSON.stringify(host.calls));
+});
+
+test('darwin: a guard entry inside an XML comment is not active and is refused before any change', async t => {
+  const host = nativeHost(t, 'darwin');
+  const base = host.coworkDefinition(process.execPath);
+  const entry = plistWithGuard(base, host.guard).match(/<key>NODE_OPTIONS<\/key><string>[^<]*<\/string>/)[0];
+  const commented = base.replace('<key>EnvironmentVariables</key><dict>', `<key>EnvironmentVariables</key><dict><!-- ${entry} -->`);
+  host.write(commented);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /mentions NODE_OPTIONS outside the installer's single active Node\.js floor guard entry\. Nothing was started or changed\./);
+  assert.equal(readFileSync(host.cowork, 'utf8'), commented);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+});
+
+// systemd merges drop-ins from every search path, by unit name, dash prefix and type.
+for (const [label, place] of [
+  ['type-wide service.d', root => join(root, '.config/systemd/user/service.d')],
+  ['dash-prefix ours-.service.d', root => join(root, '.config/systemd/user/ours-.service.d')],
+  ['runtime transient drop-in', root => join(root, 'run/systemd/transient/ours-cowork.service.d')],
+  ['user.control drop-in', root => join(root, '.config/systemd/user.control/ours-cowork.service.d')],
+]) test(`linux: UnsetEnvironment in a ${label} is refused before any write or start`, async t => {
+  const host = nativeHost(t, 'linux');
+  const text = host.coworkDefinition(process.execPath);
+  host.write(text);
+  const dir = place(host.root);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '99-no-node-options.conf'), '[Service]\nUnsetEnvironment=NODE_OPTIONS\n');
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), error => {
+    assert.ok(error.message.includes(`has drop-in ${join(dir, '99-no-node-options.conf')}, which uses UnsetEnvironment.`), error.message);
+    assert.match(error.message, /Nothing was started or changed\./);
+    return true;
+  });
+  assert.equal(readFileSync(host.cowork, 'utf8'), text);
+  assert.equal(existsSync(host.dropIn), false);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+});
+
+test('linux: an unrelated harmless drop-in elsewhere is accepted and left unchanged', async t => {
+  const host = nativeHost(t, 'linux');
+  host.write(host.coworkDefinition(process.execPath));
+  const dir = join(host.root, '.config/systemd/user/service.d'), file = join(dir, '10-timeout.conf');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, '[Service]\nTimeoutStopSec=20\n');
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  assert.equal(readFileSync(file, 'utf8'), '[Service]\nTimeoutStopSec=20\n');
+  assert.equal(readFileSync(host.dropIn, 'utf8'), nodeFloorDropIn(host.guard));
+});
+
+for (const [label, prepare, expected] of [
+  ['a same-named unit ahead in user.control', host => { mkdirSync(join(host.root, '.config/systemd/user.control'), { recursive: true }); writeFileSync(join(host.root, '.config/systemd/user.control/ours-cowork.service'), '[Service]\nExecStart=/usr/bin/node /x serve\n'); }, /cannot be qualified: .*user\.control\/ours-cowork\.service takes precedence over/],
+  ['SYSTEMD_UNIT_PATH', host => { host.effects.env.SYSTEMD_UNIT_PATH = join(host.root, 'units'); }, /cannot be qualified: SYSTEMD_UNIT_PATH replaces the systemd user unit search path/],
+  ['an XDG_CONFIG_HOME that excludes the unit directory', host => { host.effects.env.XDG_CONFIG_HOME = join(host.root, 'cfg'); }, /cannot be qualified: .* is not in the systemd user unit search path/],
+]) test(`linux: ${label} makes the effective unit ambiguous and is refused before any change`, async t => {
+  const host = nativeHost(t, 'linux');
+  const text = host.coworkDefinition(process.execPath);
+  host.write(text);
+  prepare(host);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), expected);
+  assert.equal(readFileSync(host.cowork, 'utf8'), text);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+});
+
+test('linux: a Node.js floor drop-in this installation did not write is never replaced', async t => {
+  for (const content of [nodeFloorDropIn('/srv/retired-root/node-floor-guard.cjs'), '# Managed by @ours.network/install: refuse an unpatched Node.js before every start.\n[Service]\nRestartSec=1\n']) {
+    const host = nativeHost(t, 'linux');
+    host.write(host.coworkDefinition(process.execPath));
+    mkdirSync(`${host.cowork}.d`);
+    writeFileSync(host.dropIn, content);
+    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /has .*ours-node-floor\.conf, which this installation did not write\. Nothing was started or changed\./);
+    assert.equal(readFileSync(host.dropIn, 'utf8'), content, 'a marker alone does not authorize replacement');
+    assert.equal(existsSync(host.guard), false);
+    assert.equal(host.calls.length, 0);
+  }
+});
+
+test('linux: retire removes only this installation\'s byte-exact drop-in; a new root registers cleanly', async t => {
+  const host = nativeHost(t, 'linux');
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  const unrelated = join(`${host.cowork}.d`, '10-timeout.conf');
+  writeFileSync(unrelated, '[Service]\nTimeoutStopSec=20\n');
+  host.stopped();
+  await host.effects.serverLifecycle(host.record, 'retire', ['cowork']);
+  assert.equal(existsSync(host.cowork), false);
+  assert.equal(existsSync(host.dropIn), false);
+  assert.equal(readFileSync(unrelated, 'utf8'), '[Service]\nTimeoutStopSec=20\n');
+  assert.equal(existsSync(host.guard), true, 'the guard stays with its root');
+  rmSync(unrelated);
+  // A replacement installation under the same service name gets its own guard, not the retired root's.
+  const next = host.effects.newInstallation(join(host.root, 'server-2'), 'packages');
+  mkdirSync(next.root, { recursive: true, mode: 0o700 });
+  const nextGuard = join(next.root, NODE_FLOOR_GUARD);
+  const nextState = installationPaths(next).cowork;
+  const run = host.effects.run;
+  host.effects.run = async (command, args, options) => {
+    if (args[1] === 'install-service') { writeFileSync(host.cowork, host.coworkDefinition(process.execPath).replace(installationPaths(host.record).cowork, nextState)); return { ok: true, code: 0, stdout: '' }; }
+    if (args[1] === 'status') return { ok: true, code: 0, stdout: '' };
+    return run(command, args, options);
+  };
+  await host.effects.serverLifecycle(next, 'start', ['cowork']);
+  assert.equal(readFileSync(host.dropIn, 'utf8'), nodeFloorDropIn(nextGuard));
+  assert.ok(!readFileSync(host.dropIn, 'utf8').includes(host.guard));
+});
+
+test('linux: retire leaves a drop-in that is not byte-exact for this installation', async t => {
+  const host = nativeHost(t, 'linux');
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  writeFileSync(host.dropIn, `${nodeFloorDropIn(host.guard)}# edited\n`);
+  host.stopped();
+  await host.effects.serverLifecycle(host.record, 'retire', ['cowork']);
+  assert.equal(readFileSync(host.dropIn, 'utf8'), `${nodeFloorDropIn(host.guard)}# edited\n`);
+});
+
+test('linux: a unit directory writable by the user\'s own group (umask 002) is accepted; a world-writable one is refused', async t => {
+  const host = nativeHost(t, 'linux');
+  host.write(host.coworkDefinition(process.execPath));
+  chmodSync(host.unitDir, 0o775);
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  chmodSync(host.unitDir, 0o777);
+  host.calls.length = 0;
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /is a link, not owned by this user or writable by others/);
+  assert.equal(host.calls.length, 0);
+  chmodSync(host.unitDir, 0o755);
+});
+
+for (const target of ['root', 'drop-in directory', 'drop-in', 'guard']) test(`linux: a group-writable ${target} is refused before any change`, async t => {
+  const host = nativeHost(t, 'linux');
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  const path = { root: host.record.root, 'drop-in directory': `${host.cowork}.d`, 'drop-in': host.dropIn, guard: host.guard }[target];
+  chmodSync(path, target.includes('directory') || target === 'root' ? 0o775 : 0o664);
+  const before = readFileSync(host.dropIn, 'utf8');
+  host.calls.length = 0;
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /is a link, not owned by this user or writable by others\. Nothing was started or changed\./);
+  assert.equal(readFileSync(host.dropIn, 'utf8'), before);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
 });
 
 // The host's own unpatched /usr/bin/node, when present, is refused by the guard in an isolated process.
@@ -223,7 +421,6 @@ test('an actual unpatched Node.js executable is refused by the guard before the 
 });
 
 test('linux: a symlinked drop-in directory or guard is refused before any change', async t => {
-  const { symlinkSync } = await import('node:fs');
   for (const target of ['dropins', 'guard']) {
     const host = nativeHost(t, 'linux', { '/usr/bin/node': '22.23.2' });
     const text = host.coworkDefinition('/usr/bin/node');
@@ -232,9 +429,9 @@ test('linux: a symlinked drop-in directory or guard is refused before any change
     mkdirSync(elsewhere);
     if (target === 'dropins') symlinkSync(elsewhere, `${host.cowork}.d`);
     else symlinkSync(join(elsewhere, 'guard.cjs'), host.guard);
-    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /not a private file or directory owned by this user/);
+    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /is a link, not owned by this user or writable by others\. Nothing was started or changed\./);
     assert.equal(readFileSync(host.cowork, 'utf8'), text);
-    assert.deepEqual((await import('node:fs')).readdirSync(elsewhere), []);
+    assert.deepEqual(readdirSync(elsewhere), []);
     assert.equal(host.calls.length, 0);
   }
 });
