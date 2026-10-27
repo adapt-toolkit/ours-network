@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { realEffects } from '../lib/effects.mjs';
 import { installationPaths } from '../lib/plan.mjs';
 import {
@@ -275,7 +275,7 @@ test('darwin: a guard entry inside an XML comment is not active and is refused b
   const entry = plistWithGuard(base, host.guard).match(/<key>NODE_OPTIONS<\/key><string>[^<]*<\/string>/)[0];
   const commented = base.replace('<key>EnvironmentVariables</key><dict>', `<key>EnvironmentVariables</key><dict><!-- ${entry} -->`);
   host.write(commented);
-  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /mentions NODE_OPTIONS outside the installer's single active Node\.js floor guard entry\. Nothing was started or changed\./);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /mentions NODE_OPTIONS, or a character reference that could spell it, outside the installer's single active Node\.js floor guard entry\. Nothing was started or changed\./);
   assert.equal(readFileSync(host.cowork, 'utf8'), commented);
   assert.equal(existsSync(host.guard), false);
   assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
@@ -303,6 +303,47 @@ for (const [label, place] of [
   assert.equal(existsSync(host.dropIn), false);
   assert.equal(existsSync(host.guard), false);
   assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+});
+
+// systemd joins continued lines and C-unquotes and %-expands Environment= values.
+for (const [label, drop, expected] of [
+  ['a continued empty Environment= reset', '[Service]\nEnvironment=\\\n\n', /empty Environment= reset/],
+  ['a C-escaped NODE_OPTIONS assignment', '[Service]\nEnvironment="\\x4eODE_OPTIONS="\n', /escaped Environment= value/],
+  ['a specifier in an Environment= value', '[Service]\nEnvironment=X=%u\n', /specifier in an Environment= value/],
+  ['a continued UnsetEnvironment', '[Service]\nUnsetEnvironment=PATH \\\n NODE_OPTIONS\n', /UnsetEnvironment/],
+  ['a continued ExecStart override', '[Service]\nExecStart=\\\n# comment inside the continuation\n\nExecStart=/old/node /x serve\n', /overrides ExecStart|empty|ExecStart/],
+  ['an empty quoted Environment=', '[Service]\nEnvironment=""\n', /empty Environment= reset/],
+]) test(`linux: a later drop-in with ${label} is refused before any change`, async t => {
+  const host = nativeHost(t, 'linux');
+  const text = host.coworkDefinition(process.execPath);
+  host.write(text);
+  mkdirSync(`${host.cowork}.d`);
+  writeFileSync(`${host.cowork}.d/zz-probe.conf`, drop);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), error => {
+    assert.match(error.message, /zz-probe\.conf/);
+    assert.match(error.message, expected);
+    assert.match(error.message, /Nothing was started or changed\./);
+    return true;
+  });
+  assert.equal(readFileSync(host.cowork, 'utf8'), text);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+});
+
+test('launchd plists with duplicate or entity-spelled keys are not a supported form', () => {
+  const guard = '/srv/ours/node-floor-guard.cjs';
+  const plist = '<plist><dict><key>ProgramArguments</key><array><string>/opt/node/bin/node</string></array><key>EnvironmentVariables</key><dict><key>A</key><string>b</string></dict></dict></plist>';
+  const duplicate = plistWithGuard(plist, guard).replace('<key>A</key>', '<key>NODE_OPTIONS</key><string></string><key>A</key>');
+  for (const text of [
+    duplicate,
+    plist.replace('<key>A</key><string>b</string>', '<key>A</key><string>b</string><key>A</key><string>c</string>'),
+    plist.replace('<key>A</key>', '<key>A&amp;B</key>'),
+    plist.replace('<key>A</key>', '<key>NODE_&#x4F;PTIONS</key>'),
+  ]) {
+    assert.equal(plistEnvironment(text), null, text);
+    assert.equal(plistGuardState(text, guard), 'conflict', text);
+    assert.equal(plistWithGuard(text, guard), null, text);
+  }
 });
 
 test('linux: an unrelated harmless drop-in elsewhere is accepted and left unchanged', async t => {
@@ -381,17 +422,79 @@ test('linux: retire leaves a drop-in that is not byte-exact for this installatio
   assert.equal(readFileSync(host.dropIn, 'utf8'), `${nodeFloorDropIn(host.guard)}# edited\n`);
 });
 
-test('linux: a unit directory writable by the user\'s own group (umask 002) is accepted; a world-writable one is refused', async t => {
-  const host = nativeHost(t, 'linux');
-  host.write(host.coworkDefinition(process.execPath));
-  chmodSync(host.unitDir, 0o775);
-  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
-  chmodSync(host.unitDir, 0o777);
-  host.calls.length = 0;
-  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /is a link, not owned by this user or writable by others/);
-  assert.equal(host.calls.length, 0);
-  chmodSync(host.unitDir, 0o755);
+for (const [label, dir] of [['unit directory', host => host.unitDir], ['parent of the unit directory', host => join(host.root, '.config')], ['parent of the installation', host => dirname(host.record.root)]])
+  for (const mode of [0o775, 0o777]) test(`linux: a ${mode.toString(8)} ${label} is refused before any change, with remediation`, async t => {
+    const host = nativeHost(t, 'linux');
+    host.write(host.coworkDefinition(process.execPath));
+    const path = dir(host);
+    chmodSync(path, mode);
+    // Membership of the user's own primary group is not proof that nobody else can replace entries.
+    await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), error => {
+      assert.match(error.message, /can be changed by another user/);
+      assert.ok(error.message.includes(`${path}`) && error.message.includes(`(make it private with chmod go-w ${path}, then run the installer again)`), error.message);
+      assert.match(error.message, /Nothing was started or changed\./);
+      return true;
+    });
+    assert.equal(existsSync(host.guard), false);
+    assert.equal(existsSync(host.dropIn), false);
+    assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+  });
+
+test('darwin: a numeric character reference that spells NODE_OPTIONS is refused before any change', async t => {
+  const host = nativeHost(t, 'darwin');
+  const base = host.coworkDefinition(process.execPath);
+  const spelled = base.replace('<key>EnvironmentVariables</key><dict>', '<key>EnvironmentVariables</key><dict><key>NODE_&#79;PTIONS</key><string></string>');
+  host.write(spelled);
+  assert.equal(plistEnvironment(spelled), null);
+  assert.equal(plistGuardState(spelled, host.guard), 'conflict');
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /character reference that could spell it.*Nothing was started or changed\./);
+  assert.equal(readFileSync(host.cowork, 'utf8'), spelled);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
 });
+
+test('darwin: an already guarded plist is loaded again from disk before every installer start', async t => {
+  const host = nativeHost(t, 'darwin');
+  const guarded = plistWithGuard(host.coworkDefinition(process.execPath), host.guard);
+  host.write(guarded);
+  // launchd reports the service as loaded, possibly from an older, unguarded view.
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  assert.equal(readFileSync(host.cowork, 'utf8'), guarded);
+  const launchd = host.calls.filter(call => call[0] === 'launchctl' && call[1] !== 'print').map(call => call[1]);
+  // The loaded view is replaced by the guarded plist on disk before the service is kicked.
+  assert.deepEqual(launchd, ['bootout', 'bootstrap', 'kickstart']);
+  assert.deepEqual(host.calls.find(call => call[1] === 'bootstrap'), ['launchctl', 'bootstrap', `gui/${process.getuid()}`, host.cowork]);
+});
+
+for (const shape of ['linked drop-in directory', 'linked parent of the drop-in directory', 'group-writable drop-in directory'])
+  test(`linux: retire never removes through a ${shape} and refuses before anything stops`, async t => {
+    const host = nativeHost(t, 'linux');
+    await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+    const guardDropIn = readFileSync(host.dropIn, 'utf8');
+    const elsewhere = join(host.root, 'unrelated');
+    mkdirSync(elsewhere, { mode: 0o700 });
+    let target = host.dropIn;
+    if (shape === 'linked drop-in directory') {
+      writeFileSync(join(elsewhere, NODE_FLOOR_DROP_IN), guardDropIn);
+      rmSync(`${host.cowork}.d`, { recursive: true });
+      symlinkSync(elsewhere, `${host.cowork}.d`);
+      target = join(elsewhere, NODE_FLOOR_DROP_IN);
+    } else if (shape === 'linked parent of the drop-in directory') {
+      // The unit directory itself resolves elsewhere; the lexical path is redirected.
+      const real = join(elsewhere, 'user');
+      mkdirSync(real, { mode: 0o755 });
+      for (const name of readdirSync(host.unitDir)) (await import('node:fs')).renameSync(join(host.unitDir, name), join(real, name));
+      rmSync(host.unitDir, { recursive: true });
+      symlinkSync(real, host.unitDir);
+      target = join(real, 'ours-cowork.service.d', NODE_FLOOR_DROP_IN);
+    } else chmodSync(`${host.cowork}.d`, 0o775);
+    host.stopped();
+    host.calls.length = 0;
+    await assert.rejects(host.effects.serverLifecycle(host.record, 'retire', ['cowork']), /Refusing to retire cowork: its Node\.js floor drop-in .* cannot be removed safely\. Nothing was stopped or removed\./);
+    assert.equal(readFileSync(target, 'utf8'), guardDropIn);
+    assert.equal(existsSync(host.cowork), true, 'the base definition is not removed while its guard would be stranded');
+    assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+  });
 
 for (const target of ['root', 'drop-in directory', 'drop-in', 'guard']) test(`linux: a group-writable ${target} is refused before any change`, async t => {
   const host = nativeHost(t, 'linux');
@@ -400,7 +503,9 @@ for (const target of ['root', 'drop-in directory', 'drop-in', 'guard']) test(`li
   chmodSync(path, target.includes('directory') || target === 'root' ? 0o775 : 0o664);
   const before = readFileSync(host.dropIn, 'utf8');
   host.calls.length = 0;
-  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /is a link, not owned by this user or writable by others\. Nothing was started or changed\./);
+  // The installation root is also an ancestor of the guard, so its refusal names the remediation.
+  const expected = target === 'root' ? /it can be changed by another user \(make it private with chmod go-w .*\)\. Nothing was started or changed\./ : /is a link, not owned by this user or writable by others\. Nothing was started or changed\./;
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), expected);
   assert.equal(readFileSync(host.dropIn, 'utf8'), before);
   assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
 });

@@ -1710,6 +1710,25 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     const response = await fetch(endpoint, { redirect: 'error', signal: AbortSignal.timeout(3000) });
     if (!response.ok) throw new Error(`${service} health check failed`);
   };
+  const lstatExists = path => { try { lstatSync(path); return true; } catch { return false; } };
+  // Every existing directory above a definition or the guard must also be one that no other
+  // user can rename entries in: owned by this user or root and not group/world-writable
+  // (a root-owned sticky directory such as /tmp protects entries owned by this user). Both
+  // the path as written and the directories it resolves to are checked.
+  const sharedAncestor = path => {
+    let dir = path;
+    while (!lstatExists(dir)) dir = dirname(dir);
+    const unsafeDir = stat => (stat.uid !== process.getuid() && stat.uid !== 0) || ((stat.mode & 0o022) && !(stat.uid === 0 && (stat.mode & 0o1000)));
+    for (let lexical = dir; ; lexical = dirname(lexical)) {
+      if (unsafeDir(lstatSync(lexical))) return lexical;
+      if (lexical === dirname(lexical)) break;
+    }
+    for (let real = realpathSync(dir); ; real = dirname(real)) {
+      if (unsafeDir(statSync(real))) return real;
+      if (real === dirname(real)) break;
+    }
+    return null;
+  };
   if (operation === 'status') {
     const running = [];
     for (const service of selected) {
@@ -1724,7 +1743,23 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     }
     return running;
   }
+  // This installation's Node.js floor drop-in is removed with its definition only when it is
+  // byte-exact, privately owned and reached without redirection. One that matches but cannot
+  // be removed safely refuses the retirement before anything stops; others are not ours.
+  const retiredDropIn = service => {
+    const directory = `${plans[service].path}.d`, path = join(directory, NODE_FLOOR_DROP_IN);
+    if (!lstatExists(path)) return null;
+    let text;
+    try { text = readFileSync(path, 'utf8'); } catch { return null; }
+    if (text !== nodeFloorDropIn(join(record.root, NODE_FLOOR_GUARD))) return null;
+    const dirStat = lstatSync(directory), stat = lstatSync(path);
+    const safe = dirStat.isDirectory() && dirStat.uid === process.getuid() && !(dirStat.mode & 0o022) && realpathSync(directory) === directory && !sharedAncestor(directory)
+      && stat.isFile() && stat.uid === process.getuid() && stat.nlink === 1;
+    if (!safe) throw Object.assign(new Error(`Refusing to retire ${service}: its Node.js floor drop-in ${path} is linked, redirected or writable by others, so it cannot be removed safely. Nothing was stopped or removed. Remove that drop-in yourself, then run the installer again.`), { securityRefusal: true });
+    return { directory, path };
+  };
   if (operation === 'stop' || operation === 'retire') {
+    const dropIns = operation === 'retire' && linux ? new Map(selected.map(service => [service, retiredDropIn(service)])) : new Map();
     for (const service of [...selected].reverse()) {
       if (operation === 'retire' && linux && service !== 'daemon' && existsSync(plans[service].path)) {
         await effects.run('systemctl', ['--user', 'disable', plans[service].name]);
@@ -1749,17 +1784,13 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       for (const service of selected.filter(service => service !== 'daemon')) {
         rmSync(plans[service].path, { force: true });
       }
-      // The Node.js floor drop-in goes with its definition, but only this installation's
-      // byte-exact, privately owned one; other drop-ins stay. The guard stays with the root.
+      // The Node.js floor drop-in goes with its definition (checked above, before any stop).
+      // Other drop-ins stay, and the guard stays with the root.
       if (linux) {
-        const guardDropIn = nodeFloorDropIn(join(record.root, NODE_FLOOR_GUARD));
-        for (const service of selected) {
-          const directory = `${plans[service].path}.d`, path = join(directory, NODE_FLOOR_DROP_IN);
-          let stat;
-          try { stat = lstatSync(path); } catch { continue; }
-          if (!stat.isFile() || stat.uid !== process.getuid() || stat.nlink !== 1 || readFileSync(path, 'utf8') !== guardDropIn) continue;
-          rmSync(path);
-          try { rmdirSync(directory); } catch { /* other drop-ins remain */ }
+        for (const found of dropIns.values()) {
+          if (!found) continue;
+          rmSync(found.path);
+          try { rmdirSync(found.directory); } catch { /* other drop-ins remain */ }
         }
         await effects.run('systemctl', ['--user', 'daemon-reload']);
       }
@@ -1777,22 +1808,25 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
   const dropInText = nodeFloorDropIn(guardPath);
   const ownDropIn = service => existsSync(dropInPath(service)) && readFileSync(dropInPath(service), 'utf8') === dropInText;
   // Installer-owned guard files and their directories must not be redirected or writable by others.
-  const lstatExists = path => { try { lstatSync(path); return true; } catch { return false; } };
-  // The shared unit directory may be writable by the user's own primary group (umask 002).
-  const privatePath = (service, path, directory = false, ownGroupWritable = false) => {
+  const unsafe = (service, path, why) => service ? refusal(service, `uses ${path}, which ${why}`)
+    : Object.assign(new Error(`Refusing to change ${path}: it ${why}. Nothing was started or changed.`), { securityRefusal: true });
+  const privatePath = (service, path, directory = false) => {
     if (!lstatExists(path)) return;
     const stat = lstatSync(path);
-    const writable = (stat.mode & 0o002) || ((stat.mode & 0o020) && !(ownGroupWritable && stat.gid === process.getgid()));
-    if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== process.getuid() || writable || (!directory && stat.nlink !== 1))
-      throw service ? refusal(service, `uses ${path}, which is a link, not owned by this user or writable by others`)
-        : Object.assign(new Error(`Refusing to change ${path}: it is a link, not owned by this user or writable by others. Nothing was started or changed.`), { securityRefusal: true });
+    if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== process.getuid() || (stat.mode & 0o022) || (!directory && stat.nlink !== 1))
+      throw unsafe(service, path, 'is a link, not owned by this user or writable by others');
+  };
+  const privateAncestors = (service, path) => {
+    const dir = sharedAncestor(path);
+    if (dir) throw unsafe(service, dir, `can be changed by another user (make it private with chmod go-w ${dir}, then run the installer again)`);
   };
   const validate = service => {
     const path = plans[service].path;
     const present = existsSync(path);
     const text = present ? readFileSync(path, 'utf8') : '';
+    privateAncestors(service, dirname(path));
     if (linux) {
-      privatePath(service, dirname(path), true, true);
+      privatePath(service, dirname(path), true);
       privatePath(service, `${path}.d`, true);
       privatePath(service, dropInPath(service));
       if (lstatExists(dropInPath(service)) && !ownDropIn(service)) throw refusal(service, `has ${dropInPath(service)}, which this installation did not write`);
@@ -1801,7 +1835,7 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       const conflict = definitionConflict(text, dropIns);
       if (conflict) throw refusal(service, conflict);
     } else if (present) {
-      if (plistGuardState(text, guardPath) === 'conflict') throw refusal(service, 'mentions NODE_OPTIONS outside the installer\'s single active Node.js floor guard entry');
+      if (plistGuardState(text, guardPath) === 'conflict') throw refusal(service, 'mentions NODE_OPTIONS, or a character reference that could spell it, outside the installer\'s single active Node.js floor guard entry');
       if (!plistWithGuard(text, guardPath)) throw refusal(service, 'has no single active EnvironmentVariables dictionary for the Node.js floor guard');
     }
     // install-service always rewrites the daemon definition; registered() checks what it recorded.
@@ -1843,15 +1877,17 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       throw refusal(service, error.detail, outcome);
     }
   };
+  // launchd keeps a loaded definition's environment until it is reloaded, so the plist on
+  // disk, guarded, is always loaded again before the installer starts the service.
   const guardPlist = async service => {
     if (linux || !existsSync(plans[service].path)) return;
     const current = readFileSync(plans[service].path, 'utf8');
-    if (plistGuardState(current, guardPath) === 'present') return;
-    atomicWriteConfig(plans[service].path, plistWithGuard(current, guardPath));
-    // launchd keeps a loaded definition's environment until it is reloaded.
+    if (plistGuardState(current, guardPath) !== 'present') atomicWriteConfig(plans[service].path, plistWithGuard(current, guardPath));
     await manager(service, 'stop');
+    await effects.run('launchctl', ['bootstrap', `gui/${process.getuid()}`, plans[service].path]);
   };
   // Start: nothing changes unless every selected definition is acceptable.
+  privateAncestors(null, record.root);
   privatePath(null, record.root, true);
   privatePath(null, guardPath);
   for (const service of selected) validate(service);

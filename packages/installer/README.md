@@ -911,25 +911,38 @@ interpreter that has become unpatched.
 - On Linux, the guard is a systemd drop-in `ours-node-floor.conf`. It is in
   place before a package's own `install-service` command starts the service.
   Retiring a service removes the drop-in only when it is byte-for-byte this
-  installation's own. Other drop-ins are left alone.
+  installation's own, privately owned, and reached without links or
+  redirection. If a matching drop-in cannot be removed safely, retirement is
+  refused before anything stops. Other drop-ins are left alone.
 - On macOS, the guard is an `EnvironmentVariables` entry in the launchd plist.
-  It is added right after registration and reloaded before the installer
-  starts the service. That first start, inside `install-service`, runs on the
-  installer's verified Node.js.
+  It is added right after registration. Before every installer start, launchd
+  is made to load the plist on disk again (bootout, then bootstrap), so the
+  loaded copy carries the guard. The first start, which `install-service`
+  performs itself, runs on the installer's verified Node.js before the guard
+  is added. The guard applies from the installer's own start onwards.
 
 The installer refuses to change, and does not start, a definition whose
 effective configuration it cannot verify. This covers:
 
 - unparseable commands;
-- `NODE_OPTIONS` outside the installer's single active guard entry, including
-  in comments;
-- `EnvironmentFile=`, `UnsetEnvironment=` or `PassEnvironment=`, an environment
-  reset, or an `ExecStart` override in any drop-in systemd would apply (unit,
-  dash-prefix and type-wide drop-ins in every user unit search path);
+- in a launchd plist: `NODE_OPTIONS` anywhere outside the installer's single
+  active guard entry, including in comments; numeric character references;
+  entities in keys; and repeated keys;
+- in any drop-in systemd would apply (unit, dash-prefix and type-wide
+  drop-ins in every user unit search path):
+  - `EnvironmentFile=`, `UnsetEnvironment=` or `PassEnvironment=`;
+  - an environment reset;
+  - an `Environment=` value with escapes or `%` specifiers;
+  - an `ExecStart` override.
+  Continued lines are joined first, as systemd joins them;
 - a same-named unit ahead of the installer's own, or `SYSTEMD_UNIT_PATH`;
 - a guard drop-in that this installation did not write;
 - linked, foreign-owned or group- or world-writable guard files and
-  directories.
+  directories;
+- any directory above the unit directory or the installation directory, as
+  written or as resolved, that is owned by another user or is group- or
+  world-writable. A root-owned sticky directory such as `/tmp` is accepted.
+  The error names the directory and suggests `chmod go-w`.
 
 Docker installations rebuild their image on the patched `node:24.22.1` base on
 the next installer run.

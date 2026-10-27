@@ -42,26 +42,34 @@ const count = (text, part) => text.split(part).length - 1;
 /**
  * The active key/value pairs of a launchd plist's single EnvironmentVariables dictionary,
  * parsed with comments excluded, or null when that dictionary is missing, repeated (also
- * inside a comment) or holds anything but string values.
+ * inside a comment), holds anything but string values, repeats a key, or uses any character
+ * reference in a key or a numeric one anywhere. Every launchd decision uses this one parse.
  */
 export function plistEnvironment(text) {
   if (typeof text !== 'string') return null;
   const clean = text.replace(/<!--[\s\S]*?-->/g, '');
-  if (clean.includes('<!--') || clean.includes('<![CDATA[') || count(clean, ENVIRONMENT_KEY) !== 1 || count(text, ENVIRONMENT_KEY) !== 1) return null;
+  // Numeric character references could spell any key (NODE_&#79;PTIONS); they are not accepted.
+  if (clean.includes('<!--') || clean.includes('<![CDATA[') || text.includes('&#') || count(clean, ENVIRONMENT_KEY) !== 1 || count(text, ENVIRONMENT_KEY) !== 1) return null;
   const body = clean.match(/<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/)?.[1];
   if (body === undefined || body.includes('<dict')) return null;
   const pairs = [...body.matchAll(/\s*<key>([^<]*)<\/key>\s*<string>([^<]*)<\/string>/gy)];
   if (pairs.map(match => match[0]).join('') !== body.replace(/\s+$/, '')) return null;
-  return pairs.map(([, key, value]) => [decodeXml(key), decodeXml(value)]);
+  // Keys are taken literally: an entity in a key, or a key repeated, is not a supported form.
+  if (pairs.some(([, key]) => key.includes('&'))) return null;
+  const keys = pairs.map(([, key]) => key);
+  if (new Set(keys).size !== keys.length) return null;
+  return pairs.map(([, key, value]) => [key, decodeXml(value)]);
 }
 
 /**
  * Whether a launchd plist carries the installer's guard: 'present' only when the single
  * active EnvironmentVariables dictionary has exactly one NODE_OPTIONS holding exactly the
  * guard and NODE_OPTIONS appears nowhere else, including comments; 'absent' when
- * NODE_OPTIONS appears nowhere; otherwise 'conflict'.
+ * NODE_OPTIONS appears nowhere; otherwise 'conflict', including every plist that
+ * plistEnvironment does not accept.
  */
 export function plistGuardState(text, guardPath) {
+  if (plistEnvironment(text) === null) return 'conflict';
   const mentions = count(text, 'NODE_OPTIONS');
   if (mentions === 0) return 'absent';
   const options = (plistEnvironment(text) ?? []).filter(([key]) => key === 'NODE_OPTIONS');
@@ -107,16 +115,29 @@ export function recordedInterpreter(text, platform) {
   return value;
 }
 
-function execStarts(text) {
-  let section = '';
-  const starts = [];
-  for (const source of text.split('\n')) {
+/**
+ * systemd's logical lines (systemd.syntax(7)): a trailing backslash joins the next line with
+ * a space, and comment lines inside a continuation are skipped. Returns [section, line] pairs.
+ */
+function logicalLines(text) {
+  const result = [];
+  let section = '', pending = null;
+  for (const source of text.replace(/\r\n?/g, '\n').split('\n')) {
     const line = source.trim();
-    if (!line || /^[#;]/.test(line)) continue;
-    if (/^\[.*\]$/.test(line)) { section = line; continue; }
-    if (section === '[Service]' && /^ExecStart\s*=/.test(line)) starts.push(line.replace(/^ExecStart\s*=/, ''));
+    if (pending !== null && /^[#;]/.test(line)) continue;
+    if (pending === null && (!line || /^[#;]/.test(line))) continue;
+    const joined = pending === null ? line : `${pending} ${line}`;
+    if (joined.endsWith('\\')) { pending = joined.slice(0, -1).trimEnd(); continue; }
+    pending = null;
+    if (/^\[.*\]$/.test(joined)) { section = joined; continue; }
+    result.push([section, joined]);
   }
-  return starts;
+  if (pending !== null) result.push([section, pending]);
+  return result;
+}
+
+function execStarts(text) {
+  return logicalLines(text).filter(([section, line]) => section === '[Service]' && /^ExecStart\s*=/.test(line)).map(([, line]) => line.replace(/^ExecStart\s*=/, ''));
 }
 
 /**
@@ -126,16 +147,19 @@ function execStarts(text) {
  * Environment= resets earlier assignments. Diagnostics name only the directive and file.
  */
 export function definitionConflict(text, otherDropIns = []) {
+  // Environment= values are C-unquoted and %-expanded by systemd; any escape or specifier could
+  // spell NODE_OPTIONS or reset it, so those forms are refused rather than interpreted.
   const directives = source => {
-    let section = '';
     const found = [];
-    for (const raw of source.split('\n')) {
-      const line = raw.trim();
-      if (!line || /^[#;]/.test(line)) continue;
-      if (/^\[.*\]$/.test(line)) { section = line; continue; }
+    for (const [section, line] of logicalLines(source)) {
       if (section !== '[Service]') continue;
       if (/^(EnvironmentFile|UnsetEnvironment|PassEnvironment)\s*=/.test(line)) found.push(line.split('=')[0].trim());
-      else if (/^Environment\s*=\s*$/.test(line)) found.push('an empty Environment= reset');
+      else if (/^Environment\s*=/.test(line)) {
+        const value = line.replace(/^Environment\s*=/, '');
+        if (!value.replace(/["'\s]/g, '')) found.push('an empty Environment= reset');
+        else if (value.includes('\\')) found.push('an escaped Environment= value');
+        else if (value.replaceAll('%%', '').includes('%')) found.push('a specifier in an Environment= value');
+      }
     }
     return found;
   };
