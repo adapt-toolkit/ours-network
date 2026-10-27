@@ -14,9 +14,19 @@ const owned = (path, directory = false) => {
     || realpathSync(path) !== path || (s.mode & 0o7000)) throw new Error('Unsafe retained recovery delivery');
 };
 export const PATCHED_NODE_IMAGE = 'node:24.22.1';
-/** Replace every Node base image that is not an exact patched release (floating, minor or old tags). */
+// node:<version>[-<official variant>][@sha256:<digest>]; the version may be floating (24, 24.21).
+const NODE_TAG = /^(\d+(?:\.\d+){0,2})(-(?:alpine(?:\d+(?:\.\d+)?)?|(?:bookworm|bullseye|trixie)(?:-slim)?|slim))?(@sha256:[0-9a-f]{64})?$/;
+/**
+ * Replace every Node base image that is not an exact patched release (floating, minor
+ * or old tags). An exact patched release is kept with its variant and digest, so a newer
+ * build is never downgraded; a replaced tag keeps its variant (bookworm-slim, alpine).
+ */
 export function securedNodeStages(text) {
-  return text.replace(/^FROM node:(\S+)((?: AS \S+)?)$/gm, (line, tag, stage) => isSecureNodeVersion(tag) ? line : `FROM ${PATCHED_NODE_IMAGE}${stage}`);
+  return text.replace(/^FROM node:(\S+)((?: AS \S+)?)$/gm, (line, tag, stage) => {
+    const [, version, variant = ''] = NODE_TAG.exec(tag) ?? [];
+    if (version && isSecureNodeVersion(version)) return line;
+    return `FROM ${PATCHED_NODE_IMAGE}${variant}${stage}`;
+  });
 }
 const beforeMaintenance = (text, line) => {
   // The matched stage line is kept as is, so its already secured base image is preserved.

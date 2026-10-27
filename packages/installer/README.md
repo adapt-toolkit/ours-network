@@ -892,6 +892,16 @@ manager or
 [Cloudflare's update instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/update-cloudflared/),
 then check `cloudflared --version` again.
 
+**Native services.** In package mode the installer registers the daemon,
+Telegram, Cowork and Messenger services with the Node.js executable that
+passed its own check: their service definitions record that absolute path,
+so a later start or restart does not use a different `node` from the service
+manager's PATH. After updating Node.js, run the installer again so the
+service definitions record the patched executable; definitions written by
+an earlier installer keep the executable they recorded. Docker
+installations rebuild their image on the patched `node:24.22.1` base on the
+next installer run.
+
 These checks do not install or upgrade prerequisites, disable TLS
 verification, rotate credentials or restart services. A process that is
 already running keeps the binaries it started with: update Node.js and

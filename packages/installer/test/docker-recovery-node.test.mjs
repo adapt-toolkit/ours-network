@@ -72,10 +72,27 @@ test('already patched exact releases are kept, including newer patches and other
   assert.match(migrated, new RegExp(`${RECOVER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\nFROM node:26\\.12\\.1 AS maintenance`));
 });
 
-for (const tag of ['24', '24.21', '24.21.0', '24.22.0', '22', '22.23.3', '26.12.0', 'lts', '24-bookworm', '24.22.1-bookworm', '24@sha256:' + '0'.repeat(64)]) {
-  test(`retained node:${tag} stages are replaced by the patched image`, () => {
+for (const [tag, replacement] of [
+  ['24', PATCHED_NODE_IMAGE], ['24.21', PATCHED_NODE_IMAGE], ['24.21.0', PATCHED_NODE_IMAGE], ['24.22.0', PATCHED_NODE_IMAGE],
+  ['22', PATCHED_NODE_IMAGE], ['22.23.3', PATCHED_NODE_IMAGE], ['26.12.0', PATCHED_NODE_IMAGE], ['lts', PATCHED_NODE_IMAGE],
+  ['24@sha256:' + '0'.repeat(64), PATCHED_NODE_IMAGE], ['24.21.0@sha256:' + '0'.repeat(64), PATCHED_NODE_IMAGE],
+  // A replaced tag keeps its variant, so the base distribution does not change.
+  ['24-bookworm', `${PATCHED_NODE_IMAGE}-bookworm`], ['24-bookworm-slim', `${PATCHED_NODE_IMAGE}-bookworm-slim`],
+  ['22.23.3-alpine3.22', `${PATCHED_NODE_IMAGE}-alpine3.22`],
+  // Prerelease or unknown suffixes are not image variants: they get the plain patched image.
+  ['27.0.0-pre', PATCHED_NODE_IMAGE], ['24-custom', PATCHED_NODE_IMAGE],
+]) {
+  test(`retained node:${tag} stages are replaced by node:${replacement.slice(5)}`, () => {
     const text = `FROM node:${tag} AS toolchain\nFROM toolchain AS build\nFROM node:${tag} AS maintenance\nFROM node:${tag} AS runtime\n`;
-    assert.deepEqual(nodeStages(securedNodeStages(text)), [PATCHED_NODE_IMAGE, PATCHED_NODE_IMAGE, PATCHED_NODE_IMAGE]);
+    assert.deepEqual(nodeStages(securedNodeStages(text)), [replacement, replacement, replacement]);
+  });
+}
+
+for (const tag of ['24.22.1', '24.23.0', '26.13.0', '22.24.0', '24.22.1-bookworm', '24.23.0-bookworm-slim', '26.13.0-alpine',
+  '24.23.0@sha256:' + 'a'.repeat(64), '26.13.0-bookworm@sha256:' + 'b'.repeat(64)]) {
+  test(`already patched node:${tag.slice(0, 40)} stages are never downgraded`, () => {
+    const text = `FROM node:${tag} AS toolchain\nFROM toolchain AS build\nFROM node:${tag} AS maintenance\nFROM node:${tag} AS runtime\n`;
+    assert.equal(securedNodeStages(text), text);
   });
 }
 
