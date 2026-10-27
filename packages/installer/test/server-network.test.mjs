@@ -467,7 +467,10 @@ test('real native start reactivates a retained daemon definition through its own
       if (splitRuntime) { const binDir = join(record.workDir, 'node_modules/.bin'); mkdirSync(binDir, { recursive: true }); writeFileSync(join(binDir, 'ours-daemon'), 'fixture'); }
       const definition = fixture.definition(root);
       mkdirSync(join(definition, '..'), { recursive: true });
-      writeFileSync(definition, 'retained definition bytes\n');
+      // A retained definition as the daemon's install-service writes it, on this verified Node.js.
+      writeFileSync(definition, fixture.platform === 'linux'
+        ? `[Unit]\nDescription=ours daemon\n[Service]\nType=simple\nExecStart="${process.execPath}" "/opt/ours/cli.js" serve --managed\nEnvironment=OURS_STATE_DIR=/srv/data\n`
+        : `<plist version="1.0"><dict><key>Label</key><string>solutions.adaptframework.ours.data</string><key>ProgramArguments</key><array><string>${process.execPath}</string><string>/opt/ours/cli.js</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>OURS_STATE_DIR</key><string>/srv/data</string></dict></dict></plist>\n`);
       const effects = realEffects({ env: {}, home: root }); effects.platform = { platform: fixture.platform };
       const calls = [];
       effects.run = async (command, args) => {

@@ -27,6 +27,7 @@ import { clientPackageNames, maintenanceServices, installationPaths, validateIns
 import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
 import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress, gatewayReadinessScript, describeGatewayReadiness } from './gateway.mjs';
 import { createServerOnboarding, retainedCredentialRefused } from './server-onboarding.mjs';
+import { definitionConflict, interpreterIsPatched, interpreterRefusal, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE, plistWithGuard, recordedInterpreter } from './service-runtime.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
@@ -1752,8 +1753,82 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     }
     return;
   }
+  // A definition records the Node.js it starts. Every selected definition is validated
+  // before anything changes; a retained one naming an unpatched interpreter is rebound to
+  // this verified runtime, and an installer-owned guard is loaded into each service process
+  // (NODE_OPTIONS=--require) so every later start or restart refuses an unpatched Node.js.
+  const securityRefusal = (service, detail) => Object.assign(new Error(interpreterRefusal(service, detail, plans[service].path)), { securityRefusal: true });
+  const guardPath = join(record.root, NODE_FLOOR_GUARD);
+  const guardEntry = plistWithGuard('<key>EnvironmentVariables</key><dict>', guardPath).slice('<key>EnvironmentVariables</key><dict>'.length);
+  const dropInPath = service => join(`${plans[service].path}.d`, NODE_FLOOR_DROP_IN);
+  const definition = service => {
+    const text = readFileSync(plans[service].path, 'utf8');
+    return linux ? text : text.replace(guardEntry, '');
+  };
+  const otherDropIns = service => {
+    const dir = `${plans[service].path}.d`;
+    if (!linux || !existsSync(dir)) return [];
+    return readdirSync(dir).filter(name => name.endsWith('.conf') && name !== NODE_FLOOR_DROP_IN).map(name => ({ name, text: readFileSync(join(dir, name), 'utf8') }));
+  };
+  // Installer-owned guard files must not be redirected through links or foreign ownership.
+  const ownedOrAbsent = (path, directory = false) => {
+    if (!existsSync(path) && !lstatExists(path)) return;
+    const stat = lstatSync(path);
+    if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.isSymbolicLink() || stat.uid !== process.getuid() || (!directory && stat.nlink !== 1))
+      throw Object.assign(new Error(`Refusing to change ${path}: it is not a private file or directory owned by this user. Nothing was started or changed.`), { securityRefusal: true });
+  };
+  const lstatExists = path => { try { lstatSync(path); return true; } catch { return false; } };
+  const validate = service => {
+    if (linux) { ownedOrAbsent(`${plans[service].path}.d`, true); ownedOrAbsent(dropInPath(service)); }
+    const conflict = definitionConflict(existsSync(plans[service].path) ? definition(service) : '', otherDropIns(service));
+    if (conflict) throw securityRefusal(service, conflict);
+    if (service === 'daemon' || !existsSync(plans[service].path)) return;
+    const text = definition(service);
+    if (!recordedInterpreter(text, effects.platform.platform)) throw securityRefusal(service, 'names no Node.js interpreter that can be verified');
+    if (!linux && !plistWithGuard(text, guardPath)) throw securityRefusal(service, 'has no single EnvironmentVariables dictionary for the Node.js floor guard');
+  };
+  const verifyInterpreter = async service => {
+    const interpreter = recordedInterpreter(definition(service), effects.platform.platform);
+    if (!interpreter || !await interpreterIsPatched(effects, interpreter)) throw securityRefusal(service, `runs ${interpreter ?? 'an unrecognized program'}, which is not a verified patched Node.js`);
+  };
+  const migrateRetained = async service => {
+    if (service === 'daemon' || !existsSync(plans[service].path)) return;
+    const interpreter = recordedInterpreter(definition(service), effects.platform.platform);
+    if (await interpreterIsPatched(effects, interpreter)) return;
+    if (service === 'messenger') {
+      atomicWriteConfig(messenger.path, messenger.text);
+      if (linux) await effects.run('systemctl', ['--user', 'daemon-reload']);
+      else await manager(service, 'stop');
+    } else await ownerCommand(record, service, 'install-service');
+  };
+  const applyGuard = async service => {
+    if (!existsSync(plans[service].path)) return;
+    if (linux) {
+      const text = nodeFloorDropIn(guardPath);
+      if (existsSync(dropInPath(service)) && readFileSync(dropInPath(service), 'utf8') === text) return;
+      mkdirSync(dirname(dropInPath(service)), { recursive: true, mode: 0o700 });
+      atomicWriteConfig(dropInPath(service), text);
+      await effects.run('systemctl', ['--user', 'daemon-reload']);
+      return;
+    }
+    const current = readFileSync(plans[service].path, 'utf8');
+    if (current.includes(guardEntry)) return;
+    const guarded = plistWithGuard(current, guardPath);
+    if (!guarded) throw securityRefusal(service, 'has no single EnvironmentVariables dictionary for the Node.js floor guard');
+    atomicWriteConfig(plans[service].path, guarded);
+    // launchd keeps a loaded definition's environment until it is reloaded.
+    await manager(service, 'stop');
+  };
+  // Without a definition the service manager has nothing to start.
+  const secure = async service => { if (!existsSync(plans[service].path)) return; await applyGuard(service); await verifyInterpreter(service); };
+  // Start: nothing changes unless every selected definition is acceptable.
+  ownedOrAbsent(record.root, true);
+  ownedOrAbsent(guardPath);
+  for (const service of selected) validate(service);
+  if (!existsSync(guardPath) || readFileSync(guardPath, 'utf8') !== NODE_FLOOR_GUARD_SOURCE) atomicWriteConfig(guardPath, NODE_FLOOR_GUARD_SOURCE);
   const failures = [];
   for (const service of selected) {
+    await migrateRetained(service);
     try {
       if (service === 'messenger') {
         if (!existsSync(messenger.path)) {
@@ -1764,13 +1839,20 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
             await effects.run('systemctl', ['--user', 'enable', messenger.name]);
           }
         }
+        await secure(service);
         await manager(service, 'start');
       } else if (service === 'daemon') {
         await ownerCommand(record, service, 'install-service');
+        await secure(service);
         await manager(service, 'start');
       } else if (!existsSync(plans[service].path)) {
         await ownerCommand(record, service, 'install-service');
-      } else await manager(service, 'start');
+        await secure(service);
+        await manager(service, 'start');
+      } else {
+        await secure(service);
+        await manager(service, 'start');
+      }
       let ready = false;
       // Restoring existing identities can take longer than 30 seconds.
       const readinessDeadline = Date.now() + 120_000;
@@ -1778,7 +1860,8 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
         try { await health(service); ready = true; break; } catch { await new Promise(resolve => setTimeout(resolve, 1000)); }
       }
       if (!ready) throw new Error('Application is not ready');
-    } catch {
+    } catch (error) {
+      if (error?.securityRefusal) throw error;
       if (service === 'daemon') throw new Error('Daemon API is not ready; consumers were not started');
       failures.push(service);
     }

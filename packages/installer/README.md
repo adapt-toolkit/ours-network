@@ -893,14 +893,22 @@ manager or
 then check `cloudflared --version` again.
 
 **Native services.** In package mode the installer registers the daemon,
-Telegram, Cowork and Messenger services with the Node.js executable that
-passed its own check: their service definitions record that absolute path,
-so a later start or restart does not use a different `node` from the service
-manager's PATH. After updating Node.js, run the installer again so the
-service definitions record the patched executable; definitions written by
-an earlier installer keep the executable they recorded. Docker
-installations rebuild their image on the patched `node:24.22.1` base on the
-next installer run.
+Telegram, Cowork and Messenger services on the Node.js executable that passed
+its own check. Before every start it also checks the interpreter that each
+existing service definition records. A retained definition naming an
+unpatched or unverifiable Node.js is registered again on the verified runtime,
+and a service that still does not pass is not started. Each service process
+also loads an installer-owned guard (`node-floor-guard.cjs` in the
+installation directory) through `NODE_OPTIONS`. On Linux this is a systemd
+drop-in `ours-node-floor.conf`; on macOS it is an `EnvironmentVariables`
+entry in the launchd plist. Any later start or restart by systemd or launchd
+therefore refuses an interpreter that has become unpatched. The installer
+refuses to change, and does not start, a definition it cannot verify. This
+covers unparseable commands, an existing `NODE_OPTIONS`, `EnvironmentFile=`,
+`UnsetEnvironment=` or `PassEnvironment=`, an environment reset or
+`ExecStart` override in another drop-in, and linked or foreign-owned guard
+files. Docker installations rebuild their image on the patched `node:24.22.1`
+base on the next installer run.
 
 These checks do not install or upgrade prerequisites, disable TLS
 verification, rotate credentials or restart services. A process that is
