@@ -27,7 +27,7 @@ import { clientPackageNames, maintenanceServices, installationPaths, validateIns
 import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
 import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress, gatewayReadinessScript, describeGatewayReadiness } from './gateway.mjs';
 import { createServerOnboarding, retainedCredentialRefused } from './server-onboarding.mjs';
-import { definitionConflict, inspectInterpreter, interpreterRefusal, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE, plistGuardState, plistWithGuard, recordedInterpreter, systemdEffectiveDropIns } from './service-runtime.mjs';
+import { definitionConflict, inspectInterpreter, interpreterRefusal, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE, plistExecutableConflict, plistGuardState, plistWithGuard, recordedInterpreter, systemdEffectiveDropIns } from './service-runtime.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
@@ -1835,6 +1835,8 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       const conflict = definitionConflict(text, dropIns);
       if (conflict) throw refusal(service, conflict);
     } else if (present) {
+      const executable = plistExecutableConflict(text);
+      if (executable) throw refusal(service, executable);
       if (plistGuardState(text, guardPath) === 'conflict') throw refusal(service, 'mentions NODE_OPTIONS, or a character reference that could spell it, outside the installer\'s single active Node.js floor guard entry');
       if (!plistWithGuard(text, guardPath)) throw refusal(service, 'has no single active EnvironmentVariables dictionary for the Node.js floor guard');
     }

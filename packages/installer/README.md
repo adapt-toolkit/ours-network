@@ -927,10 +927,12 @@ effective configuration it cannot verify. This covers:
 - unparseable commands;
 - in a launchd plist: `NODE_OPTIONS` anywhere outside the installer's single
   active guard entry, including in comments; numeric character references;
-  entities in keys; and repeated keys;
+  entities in keys; repeated keys; and a `Program` or `RootDirectory` key, which
+  would run something other than the checked first `ProgramArguments` entry;
 - in any drop-in systemd would apply (unit, dash-prefix and type-wide
   drop-ins in every user unit search path):
   - `EnvironmentFile=`, `UnsetEnvironment=` or `PassEnvironment=`;
+  - `RootDirectory=` or `RootImage=`, which change what the command path names;
   - an environment reset;
   - an `Environment=` value with escapes or `%` specifiers;
   - an `ExecStart` override.

@@ -440,6 +440,38 @@ for (const [label, dir] of [['unit directory', host => host.unitDir], ['parent o
     assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
   });
 
+// launchd runs Program in preference to ProgramArguments[0]; RootDirectory re-roots every path.
+for (const [label, build] of [
+  ['an active Program that runs env -i before an old Node.js', (host, entry) => `<plist version="1.0"><dict><key>Label</key><string>network.ours.cowork</string><key>Program</key><string>/usr/bin/env</string><key>ProgramArguments</key><array><string>${process.execPath}</string><string>-i</string><string>/usr/bin/node</string><string>${entry}</string></array><key>EnvironmentVariables</key><dict><key>OURS_COWORK_STATE_DIR</key><string>${installationPaths(host.record).cowork}</string></dict></dict></plist>`],
+  ['a RootDirectory', host => host.coworkDefinition(process.execPath).replace('<key>EnvironmentVariables</key>', '<key>RootDirectory</key><string>/var/old-root</string><key>EnvironmentVariables</key>')],
+]) test(`darwin: ${label} is refused before any change`, async t => {
+  const host = nativeHost(t, 'darwin', { '/usr/bin/node': '22.23.2' });
+  const text = build(host, join(host.root, 'entry.cjs'));
+  host.write(text);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /sets (Program|RootDirectory), which changes the program launchd runs\. Nothing was started or changed\./);
+  assert.equal(readFileSync(host.cowork, 'utf8'), text);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+  assert.equal(recordedInterpreter(text, 'darwin'), null);
+});
+
+test('darwin: a commented-out Program key does not block a ProgramArguments-only definition', async t => {
+  const host = nativeHost(t, 'darwin');
+  host.write(host.coworkDefinition(process.execPath).replace('<key>ProgramArguments</key>', '<!-- <key>Program</key> --><key>ProgramArguments</key>'));
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  assert.equal(plistGuardState(readFileSync(host.cowork, 'utf8'), host.guard), 'present');
+});
+
+for (const directive of ['RootDirectory=/var/old-root', 'RootImage=/var/old.img']) test(`linux: a drop-in with ${directive.split('=')[0]} is refused before any change`, async t => {
+  const host = nativeHost(t, 'linux');
+  host.write(host.coworkDefinition(process.execPath));
+  mkdirSync(`${host.cowork}.d`);
+  writeFileSync(`${host.cowork}.d/root.conf`, `[Service]\n${directive}\n`);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), new RegExp(`root\\.conf, which uses ${directive.split('=')[0]}`));
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0);
+});
+
 test('darwin: a numeric character reference that spells NODE_OPTIONS is refused before any change', async t => {
   const host = nativeHost(t, 'darwin');
   const base = host.coworkDefinition(process.execPath);
@@ -447,7 +479,7 @@ test('darwin: a numeric character reference that spells NODE_OPTIONS is refused 
   host.write(spelled);
   assert.equal(plistEnvironment(spelled), null);
   assert.equal(plistGuardState(spelled, host.guard), 'conflict');
-  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /character reference that could spell it.*Nothing was started or changed\./);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /uses a numeric character reference\. Nothing was started or changed\./);
   assert.equal(readFileSync(host.cowork, 'utf8'), spelled);
   assert.equal(existsSync(host.guard), false);
   assert.equal(host.calls.length, 0, JSON.stringify(host.calls));

@@ -86,13 +86,26 @@ export function plistWithGuard(text, guardPath) {
   return text.replace(/<key>EnvironmentVariables<\/key>(\s*)<dict>/, (match) => `${match}${entry}`);
 }
 
+/**
+ * Why a launchd plist runs something other than its first ProgramArguments entry, or null.
+ * Program takes precedence over ProgramArguments[0], and RootDirectory changes what every
+ * path names; neither is interpreted, so either refuses. Numeric references are refused too.
+ */
+export function plistExecutableConflict(text) {
+  if (typeof text !== 'string' || text.includes('&#')) return 'uses a numeric character reference';
+  const clean = text.replace(/<!--[\s\S]*?-->/g, '');
+  for (const key of ['Program', 'RootDirectory']) if (clean.includes(`<key>${key}</key>`)) return `sets ${key}, which changes the program launchd runs`;
+  return null;
+}
+
 /** The interpreter (first program argument) of a systemd unit or launchd plist, or null. Text only; nothing is executed. */
 export function recordedInterpreter(text, platform) {
   if (typeof text !== 'string') return null;
   if (platform === 'darwin') {
+    if (plistExecutableConflict(text)) return null;
     const clean = text.replace(/<!--[\s\S]*?-->/g, '');
     const lists = [...clean.matchAll(/<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/g)];
-    if (lists.length !== 1) return null;
+    if (lists.length !== 1 || count(text, '<key>ProgramArguments</key>') !== 1) return null;
     const value = decodeXml(lists[0][1]);
     return isAbsolute(value) && !/[\0\n\r]/.test(value) ? value : null;
   }
@@ -153,7 +166,8 @@ export function definitionConflict(text, otherDropIns = []) {
     const found = [];
     for (const [section, line] of logicalLines(source)) {
       if (section !== '[Service]') continue;
-      if (/^(EnvironmentFile|UnsetEnvironment|PassEnvironment)\s*=/.test(line)) found.push(line.split('=')[0].trim());
+      // RootDirectory= and RootImage= change which executable every path names.
+      if (/^(EnvironmentFile|UnsetEnvironment|PassEnvironment|RootDirectory|RootImage)\s*=/.test(line)) found.push(line.split('=')[0].trim());
       else if (/^Environment\s*=/.test(line)) {
         const value = line.replace(/^Environment\s*=/, '');
         if (!value.replace(/["'\s]/g, '')) found.push('an empty Environment= reset');
