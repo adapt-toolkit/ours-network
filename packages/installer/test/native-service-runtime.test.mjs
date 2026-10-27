@@ -8,7 +8,7 @@ import { realEffects } from '../lib/effects.mjs';
 import { installationPaths } from '../lib/plan.mjs';
 import {
   definitionConflict, dropInDirectoryNames, guardNodeOptions, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE,
-  plistEnvironment, plistGuardState, plistWithGuard, recordedInterpreter, systemdUserSearchPath,
+  plistCanonical, plistEnvironment, plistExecutableConflict, plistGuardState, plistWithGuard, recordedInterpreter, systemdUserSearchPath,
 } from '../lib/service-runtime.mjs';
 
 const ADVISORY = 'https://nodejs.org/en/blog/vulnerability/october-2026-security-releases';
@@ -58,7 +58,7 @@ test('systemd drop-in loads the guard through the unit environment', () => {
 
 test('launchd plists get the guard in their single active environment dictionary', () => {
   const guard = '/srv/ours/node-floor-guard.cjs';
-  const plist = '<plist><dict><key>ProgramArguments</key><array><string>/opt/node/bin/node</string><string>/x/cli.js</string></array><key>EnvironmentVariables</key>\n  <dict><key>A</key><string>b</string></dict></dict></plist>';
+  const plist = '<plist version="1.0"><dict><key>ProgramArguments</key><array><string>/opt/node/bin/node</string><string>/x/cli.js</string></array><key>EnvironmentVariables</key>\n  <dict><key>A</key><string>b</string></dict></dict></plist>';
   const guarded = plistWithGuard(plist, guard);
   assert.ok(guarded.includes('<key>EnvironmentVariables</key>\n  <dict><key>NODE_OPTIONS</key><string>--require &quot;/srv/ours/node-floor-guard.cjs&quot;</string><key>A</key>'), guarded);
   assert.deepEqual(plistEnvironment(guarded), [['NODE_OPTIONS', guardNodeOptions(guard)], ['A', 'b']]);
@@ -72,10 +72,86 @@ test('launchd plists get the guard in their single active environment dictionary
   const commented = plist.replace('<dict><key>A</key>', `<dict><!-- ${entry} --><key>A</key>`);
   assert.equal(plistGuardState(commented, guard), 'conflict');
   assert.equal(plistWithGuard(commented, guard), null);
-  assert.equal(plistEnvironment(plist.replace('<plist>', '<plist><!-- <key>EnvironmentVariables</key><dict> -->')), null);
-  assert.equal(plistWithGuard(plist.replace('<plist>', '<plist><!-- <key>EnvironmentVariables</key><dict> -->'), guard), null);
+  assert.equal(plistEnvironment(plist.replace('<plist version="1.0">', '<plist version="1.0"><!-- <key>EnvironmentVariables</key><dict> -->')), null);
+  assert.equal(plistWithGuard(plist.replace('<plist version="1.0">', '<plist version="1.0"><!-- <key>EnvironmentVariables</key><dict> -->'), guard), null);
   assert.equal(plistWithGuard(plist.replace('<string>b</string>', '<true/>'), guard), null, 'only string values are understood');
   assert.equal(plistWithGuard('<plist><dict></dict></plist>', '/srv/g.cjs'), null);
+});
+
+// The plist templates the published install-service commands write (cowork 2.0.0,
+// tg-connector 2.0.0, daemon 5.0.0), copied verbatim with fixture values filled in.
+const NODE = '/opt/node-24.23.0/bin/node';
+const DOCTYPE = '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">';
+const PUBLISHED_PLISTS = {
+  cowork: `<?xml version="1.0" encoding="UTF-8"?>
+${DOCTYPE}
+<plist version="1.0"><dict>
+  <key>Label</key><string>network.ours.cowork</string>
+  <key>ProgramArguments</key><array>
+    <string>${NODE}</string><string>/opt/cowork/dist/cli.js</string><string>serve</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>OURS_COWORK_STATE_DIR</key><string>/srv/ours/cowork</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/srv/ours/cowork/daemon.log</string>
+  <key>StandardErrorPath</key><string>/srv/ours/cowork/daemon.log</string>
+</dict></plist>
+`,
+  telegram: `<?xml version="1.0" encoding="UTF-8"?>
+${DOCTYPE}
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>solutions.adaptframework.ours-telegram</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${NODE}</string>
+    <string>/opt/tg/dist/cli.js</string>
+    <string>serve</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OURS_TG_STATE_DIR</key><string>/srv/ours/telegram</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/srv/ours/telegram/tg.log</string>
+  <key>StandardErrorPath</key><string>/srv/ours/telegram/tg.log</string>
+</dict>
+</plist>
+`,
+  daemon: `<!-- Managed by @ours.network/daemon -->
+${DOCTYPE}
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>solutions.adaptframework.ours</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${NODE}</string>
+    <string>/opt/daemon/dist/main.js</string>
+    <string>serve</string>
+    <string>--managed</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OURS_STATE_DIR</key><string>/srv/ours/daemon</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+`,
+};
+for (const [name, text] of Object.entries(PUBLISHED_PLISTS)) test(`the published ${name} plist template passes the one plist gate`, () => {
+  const guard = '/srv/ours/node-floor-guard.cjs';
+  assert.equal(plistCanonical(text), true);
+  assert.equal(plistExecutableConflict(text), null);
+  assert.equal(recordedInterpreter(text, 'darwin'), NODE);
+  const guarded = plistWithGuard(text, guard);
+  assert.ok(guarded, 'the guard can be added');
+  assert.equal(plistCanonical(guarded), true);
+  assert.equal(plistGuardState(guarded, guard), 'present');
 });
 
 test('systemd drop-ins are collected from every user search path and name form', () => {
@@ -332,7 +408,7 @@ for (const [label, drop, expected] of [
 
 test('launchd plists with duplicate or entity-spelled keys are not a supported form', () => {
   const guard = '/srv/ours/node-floor-guard.cjs';
-  const plist = '<plist><dict><key>ProgramArguments</key><array><string>/opt/node/bin/node</string></array><key>EnvironmentVariables</key><dict><key>A</key><string>b</string></dict></dict></plist>';
+  const plist = '<plist version="1.0"><dict><key>ProgramArguments</key><array><string>/opt/node/bin/node</string></array><key>EnvironmentVariables</key><dict><key>A</key><string>b</string></dict></dict></plist>';
   const duplicate = plistWithGuard(plist, guard).replace('<key>A</key>', '<key>NODE_OPTIONS</key><string></string><key>A</key>');
   for (const text of [
     duplicate,
@@ -453,6 +529,46 @@ for (const [label, build] of [
   assert.equal(existsSync(host.guard), false);
   assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
   assert.equal(recordedInterpreter(text, 'darwin'), null);
+});
+
+// Keys are found only in canonical form; any other spelling of a tag refuses the plist,
+// so no variant can hide Program (or any other key) from the checks.
+for (const [label, spell] of [
+  ['a space before the opening tag end', key => `<key >${key}</key>`],
+  ['a space before the closing tag end', key => `<key>${key}</key >`],
+  ['an attribute', key => `<key xml:space="preserve">${key}</key>`],
+  ['a space after the opening bracket', key => `< key>${key}</key>`],
+  ['upper-case tags', key => `<KEY>${key}</KEY>`],
+  ['a newline inside the closing tag', key => `<key>${key}</key\n>`],
+]) test(`darwin: a Program key spelled with ${label} is refused before any change`, async t => {
+  const host = nativeHost(t, 'darwin', { '/usr/bin/node': '22.23.2' });
+  const entry = join(host.root, 'entry.cjs');
+  const text = `<plist version="1.0"><dict><key>Label</key><string>network.ours.cowork</string>${spell('Program')}<string>/usr/bin/env</string><key>ProgramArguments</key><array><string>${process.execPath}</string><string>-i</string><string>/usr/bin/node</string><string>${entry}</string></array><key>EnvironmentVariables</key><dict><key>OURS_COWORK_STATE_DIR</key><string>${installationPaths(host.record).cowork}</string></dict></dict></plist>`;
+  host.write(text);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /uses plist syntax the installer does not read .*Nothing was started or changed\./);
+  assert.equal(readFileSync(host.cowork, 'utf8'), text);
+  assert.equal(existsSync(host.guard), false);
+  assert.equal(host.calls.length, 0, JSON.stringify(host.calls));
+  assert.equal(recordedInterpreter(text, 'darwin'), null);
+  assert.equal(plistEnvironment(text), null);
+});
+
+test('darwin: an internal DTD subset is refused before any change', async t => {
+  const host = nativeHost(t, 'darwin');
+  const text = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist [<!ENTITY p "Program">]>\n${host.coworkDefinition(process.execPath)}`;
+  host.write(text);
+  await assert.rejects(host.effects.serverLifecycle(host.record, 'start', ['cowork']), /uses plist syntax the installer does not read/);
+  assert.equal(readFileSync(host.cowork, 'utf8'), text);
+  assert.equal(host.calls.length, 0);
+});
+
+test('darwin: a published-shape plist (header, doctype, comment, booleans) is accepted and guarded', async t => {
+  const host = nativeHost(t, 'darwin');
+  const text = `<?xml version="1.0" encoding="UTF-8"?>\n<!-- Managed by a package -->\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>network.ours.cowork</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>${process.execPath}</string>\n    <string>/opt/cowork/cli.js</string>\n    <string>serve</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>OURS_COWORK_STATE_DIR</key>\n    <string>${installationPaths(host.record).cowork}</string>\n  </dict>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <dict><key>SuccessfulExit</key><false/></dict>\n</dict>\n</plist>\n`;
+  host.write(text);
+  await host.effects.serverLifecycle(host.record, 'start', ['cowork']);
+  assert.equal(plistGuardState(readFileSync(host.cowork, 'utf8'), host.guard), 'present');
+  assert.ok(host.starts().length >= 1);
 });
 
 test('darwin: a commented-out Program key does not block a ProgramArguments-only definition', async t => {

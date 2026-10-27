@@ -925,6 +925,11 @@ The installer refuses to change, and does not start, a definition whose
 effective configuration it cannot verify. This covers:
 
 - unparseable commands;
+- a launchd plist that is not in the canonical form the published definitions
+  use: the standard XML header and Apple DOCTYPE, `<plist version="1.0">`, and
+  plain `dict`, `key`, `string`, `array`, `integer`, `true` and `false` tags with
+  no whitespace or attributes inside them, named entities only, and closed
+  comments. Every key is then found exactly where launchd finds it;
 - in a launchd plist: `NODE_OPTIONS` anywhere outside the installer's single
   active guard entry, including in comments; numeric character references;
   entities in keys; repeated keys; and a `Program` or `RootDirectory` key, which

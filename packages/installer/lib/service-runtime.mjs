@@ -35,6 +35,22 @@ export function nodeFloorDropIn(guardPath) {
   return `${DROP_IN_MARKER}\n[Service]\nEnvironment="${value}"\n`;
 }
 
+// The only plist forms the installer reads: the header, doctype and tags the published
+// definitions use, written canonically (no whitespace or attributes inside tags beyond
+// these exact forms), named entities only, and comments that are closed. Anything else
+// refuses the definition before any change, so every key is found where launchd finds it.
+const PLIST_TAGS = new Set(['<?xml version="1.0" encoding="UTF-8"?>', '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+  '<plist version="1.0">', '</plist>', '<dict>', '</dict>', '<key>', '</key>', '<string>', '</string>', '<array>', '</array>', '<integer>', '</integer>', '<true/>', '<false/>']);
+export function plistCanonical(text) {
+  if (typeof text !== 'string') return false;
+  const clean = text.replace(/<!--[\s\S]*?-->/g, '');
+  if (clean.includes('<!--')) return false;
+  const tags = clean.match(/<[^<>]*>/g) ?? [];
+  if (!tags.every(tag => PLIST_TAGS.has(tag))) return false;
+  const textOutsideTags = clean.replace(/<[^<>]*>/g, '');
+  return !/[<>]/.test(textOutsideTags) && !/&(?!(?:amp|lt|gt|quot|apos);)/.test(textOutsideTags);
+}
+
 const decodeXml = value => value.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[entity]);
 const ENVIRONMENT_KEY = '<key>EnvironmentVariables</key>';
 const count = (text, part) => text.split(part).length - 1;
@@ -46,7 +62,7 @@ const count = (text, part) => text.split(part).length - 1;
  * reference in a key or a numeric one anywhere. Every launchd decision uses this one parse.
  */
 export function plistEnvironment(text) {
-  if (typeof text !== 'string') return null;
+  if (!plistCanonical(text)) return null;
   const clean = text.replace(/<!--[\s\S]*?-->/g, '');
   // Numeric character references could spell any key (NODE_&#79;PTIONS); they are not accepted.
   if (clean.includes('<!--') || clean.includes('<![CDATA[') || text.includes('&#') || count(clean, ENVIRONMENT_KEY) !== 1 || count(text, ENVIRONMENT_KEY) !== 1) return null;
@@ -89,10 +105,12 @@ export function plistWithGuard(text, guardPath) {
 /**
  * Why a launchd plist runs something other than its first ProgramArguments entry, or null.
  * Program takes precedence over ProgramArguments[0], and RootDirectory changes what every
- * path names; neither is interpreted, so either refuses. Numeric references are refused too.
+ * path names; neither is interpreted, so either refuses. A plist that is not in canonical
+ * form is refused first, so no spelling of a key can hide it.
  */
 export function plistExecutableConflict(text) {
   if (typeof text !== 'string' || text.includes('&#')) return 'uses a numeric character reference';
+  if (!plistCanonical(text)) return 'uses plist syntax the installer does not read (only the canonical tags of published definitions are accepted)';
   const clean = text.replace(/<!--[\s\S]*?-->/g, '');
   for (const key of ['Program', 'RootDirectory']) if (clean.includes(`<key>${key}</key>`)) return `sets ${key}, which changes the program launchd runs`;
   return null;
