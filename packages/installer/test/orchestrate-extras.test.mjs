@@ -397,8 +397,19 @@ test('a Node older than 22 stops before the first mutation', async () => {
   const e = fx({ nodeVersion: '20.19.0' });
   await runInstall([], e);
   assert.deepEqual(e.recorder.ran, []);
-  assert.match(said(e), /needs v22 or newer/);
+  assert.match(said(e), /CVE-2026-111497/);
 });
+
+for (const nodeVersion of ['22.23.3', '24.22.0', '26.12.0', '25.9.0', '27.0.0-pre']) {
+  test(`unpatched or unsupported Node ${nodeVersion} stops before the first mutation`, async () => {
+    const e = fx({ nodeVersion });
+    await runInstall([], e);
+    assert.deepEqual(e.recorder.ran, []);
+    assert.deepEqual(e.recorder.wrote, []);
+    assert.ok(said(e).includes(`Node.js ${nodeVersion} is not permitted`));
+    assert.match(said(e), /nodejs\.org\/en\/blog\/vulnerability\/october-2026-security-releases/);
+  });
+}
 
 test('no harness at all no longer abandons the daemon', async () => {
   // A deliberate divergence from v2, which exited before installing anything.
@@ -436,7 +447,7 @@ test('runPreflight names what it checked, so a supported machine is not silent',
   const result = runPreflight(e);
   assert.equal(result.ok, true);
   assert.match(said(e), /Platform: Linux \(supported\)/);
-  assert.match(said(e), /Node\.js 22\.0\.0/);
+  assert.match(said(e), /Node\.js 22\.23\.4/);
 });
 
 test('the extended flow never splits the daemon pair, on any path', async () => {

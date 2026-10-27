@@ -1,3 +1,4 @@
+import { assertSecureCloudflaredVersion, assertSecureNodeVersion, cloudflaredUnavailableError, CLOUDFLARED_VERSION_TIMEOUT_MS } from './security-versions.mjs';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import {parseSetupArgs} from './setup-options.mjs';
@@ -65,7 +66,16 @@ export function extractWorkspaceArgs(args){
   if(values['--setup-workspace'] && values['--setup-workspace-file'])throw Error('Choose one private payload transport');
   return {values,rest};
 }
+// The connector Fleet later runs is checked before any grant redemption or setup write.
+export async function requireSecureCloudflared(effects,timeout=CLOUDFLARED_VERSION_TIMEOUT_MS){
+  let result;
+  try{result=await effects.run('cloudflared',['--version'],{sensitive:true,timeout});}
+  catch(error){throw Error(cloudflaredUnavailableError(error?.code==='ENOENT'?'not found':error?.code==='ETIMEDOUT'?'timed out':'version check failed'));}
+  if(!result?.ok)throw Error(cloudflaredUnavailableError('version check failed'));
+  assertSecureCloudflaredVersion(result.stdout);
+}
 export async function runWorkspaceSetup(args,effects,runSetup,request=fetch){
+  assertSecureNodeVersion(effects.nodeVersion ?? process.versions.node);
   const migrateAppOrigin=args.includes('--workspace-migrate-app-origin');
   if(args.filter(arg=>arg==='--workspace-migrate-app-origin').length>1)throw Error('Duplicate workspace migration flag');
   const {values,rest}=extractWorkspaceArgs(args.filter(arg=>arg!=='--workspace-migrate-app-origin'));let encoded;
@@ -122,7 +132,7 @@ export async function runWorkspaceSetup(args,effects,runSetup,request=fetch){
   if(p)await requireOptionalProfile();
   if(preserveProfile && !await capable('workspace.enroll.preserve-profile-v1'))throw Error('Existing-host setup requires a profile-preserving Fleet release; nothing was changed');
   const help=await effects.run(fleetBin,['workspace-enroll','--help'],{sensitive:true});if(!help.ok)throw Error('Fleet workspace enrollment is unavailable');
-  const tunnel=await effects.run('cloudflared',['--version'],{sensitive:true});if(!tunnel.ok)throw Error('Tunnel connector is unavailable');
+  await requireSecureCloudflared(effects);
   if(options.includes('--dry-run')){
     if(grant)effects.out('Preview only: the workspace setup grant was not redeemed; this command remains usable until it expires.');
     if(!existing)return runSetup(setupOptions(p?.rootName ?? standIn),effects);return 0;

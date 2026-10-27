@@ -126,7 +126,7 @@ Provision a dedicated x86_64 VM (at least 4 vCPU, 8 GiB RAM, 40 GiB free disk)
 whose distribution supplies Podman 6.1.2, compatible netavark/aardvark, subordinate
 UID/GID support and vendor `podman-restart.service` with
 `--filter should-start-on-boot=true`. Use an unprivileged test account, cgroup v2,
-standard HOME/XDG paths, SELinux **Enforcing**, Node.js 22+, npm, Python 3.9+
+standard HOME/XDG paths, SELinux **Enforcing**, a patched Node.js (22.23.4+, 24.22.1+ or 26.12.1+), npm, Python 3.9+
 with `os.pidfd_open`/`signal.pidfd_send_signal` support, and standalone
 Docker Compose 5.5.1. The Podman pass must have no Docker CLI/daemon dependency.
 The VM owner must explicitly authorize reboots and terminate all sessions for the

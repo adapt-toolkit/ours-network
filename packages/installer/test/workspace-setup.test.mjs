@@ -21,7 +21,7 @@ test('automatic existing host preserves non-default gateway selection and Fleet 
  const home=mkdtempSync(join(tmpdir(),'workspace-existing-'));const calls=[];let payloadPath;
  const config=join(home,'fleet.yaml');writeFileSync(config,'retained models and agents');
  const original=readFileSync(config),profile={endpoint:'https://existing.invalid/non-default/daemon'};
- const effects={home,env:{...trusted,OURS_DAEMON_URL:'http://unrelated'},out(){},readManagedClientProfile:()=>profile,async run(bin,args,options){calls.push({bin,args,options});if(args[0]==='workspace-enroll' && args.includes('--file')){payloadPath=args[args.indexOf('--file')+1];assert.equal(readFileSync(payloadPath,'utf8'),encode(payload));}return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.preserve-profile-v1']})};},async runInteractive(){throw Error('existing config must not be initialized');}};
+ const effects={home,env:{...trusted,OURS_DAEMON_URL:'http://unrelated'},out(){},readManagedClientProfile:()=>profile,async run(bin,args,options){calls.push({bin,args,options});if(args[0]==='workspace-enroll' && args.includes('--file')){payloadPath=args[args.indexOf('--file')+1];assert.equal(readFileSync(payloadPath,'utf8'),encode(payload));}return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':JSON.stringify({capabilities:['workspace.enroll.preserve-profile-v1']})};},async runInteractive(){throw Error('existing config must not be initialized');}};
  try{
   assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(payload),'--fleet-settings=/private/settings','--workspace-migrate-app-origin'],effects,async()=>{throw Error('existing host must not reinstall/create root');}),0);
   assert.equal(calls.some(call=>call.args[0]==='init'),false);assert.deepEqual(readFileSync(config),original);
@@ -35,14 +35,14 @@ test('explicit existing profile is retained and older Fleet fails before any set
 });
 test('workspace dry run performs no enrollment or Fleet init',async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const calls=[];
- const effects={home:'/fixture',env:{...trusted},out(){},async run(bin,args){calls.push(args);return {ok:true};}};
+ const effects={home:'/fixture',env:{...trusted},out(){},async run(bin,args){calls.push(args);return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}};
  assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(payload),'--dry-run'],effects,async options=>{assert.ok(options.includes('--identity-name'));return 0;}),0);
  assert.deepEqual(calls,[['workspace-enroll','--help'],['--version']]);
 });
 test('fresh setup failure resumes same workspace without a second root and still applies account name',async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,writeFileSync,existsSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const home=mkdtempSync(join(tmpdir(),'workspace-retry-'));let selected=null,roots=0,attempts=0;const enrollment=[];
- const effects={home,env:{...trusted},out(){},readManagedClientProfile:()=>selected,async run(bin,args){if(args[0]==='init'){writeFileSync(join(home,'fleet.yaml'),'retained fresh config');return {ok:true};}if(args.includes('--file')){enrollment.push(args);attempts++;return {ok:attempts>1};}return {ok:true};},async runInteractive(){throw Error('settings required');}};
+ const effects={home,env:{...trusted},out(){},readManagedClientProfile:()=>selected,async run(bin,args){if(args[0]==='init'){writeFileSync(join(home,'fleet.yaml'),'retained fresh config');return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}if(args.includes('--file')){enrollment.push(args);attempts++;return {ok:attempts>1};}return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};},async runInteractive(){throw Error('settings required');}};
  const args=['--setup-workspace',encode(payload),'--fleet-settings=/fixture/settings'];
  try{
   await assert.rejects(runWorkspaceSetup(args,effects,async()=>{roots++;selected={endpoint:'https://retained.invalid/daemon'};return 0;}),/enrollment incomplete/);
@@ -57,7 +57,7 @@ test('partial server setup failure resumes before client profile publication',as
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,mkdirSync,writeFileSync,existsSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const home=mkdtempSync(join(tmpdir(),'workspace-partial-'));let selected=null,resumes=0,roots=0;const enrollments=[];
  const root=join(home,'.ours-network','workspace'),record=join(root,'installation.json');
- const effects={home,env:{...trusted},out(){},readManagedClientProfile:()=>selected,async run(bin,args){if(args.includes('--file'))enrollments.push(args);return {ok:true};},async runInteractive(){throw Error('settings required');}};
+ const effects={home,env:{...trusted},out(){},readManagedClientProfile:()=>selected,async run(bin,args){if(args.includes('--file'))enrollments.push(args);return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};},async runInteractive(){throw Error('settings required');}};
  const setup=async()=>{resumes++;if(!existsSync(record)){roots++;mkdirSync(root,{recursive:true});writeFileSync(record,'retained fixture record');return 1;}selected={endpoint:'https://retained.invalid/daemon'};return 0;};
  const args=['--setup-workspace',encode(payload),'--fleet-settings=/fixture/settings'];
  try{assert.equal(await runWorkspaceSetup(args,effects,setup),1);assert.equal(selected,null);assert.equal(await runWorkspaceSetup(args,effects,setup),0);assert.equal(resumes,2);assert.equal(roots,1);assert.equal(enrollments.length,1);assert.ok(!enrollments[0].includes('--preserve-profile'));}finally{rmSync(home,{recursive:true,force:true});}
@@ -90,7 +90,7 @@ test('supported Fleet receives the original optional profile privately and only 
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,readFileSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const home=mkdtempSync(join(tmpdir(),'optional-forward-'));let profile=null,forwarded;
  const encoded=encode({...payload,fullName:'Prince',name:null,surname:null});
- const effects={home,env:{...trusted},out(){},readManagedClientProfile:()=>profile,async run(bin,args){if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.optional-profile-v1']})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))forwarded=JSON.parse(Buffer.from(readFileSync(args[args.indexOf('--file')+1],'utf8'),'base64url'));return {ok:true};}};
+ const effects={home,env:{...trusted},out(){},readManagedClientProfile:()=>profile,async run(bin,args){if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.optional-profile-v1']})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))forwarded=JSON.parse(Buffer.from(readFileSync(args[args.indexOf('--file')+1],'utf8'),'base64url'));return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}};
  try{assert.equal(await runWorkspaceSetup(['--setup-workspace',encoded,'--fleet-settings=/fixture'],effects,async options=>{assert.equal(options[options.indexOf('--identity-name')+1],'alice@home');assert.ok(!options.includes('--name'));assert.ok(!options.includes('--surname'));profile={endpoint:'fixture'};return 0;}),0);assert.deepEqual({fullName:forwarded.fullName,name:forwarded.name,surname:forwarded.surname},{fullName:'Prince',name:null,surname:null});}finally{rmSync(home,{recursive:true,force:true});}
 });
 
@@ -104,7 +104,7 @@ test('minimal grant is redeemed privately through the actual fresh setup path wi
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const {mkdtempSync,readFileSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const home=mkdtempSync(join(tmpdir(),'grant-forward-'));let profile=null,forwarded,setup=0;const visible=[];
  const privatePayload=encode({...payload,fullName:'Prince',name:null,surname:null});
- const effects={home,env:{...trusted},out:value=>visible.push(value),...planning,readManagedClientProfile:()=>profile,async run(bin,args){visible.push(JSON.stringify(args));if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.optional-profile-v1']})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))forwarded=readFileSync(args[args.indexOf('--file')+1],'utf8');return {ok:true};}};
+ const effects={home,env:{...trusted},out:value=>visible.push(value),...planning,readManagedClientProfile:()=>profile,async run(bin,args){visible.push(JSON.stringify(args));if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.optional-profile-v1']})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))forwarded=readFileSync(args[args.indexOf('--file')+1],'utf8');return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}};
  const request=async(url,options)=>{assert.equal(url,'https://app.ours.network/account-api/workspace-install-redeem');assert.equal(options.method,'POST');assert.equal(options.redirect,'error');assert.equal(options.credentials,'omit');assert.equal(options.headers.Origin,grant.appOrigin);assert.deepEqual(JSON.parse(options.body),{code:'g'.repeat(43)});return new Response(JSON.stringify({payload:privatePayload}));};
  try{assert.equal(await runWorkspaceSetup(['--setup-workspace',encode(grant),'--fleet-settings=/fixture'],effects,async options=>{visible.push(JSON.stringify(options));setup++;profile={endpoint:'fixture'};return 0;},request),0);assert.equal(setup,1);assert.equal(forwarded,privatePayload);assert.ok(!visible.join('').includes(privatePayload));assert.ok(!visible.join('').includes('Prince'));}finally{rmSync(home,{recursive:true,force:true});}
 });
@@ -119,7 +119,7 @@ for(const [label,input,response,error] of [
  ['origin mismatch',grant,()=>new Response(JSON.stringify({payload:encode({...payload,appOrigin:'https://app.ours-tunnel.com'})})),/origin mismatch|payload boundary/i],
 ])test('grant '+label+' fails before setup without leaking private data',async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');let setup=0,requests=0;const runs=[];
- await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(input)],{home:'/fixture',env:{...trusted},...planning,async run(bin,args){runs.push(args);return {ok:true};}},async()=>{setup++;return 0;},async()=>{requests++;return response();}),error);
+ await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(input)],{home:'/fixture',env:{...trusted},...planning,async run(bin,args){runs.push(args);return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}},async()=>{setup++;return 0;},async()=>{requests++;return response();}),error);
  const local=['origin','expired','extra field'].includes(label);
  assert.equal(setup,0);assert.deepEqual(runs,local?[]:[['workspace-enroll','--help'],['--version']]);assert.equal(requests,local?0:1);
 });
@@ -130,7 +130,7 @@ function grantServer(privatePayload){
  return {request,posts};
 }
 function freshEffects(home,state,capabilities=['workspace.enroll.optional-profile-v1']){
- return {home,env:{...trusted},out(){},...planning,readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))state.enrolled++;return {ok:true};}};
+ return {home,env:{...trusted},out(){},...planning,readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities})};if(args[0]==='init')writeFileSync(join(home,'fleet.yaml'),'fixture');if(args.includes('--file'))state.enrolled++;return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}};
 }
 const {mkdtempSync,mkdirSync,writeFileSync,existsSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
 test('grant dry run previews without redemption and the same command then redeems exactly once',async()=>{
@@ -170,14 +170,14 @@ for(const [label,prepare,error,extra=[]] of [
  ['invalid Fleet settings',state=>{state.json={'/fixture/settings.json':{subscriptions:['codex']}};},/Fleet settings/,['--fleet-settings=/fixture/settings.json']],
  ['unreadable source policy',()=>{},/Source policy/,['--sources','/fixture/missing-sources.json']],
  ['enrollment unavailable',state=>{state.fail='workspace-enroll';},/enrollment is unavailable/],
- ['tunnel connector unavailable',state=>{state.fail='--version';},/Tunnel connector/],
+ ['tunnel connector unavailable',state=>{state.fail='--version';},/cloudflared could not be verified/],
  ['existing host lacks profile-preserving Fleet',state=>{state.profile={endpoint:'existing'};state.capabilities=[];},/profile-preserving Fleet/],
  ['existing root without client profile',(state,home)=>{mkdirSync(join(home,'.ours-network','workspace'),{recursive:true});writeFileSync(join(home,'.ours-network','workspace','installation.json'),'{}');},/Existing host requires/],
 ])test('grant is not redeemed when local preflight fails: '+label,async()=>{
  const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
  const home=mkdtempSync(join(tmpdir(),'grant-preflight-'));const state={profile:null,runs:[],enrolled:0,capabilities:['workspace.enroll.optional-profile-v1']},server=grantServer(encode(payload));
  prepare(state,home);
- const effects={home,env:{...trusted,...state.env},out(){},...planning,platform:{platform:state.platform||'linux'},readJson:path=>state.json?.[path]??null,readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]===state.fail)return {ok:false};if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:state.capabilities})};return {ok:true};}};
+ const effects={home,env:{...trusted,...state.env},out(){},...planning,platform:{platform:state.platform||'linux'},readJson:path=>state.json?.[path]??null,readManagedClientProfile:()=>state.profile,async run(bin,args){state.runs.push(args);if(args[0]===state.fail)return {ok:false};if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:state.capabilities})};return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}};
  try{
   for(const mode of [[],['--dry-run']])await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),...extra,...mode],effects,async()=>{throw Error('must not set up');},server.request),error);
   assert.equal(server.posts.length,0);
@@ -215,7 +215,7 @@ for(const origin of ['https://accounts.example.test','https://relocated.example.
  const home=mkdtempSync(join(tmpdir(),'configured-authority-')),calls=[],posts=[];
  const hostname='retained.previous.example.test',envelope=encode({...payload,appOrigin:origin,hostname});
  writeFileSync(join(home,'fleet.yaml'),'retained fixture config');
- const effects={home,env:{OURS_ACCOUNT_ORIGIN:origin,OURS_WORKSPACE_HOST:hostname,OURS_WORKSPACE_DOMAIN:'new.example.test'},out(){},...planning,readManagedClientProfile:()=>({endpoint:'retained'}),async run(bin,args,options){calls.push({args,options});if(args[0]==='version')return {ok:true,stdout:JSON.stringify({capabilities:['workspace.enroll.preserve-profile-v1']})};if(args.includes('--file'))assert.equal(readFileSync(args[args.indexOf('--file')+1],'utf8'),envelope);return {ok:true};}};
+ const effects={home,env:{OURS_ACCOUNT_ORIGIN:origin,OURS_WORKSPACE_HOST:hostname,OURS_WORKSPACE_DOMAIN:'new.example.test'},out(){},...planning,readManagedClientProfile:()=>({endpoint:'retained'}),async run(bin,args,options){calls.push({args,options});if(args[0]==='version')return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':JSON.stringify({capabilities:['workspace.enroll.preserve-profile-v1']})};if(args.includes('--file'))assert.equal(readFileSync(args[args.indexOf('--file')+1],'utf8'),envelope);return {ok:true,stdout:bin==='cloudflared'?'cloudflared version 2026.10.2 (built fixture)':''};}};
  try{
   assert.equal(await runWorkspaceSetup(['--setup-workspace',encode({...grant,appOrigin:origin})],effects,async()=>{throw Error('existing host must not install');},async(url)=>{posts.push(url);return new Response(JSON.stringify({payload:envelope}));}),0);
   assert.deepEqual(posts,[origin+'/account-api/workspace-install-redeem']);
@@ -257,4 +257,53 @@ for(const patch of [{hostname:'other.ours-tunnel.com'},{appOrigin:'https://third
   assert.equal(requests,1);assert.equal(setup,0);assert.equal(state.enrolled,0);
   assert.equal(existsSync(join(home,'.ours-client','workspace-setup-pending.json')),false);
  } finally {rmSync(home,{recursive:true,force:true});}
+});
+
+test('unsafe cloudflared cannot redeem a one-use grant or create setup state',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
+ const home=mkdtempSync(join(tmpdir(),'unsafe-connector-')),state={profile:null,runs:[],enrolled:0},server=grantServer(encode(payload));
+ const effects=freshEffects(home,state);const run=effects.run;
+ effects.run=async(bin,args)=>bin==='cloudflared'?{ok:true,stdout:'cloudflared version 2026.7.2'}:run(bin,args);
+ let installs=0;
+ try {await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),'--fleet-settings=/fixture'],effects,async()=>{installs++;return 0;},server.request),/emudhra-certificate-compromise/);
+ assert.equal(server.posts.length,0);assert.equal(installs,0);assert.equal(existsSync(join(home,'.ours-client')),false);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
+
+// Real executables through realEffects: the same PATH lookup the setup uses.
+async function realConnector(t,scripts){
+ const {realEffects}=await import('../lib/effects.mjs');const {chmodSync,realpathSync}=await import('node:fs');
+ const root=realpathSync(mkdtempSync(join(tmpdir(),'real-connector-')));t.after(()=>rmSync(root,{recursive:true,force:true}));
+ const dirs=scripts.map((script,index)=>{const dir=join(root,'bin'+index);mkdirSync(dir,{mode:0o700});if(script!==null){writeFileSync(join(dir,'cloudflared'),'#!/bin/sh\n'+script+'\n');chmodSync(join(dir,'cloudflared'),0o700);}return dir;});
+ return realEffects({out(){},write(){},env:{PATH:dirs.join(':'),HOME:root},home:root});
+}
+for(const [label,scripts,message,timeout] of [
+ ['missing',[null],/cloudflared could not be verified \(not found\)/],
+ ['failing',['exit 3'],/cloudflared could not be verified \(version check failed\)/],
+ ['hanging',['exec /bin/sleep 5'],/cloudflared could not be verified \(timed out\)/,200],
+ ['unsafe',['echo "cloudflared version 2026.7.2 (built 2026-07-15-1200 UTC)"'],/cloudflared version 2026\.7\.2 is not permitted/],
+ ['prerelease',['echo "cloudflared version 2026.10.2-rc.1"'],/cloudflared with an unrecognized version is not permitted/],
+ ['shadowed by an unsafe executable earlier on PATH',['echo "cloudflared version 2026.10.1"','echo "cloudflared version 2026.10.2"'],/cloudflared version 2026\.10\.1 is not permitted/],
+])test('real '+label+' cloudflared is refused with the incident and update guidance',async t=>{
+ const {requireSecureCloudflared}=await import('../lib/workspace-setup.mjs');
+ const effects=await realConnector(t,scripts);
+ await assert.rejects(requireSecureCloudflared(effects,timeout),error=>{assert.match(error.message,message);assert.match(error.message,/2026\.10\.2 or later/);assert.ok(error.message.includes('https://blog.cloudflare.com/emudhra-certificate-compromise/'));assert.ok(error.message.includes('https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/update-cloudflared/'));return true;});
+});
+test('real patched cloudflared first on PATH is accepted',async t=>{
+ const {requireSecureCloudflared}=await import('../lib/workspace-setup.mjs');
+ await requireSecureCloudflared(await realConnector(t,['echo "cloudflared version 2026.10.2 (built 2026-10-21-1200 UTC)"','echo "cloudflared version 2026.7.2"']));
+});
+for(const label of ['missing','unsafe'])test(`${label} real cloudflared stops grant setup before redemption or writes`,async t=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');
+ const effects=await realConnector(t,[label==='missing'?null:'echo "cloudflared version 2026.7.2"']);
+ const state={profile:null,runs:[],enrolled:0},server=grantServer(encode(payload)),fresh=freshEffects(effects.home,state);
+ const run=fresh.run;fresh.run=async(bin,args,options)=>bin==='cloudflared'?effects.run(bin,args,options):run(bin,args,options);
+ let installs=0;
+ await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant),'--fleet-settings=/fixture'],fresh,async()=>{installs++;return 0;},server.request),/emudhra-certificate-compromise/);
+ assert.equal(server.posts.length,0);assert.equal(installs,0);assert.equal(state.enrolled,0);assert.equal(existsSync(join(effects.home,'.ours-client')),false);
+});
+test('workspace setup on unpatched Node stops before any command or request',async()=>{
+ const {runWorkspaceSetup}=await import('../lib/workspace-setup.mjs');const runs=[];let requests=0;
+ await assert.rejects(runWorkspaceSetup(['--setup-workspace',encode(grant)],{home:'/fixture',env:{...trusted},nodeVersion:'22.23.2',async run(bin,args){runs.push(args);return {ok:true};}},async()=>0,async()=>{requests++;}),/Node\.js 22\.23\.2 is not permitted.*CVE-2026-111497/);
+ assert.deepEqual(runs,[]);assert.equal(requests,0);
 });

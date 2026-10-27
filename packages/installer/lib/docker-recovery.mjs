@@ -1,3 +1,4 @@
+import { isSecureNodeVersion } from './security-versions.mjs';
 import { readFileSync, lstatSync, realpathSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteConfig } from './config.mjs';
@@ -11,6 +12,15 @@ const owned = (path, directory = false) => {
   const s = lstatSync(path);
   if (!(directory ? s.isDirectory() : s.isFile()) || s.uid !== process.getuid() || (!directory && s.nlink !== 1)
     || realpathSync(path) !== path || (s.mode & 0o7000)) throw new Error('Unsafe retained recovery delivery');
+};
+export const PATCHED_NODE_IMAGE = 'node:24.22.1';
+/** Replace every Node base image that is not an exact patched release (floating, minor or old tags). */
+export function securedNodeStages(text) {
+  return text.replace(/^FROM node:(\S+)((?: AS \S+)?)$/gm, (line, tag, stage) => isSecureNodeVersion(tag) ? line : `FROM ${PATCHED_NODE_IMAGE}${stage}`);
+}
+const beforeMaintenance = (text, line) => {
+  // The matched stage line is kept as is, so its already secured base image is preserved.
+  return text.replace(/^FROM \S+ AS maintenance$/m, stage => `${line}\n${stage}`);
 };
 /** Refresh installer-owned runtime scripts without changing source selection or state. */
 export function refreshDockerRecovery(record) {
@@ -28,11 +38,12 @@ export function refreshDockerRecovery(record) {
   const selected = isPluginOnly(record) ? [...files, 'scripts/runtime/daemon-client-prefix.mjs'] : files;
   for (const name of selected) replace(name, readFileSync(new URL(name, assets)));
   const dockerfile = join(record.workDir, 'Dockerfile'); owned(dockerfile);
-  const text = readFileSync(dockerfile, 'utf8');
+  // Pin retained Node stages to a patched release; an already patched exact release is kept.
+  replace('Dockerfile', Buffer.from(securedNodeStages(readFileSync(dockerfile, 'utf8'))));
   const line = 'COPY --chmod=644 scripts/runtime/recover.mjs scripts/runtime/dependency-ready.mjs /opt/ours/docker/';
-  if (!text.includes('scripts/runtime/recover.mjs')) replace('Dockerfile', Buffer.from(text.replace('FROM node:24 AS maintenance', `${line}\nFROM node:24 AS maintenance`)));
+  if (!readFileSync(dockerfile, 'utf8').includes('scripts/runtime/recover.mjs')) replace('Dockerfile', Buffer.from(beforeMaintenance(readFileSync(dockerfile, 'utf8'), line)));
   const prefixLine = 'COPY --chmod=644 scripts/runtime/daemon-client-prefix.mjs /opt/ours/docker/daemon-client-prefix.mjs';
-  if (isPluginOnly(record) && !readFileSync(dockerfile, 'utf8').includes(prefixLine)) replace('Dockerfile', Buffer.from(readFileSync(dockerfile, 'utf8').replace('FROM node:24 AS maintenance', `${prefixLine}\nFROM node:24 AS maintenance`)));
+  if (isPluginOnly(record) && !readFileSync(dockerfile, 'utf8').includes(prefixLine)) replace('Dockerfile', Buffer.from(beforeMaintenance(readFileSync(dockerfile, 'utf8'), prefixLine)));
   return changed || existsSync(marker);
 }
 

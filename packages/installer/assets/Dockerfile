@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24 AS toolchain
+FROM node:24.22.1 AS toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 ca-certificates git && rm -rf /var/lib/apt/lists/*
 FROM toolchain AS build
 WORKDIR /opt/ours
@@ -30,7 +30,7 @@ COPY --chmod=644 scripts/runtime/healthcheck.mjs /opt/ours/docker/healthcheck.mj
 COPY --chmod=644 scripts/runtime/start-telegram.sh scripts/runtime/health-telegram.sh scripts/runtime/start-cowork.sh scripts/runtime/health-cowork.sh scripts/runtime/start-messenger.sh scripts/runtime/health-messenger.mjs scripts/runtime/notifications-gateway.mjs scripts/runtime/supervise.mjs scripts/runtime/recover.mjs scripts/runtime/dependency-ready.mjs /opt/ours/docker/
 COPY --chmod=644 scripts/runtime/daemon-client-prefix.mjs /opt/ours/docker/daemon-client-prefix.mjs
 RUN chmod 755 /opt/ours/maintenance /opt/ours/docker
-FROM node:24 AS maintenance
+FROM node:24.22.1 AS maintenance
 LABEL network.ours.build-context="1"
 WORKDIR /opt/ours
 COPY --from=build /opt/ours /opt/ours
@@ -39,7 +39,7 @@ COPY --chmod=644 scripts/maintenance/package.json /opt/ours/docker/package.json
 RUN --mount=type=cache,id=ours-dist-2-npm,target=/root/.npm,sharing=locked npm install --prefix /opt/ours/docker --omit=dev --ignore-scripts --no-audit --no-fund
 USER 1000:1000
 ENTRYPOINT ["node", "/opt/ours/docker/state-operation.mjs"]
-FROM node:24 AS runtime
+FROM node:24.22.1 AS runtime
 LABEL network.ours.build-context="1"
 WORKDIR /opt/ours
 COPY --from=build /opt/ours /opt/ours
