@@ -82,6 +82,14 @@ If something cannot be removed, the summary says exactly what and why, the comma
 
 Running it when nothing is left changes nothing and says so.
 
+## Security versions
+
+Use stable Node.js 22.23.4+, 24.22.1+ or 26.12.1+ within those reviewed lines ([advisory](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)). Earlier patches, EOL, prerelease and unreviewed lines are refused before installation; new lines need an updated floor.
+
+Workspace setup checks the PATH-selected `cloudflared --version` before grant redemption or setup writes. Requires 2026.10.2+ ([incident](https://blog.cloudflare.com/emudhra-certificate-compromise/), [update instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/update-cloudflared/)); missing, failed, timed-out or unrecognized output refuses setup.
+
+New images use Node.js 24.22.1. Existing images, retained Dockerfiles, running processes and native service-manager settings are not migrated or audited: update/rebuild and restart them separately. Native service-manager settings and future starts are outside these checks. Fleet tunnel guards require the separate Fleet release and installer manifest update.
+
 ## Install first, connect the App afterwards
 
 ```sh
@@ -113,7 +121,7 @@ See [one-connection setup, localhost:4050 and systemd migration](GATEWAY_SETUP.m
 
 # @ours.network/install — one installer for the whole stack
 
-Requires Node.js 22+ and npm. Install the selected release channel:
+Requires a patched Node.js release (see Security versions) and npm. Install the selected release channel:
 
 ```sh
 npm install -g @ours.network/install@nightly
@@ -257,7 +265,7 @@ diagnostic artifact under the root's `runtime` directory; all installer calls us
 an explicit project directory, Compose file, project name and selected environment.
 Assets resolve from the installed package, independently of the working directory.
 
-Package mode requires Node.js 22+, npm and a working systemd user manager on
+Package mode requires a patched Node.js release, npm and a working systemd user manager on
 Linux/WSL or a launchd GUI user domain on macOS. Source builds also require Git,
 Python 3, a C/C++ toolchain, make, and the selected repositories' own prerequisites.
 Docker mode requires a working Docker engine and Compose 2.35+; its build image

@@ -1,3 +1,4 @@
+import { assertSecureNodeVersion } from './security-versions.mjs';
 import { validateGatewayClientProfile } from './target.mjs';
 import { enableGateway } from './gateway-transition.mjs';
 import { executeLegacyMigration } from './legacy-migration.mjs';
@@ -796,8 +797,8 @@ export function runPreflight(effects) {
   }
   effects.out(ok(`Platform: ${plat.label} (supported)`));
   const version = String(effects.nodeVersion ?? '0');
-  if (Number.parseInt(version.split('.')[0], 10) < 22) {
-    effects.out(warn(`Node.js ${version} — ours needs v22 or newer. Update Node and re-run.`));
+  try { assertSecureNodeVersion(version); } catch (error) {
+    effects.out(warn(error.message));
     return { ok: false, platform: plat, node: version };
   }
   effects.out(ok(`Node.js ${version}`));

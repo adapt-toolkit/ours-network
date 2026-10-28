@@ -2,12 +2,17 @@
 
 import { readFileSync } from 'node:fs';
 
+import { isSecureNodeVersion, nodeVersionError } from './lib/security-versions.mjs';
 import { realEffects } from './lib/effects.mjs';
 import { installerFailure } from './lib/diagnostics.mjs';
 import { runWorkspaceSetup } from './lib/workspace-setup.mjs';
 import { runSetup } from './lib/setup.mjs';
 import { closeSync, makeWriter, openTty } from './lib/ui.mjs';
 
+if (!isSecureNodeVersion(process.versions.node)) {
+  process.stderr.write(`${nodeVersionError(process.versions.node)}\n`);
+  process.exit(1);
+}
 const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 const ttyFd = openTty();
 

@@ -18,7 +18,7 @@ export const TG = resolve(HOME, '.ours-tg');
 
 export function fx({
   json = {}, text = {}, net = {}, taken = [], versions = {}, env = {}, answers = [],
-  unitUnchanged = false, harnesses = [], lines = [], platform = 'linux', nodeVersion = '22.0.0',
+  unitUnchanged = false, harnesses = [], lines = [], platform = 'linux', nodeVersion = '22.23.4',
   runFails = [], voiceReady = false, interactiveOk = true, restoreFails = [], known = [],
   restoreDoesNotTake = [], restoreChangesMode = [], packageDeps = {}, registryVersions = {},
   codexMarket = null, claudePluginInstalled = false,

@@ -41,13 +41,13 @@ PKG="${OURS_INSTALL_PKG:-@ours.network/install}"
 NPM_BIN="${OURS_NPM:-npm}"
 
 # --- 1) Node.js + npm check + friendly guidance ------------------------------------------------
-# The installer needs Node.js ≥ 22 (and npm to fetch the command). If missing, don't fail
+# The installer needs a patched Node.js 22, 24 or 26 release (and npm to fetch the command). If missing, don't fail
 # cryptically: explain what Node is and how to get it for this OS, point at nodejs.org, and exit
 # cleanly (0) so a piped run ends gracefully rather than with a scary non-zero error.
 if ! command -v node >/dev/null 2>&1 || ! command -v "$NPM_BIN" >/dev/null 2>&1; then
   os="$(uname -s 2>/dev/null || echo unknown)"
   printf '\n'
-  say "ours needs Node.js (version 22 or newer, which includes npm) — it isn't installed yet."
+  say "ours needs Node.js (a patched 22.23.4+, 24.22.1+ or 26.12.1+ release, which includes npm) — it isn't installed yet."
   say "Node.js is a common, free runtime; here's how to get it:"
   case "$os" in
     Darwin)
@@ -64,6 +64,9 @@ if ! command -v node >/dev/null 2>&1 || ! command -v "$NPM_BIN" >/dev/null 2>&1;
   printf '\n'
   exit 0
 fi
+
+# Refuse unpatched Node.js before anything runs (floors: lib/security-versions.mjs).
+node -e 'const f={22:[23,4],24:[22,1],26:[12,1]},m=/^(\d+)\.(\d+)\.(\d+)$/.exec(process.versions.node),v=m&&m.slice(1).map(Number),p=v&&f[v[0]];if(!p||v[1]<p[0]||(v[1]===p[0]&&v[2]<p[1])){console.error("Node.js "+process.versions.node+" is not permitted. Ours requires a patched supported Node.js release: 22.23.4+, 24.22.1+, 26.12.1+ within those release lines; prerelease, end-of-life and unreviewed release lines are refused. Earlier patch levels are affected by CVE-2026-111497 (Brotli decompression out-of-bounds write): https://nodejs.org/en/blog/vulnerability/october-2026-security-releases Update Node.js from https://nodejs.org/en/download or your package manager, then retry.");process.exit(1)}' || exit 1
 
 # --- 2) DEV / LOCAL path: run the sibling install.mjs directly ---------------------------------
 # From a clone (or an explicit OURS_INSTALLER_MJS), skip npm entirely and run the local installer.
