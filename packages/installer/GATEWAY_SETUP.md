@@ -30,7 +30,7 @@ Client profile commands do not control server processes.
 For an agent asked to “put the daemon on localhost port 4050”, use **4050 as the
 public gateway port**. The daemon's internal container port stays 3050. Docker
 publishes only the gateway. Run as the user who will run Fleet and the harnesses.
-Use a patched Node.js (22.23.4+, 24.22.1+ or 26.12.1+; see the [installer README](README.md#security-version-requirements)) and a working Docker Compose installation.
+Use Node.js 22+ and a working Docker Compose installation.
 
 ```sh
 npm install -g @ours.network/install@nightly

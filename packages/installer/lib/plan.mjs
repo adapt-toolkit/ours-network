@@ -431,23 +431,19 @@ export function validateInstallation(record, root) {
   return record;
 }
 
-/**
- * Messenger exposes serve only; these definitions contain no credentials. The service
- * runs on the explicit Node.js this installer verified (by default its own runtime),
- * never on whatever `node` the service manager's PATH selects at a later start.
- */
-export function messengerServicePlan(record, platform, home, executable, environment, uid, node = process.execPath) {
+/** Messenger exposes serve only; these definitions contain no credentials. */
+export function messengerServicePlan(record, platform, home, executable, environment, uid) {
   const marker = `Managed by @ours.network/install; state=${record.root}`;
   const name = `${record.project}-messenger`;
-  if ([record.root, node, executable, ...Object.values(environment)].some(v => /[\n\r\0]/.test(String(v)))) throw new Error('Service values must not contain control characters');
+  if ([record.root, executable, ...Object.values(environment)].some(v => /[\n\r\0]/.test(String(v)))) throw new Error('Service values must not contain control characters');
   if (platform === 'linux') {
     const escape = value => `"${String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('%', '%%')}"`;
-    return { path: join(home, '.config/systemd/user', `${name}.service`), marker: `# ${marker}`, name: `${name}.service`, text: `# ${marker}\n[Unit]\nDescription=OURS Messenger\nAfter=network-online.target\n[Service]\nType=simple\nExecStart=${escape(node)} ${escape(executable)} serve\n${Object.entries(environment).map(([k, v]) => `Environment=${escape(`${k}=${v}`)}`).join('\n')}\nRestart=on-failure\nRestartSec=2\n[Install]\nWantedBy=default.target\n` };
+    return { path: join(home, '.config/systemd/user', `${name}.service`), marker: `# ${marker}`, name: `${name}.service`, text: `# ${marker}\n[Unit]\nDescription=OURS Messenger\nAfter=network-online.target\n[Service]\nType=simple\nExecStart=${escape(executable)} serve\n${Object.entries(environment).map(([k, v]) => `Environment=${escape(`${k}=${v}`)}`).join('\n')}\nRestart=on-failure\nRestartSec=2\n[Install]\nWantedBy=default.target\n` };
   }
   if (platform !== 'darwin') throw new Error('Messenger requires systemd-user or launchd');
   const xml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
   const label = `network.ours.${name}`;
-  return { path: join(home, 'Library/LaunchAgents', `${label}.plist`), marker: `<!-- Managed by @ours.network/install; selection=${record.project} -->`, name: label, domain: `gui/${uid}`, text: `<?xml version="1.0" encoding="UTF-8"?>\n<!-- Managed by @ours.network/install; selection=${record.project} -->\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(label)}</string><key>ProgramArguments</key><array><string>${xml(node)}</string><string>${xml(executable)}</string><string>serve</string></array><key>EnvironmentVariables</key><dict>${Object.entries(environment).map(([k, v]) => `<key>${xml(k)}</key><string>${xml(v)}</string>`).join('')}</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict></dict></plist>\n` };
+  return { path: join(home, 'Library/LaunchAgents', `${label}.plist`), marker: `<!-- Managed by @ours.network/install; selection=${record.project} -->`, name: label, domain: `gui/${uid}`, text: `<?xml version="1.0" encoding="UTF-8"?>\n<!-- Managed by @ours.network/install; selection=${record.project} -->\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${xml(label)}</string><key>ProgramArguments</key><array><string>${xml(executable)}</string><string>serve</string></array><key>EnvironmentVariables</key><dict>${Object.entries(environment).map(([k, v]) => `<key>${xml(k)}</key><string>${xml(v)}</string>`).join('')}</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict></dict></plist>\n` };
 }
 
 /** Read the owning field emitted by the existing consumer service recipes.

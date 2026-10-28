@@ -349,14 +349,10 @@ test('native Messenger definitions preserve selection, escape values and reject 
   assert.equal(typeof plan.messengerServicePlan, 'function');
   const environment = { OURS_MESSENGER_STATE_DIR: '/srv/ours & team/messenger', OURS_DAEMON_CREDENTIAL_PATH: '/srv/token' };
   const linux = plan.messengerServicePlan(record, 'linux', '/home/me', '/srv/ours/bin/messenger', environment, 1000);
-  // The service runs on the installer's verified Node.js, not on the service manager's PATH.
-  assert.ok(linux.text.includes(`ExecStart="${process.execPath}" "/srv/ours/bin/messenger" serve`), linux.text);
-  assert.match(plan.messengerServicePlan(record, 'linux', '/home/me', '/srv/ours/bin/messenger', environment, 1000, '/opt/node-24.22.1/bin/node').text, /ExecStart="\/opt\/node-24\.22\.1\/bin\/node" "\/srv\/ours\/bin\/messenger" serve/);
-  assert.throws(() => plan.messengerServicePlan(record, 'linux', '/home/me', '/srv/ours/bin/messenger', environment, 1000, '/opt/node\nInjected=true'));
+  assert.match(linux.text, /ExecStart="\/srv\/ours\/bin\/messenger" serve/);
   assert.match(linux.text, /OURS_DAEMON_CREDENTIAL_PATH=\/srv\/token/);
   const mac = plan.messengerServicePlan(record, 'darwin', '/home/me', '/srv/bin/messenger', environment, 501);
   assert.match(mac.text, /ours &amp; team/);
-  assert.ok(mac.text.includes(`<key>ProgramArguments</key><array><string>${process.execPath}</string><string>/srv/bin/messenger</string><string>serve</string></array>`), mac.text);
   assert.throws(() => plan.messengerServicePlan(record, 'linux', '/home/me', '/bin/run\nInjected=true', environment, 1000));
 });
 
@@ -453,7 +449,7 @@ test('real native start reactivates a retained daemon definition through its own
     {
       platform: 'linux',
       definition: root => join(root, '.config/systemd/user/ours-data.service'),
-      managerStart: ['systemctl', '--user', 'restart', 'ours-data.service'],
+      managerStart: ['systemctl', '--user', 'start', 'ours-data.service'],
     },
     {
       platform: 'darwin',
@@ -464,37 +460,23 @@ test('real native start reactivates a retained daemon definition through its own
     const root = mkdtempSync(join(tmpdir(), `ours-native-${fixture.platform}-`));
     const record = { root, workDir: join(root, 'runtime'), configPath: join(root, 'config.json'), mode: 'packages', project: 'ours-fixture', services: ['daemon'] };
     try {
-      // Only the reviewed @ours.network/daemon recipe registers native services; a runtime
-      // with only the older combined `ours` command is refused before anything runs.
-      const { installServicePackages, managerShow } = await import('./service-recipes.mjs');
-      const cli = installServicePackages(record.workDir);
-      if (!splitRuntime) { rmSync(join(record.workDir, 'node_modules/.bin/ours-daemon')); writeFileSync(join(record.workDir, 'node_modules/.bin/ours'), 'fixture'); }
+      if (splitRuntime) { const binDir = join(record.workDir, 'node_modules/.bin'); mkdirSync(binDir, { recursive: true }); writeFileSync(join(binDir, 'ours-daemon'), 'fixture'); }
       const definition = fixture.definition(root);
       mkdirSync(join(definition, '..'), { recursive: true });
-      // A retained definition as the daemon's install-service writes it, on this verified Node.js.
-      writeFileSync(definition, fixture.platform === 'linux'
-        ? `[Unit]\nDescription=ours daemon\n[Service]\nType=simple\nExecStart="${process.execPath}" "${cli.daemon}" serve --managed\nEnvironment=OURS_STATE_DIR=/srv/data\n`
-        : `<plist version="1.0"><dict><key>Label</key><string>solutions.adaptframework.ours.data</string><key>ProgramArguments</key><array><string>${process.execPath}</string><string>${cli.daemon}</string><string>serve</string></array><key>EnvironmentVariables</key><dict><key>OURS_STATE_DIR</key><string>/srv/data</string></dict></dict></plist>\n`);
+      writeFileSync(definition, 'retained definition bytes\n');
       const effects = realEffects({ env: {}, home: root }); effects.platform = { platform: fixture.platform };
       const calls = [];
       effects.run = async (command, args) => {
         calls.push([command, ...args]);
         if (command === 'launchctl' && args[0] === 'print') return { code: 113, stdout: '' };
-        if (command === 'systemctl' && args[1] === 'show') return { code: 0, stdout: managerShow(process.execPath) };
         return { code: 0, stdout: args.includes('install-service') ? JSON.stringify({ changed: false }) : '' };
       };
       effects.verifyHostProfile = async () => {};
-      if (!splitRuntime) {
-        await assert.rejects(effects.serverLifecycle(record, 'start'), /Refusing to start daemon: .*not part of @ours\.network\/daemon\. Nothing was registered, started or changed\./);
-        assert.deepEqual(calls, []);
-        continue;
-      }
       await effects.serverLifecycle(record, 'start');
       const install = calls.findIndex(call => call.includes('install-service'));
-      // install-service runs on the installer's verified Node.js, which it bakes into the definition.
       assert.equal(calls[install][0], process.execPath);
-      assert.equal(calls[install][1].endsWith('/ours-daemon'), true);
-      assert.equal(calls[install].includes('daemon'), false);
+      assert.equal(calls[install][1].endsWith(splitRuntime ? '/ours-daemon' : '/ours'), true);
+      assert.equal(calls[install].includes('daemon'), !splitRuntime);
       const managerStart = calls.findIndex(call => JSON.stringify(call) === JSON.stringify(fixture.managerStart));
       assert.ok(install >= 0 && managerStart > install, `${fixture.platform}: owning install precedes native manager start; calls=${JSON.stringify(calls)}`);
       assert.equal(calls.some(call => call.includes('daemon') && call.includes('start')), false, `${fixture.platform}: no detached daemon competes with the service`);
@@ -511,29 +493,18 @@ test('native start waits for a slow daemon before starting consumers and still b
   for (const readyAfter of [58, Infinity]) {
     const root = mkdtempSync(join(tmpdir(), 'ours-slow-start-'));
     try {
-      const effects = realEffects({ env: { XDG_RUNTIME_DIR: join(root, 'run') }, home: root });
+      const effects = realEffects({ env: {}, home: root });
       effects.platform = { platform: 'linux' };
       let elapsed = 0;
       let consumerStartedAt;
-      const { installServicePackages, managerShow, recipeDefinition } = await import('./service-recipes.mjs');
-      const cli = installServicePackages(join(root, 'runtime'));
-      const { writeFileSync, mkdirSync } = await import('node:fs');
       effects.run = async (command, args) => {
-        // A published install-service writes its recipe on the Node.js that runs it.
-        const service = command === process.execPath && args.includes('install-service') ? (args[0].endsWith('/ours-cowork') ? 'cowork' : 'daemon') : null;
-        if (service === 'cowork') consumerStartedAt = elapsed;
-        if (service) {
-          const name = service === 'cowork' ? 'ours-cowork.service' : 'ours-data.service';
-          mkdirSync(join(root, '.config/systemd/user'), { recursive: true });
-          writeFileSync(join(root, '.config/systemd/user', name), recipeDefinition('linux', name, process.execPath, cli[service]));
-        }
-        if (command === 'systemctl' && args[1] === 'show') return { code: 0, stdout: managerShow(process.execPath) };
+        if (command === process.execPath && args[0].endsWith('/ours-cowork') && args.includes('install-service')) consumerStartedAt = elapsed;
         return { code: 0, stdout: '' };
       };
       effects.verifyHostProfile = async () => {
         if (elapsed < readyAfter) throw new Error('Daemon API is still starting');
       };
-      const record = { root, workDir: join(root, 'runtime'), configPath: join(root, 'config.json'), mode: 'packages', project: 'ours-fixture', services: ['daemon', 'cowork'] };
+      const record = { root, workDir: join(root, 'runtime'), mode: 'packages', project: 'ours-fixture', services: ['daemon', 'cowork'] };
       let settled = false;
       let failure;
       const started = effects.serverLifecycle(record, 'start').catch(error => { failure = error; }).finally(() => { settled = true; });

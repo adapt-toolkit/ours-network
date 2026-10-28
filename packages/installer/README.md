@@ -82,6 +82,14 @@ If something cannot be removed, the summary says exactly what and why, the comma
 
 Running it when nothing is left changes nothing and says so.
 
+## Security versions
+
+Use stable Node.js 22.23.4+, 24.22.1+ or 26.12.1+ within those reviewed lines ([advisory](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)). Earlier patches, EOL, prerelease and unreviewed lines are refused before installation; new lines need an updated floor.
+
+Workspace setup checks the PATH-selected `cloudflared --version` before grant redemption or setup writes. Requires 2026.10.2+ ([incident](https://blog.cloudflare.com/emudhra-certificate-compromise/), [update instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/update-cloudflared/)); missing, failed, timed-out or unrecognized output refuses setup.
+
+New images use Node.js 24.22.1. Existing images, retained Dockerfiles, running processes and native service-manager settings are not migrated or audited: update/rebuild and restart them separately. Installer package commands use its checked Node executable; arbitrary manager settings and future starts are outside these checks. Fleet tunnel guards require the separate Fleet release and installer manifest update.
+
 ## Install first, connect the App afterwards
 
 ```sh
@@ -113,7 +121,7 @@ See [one-connection setup, localhost:4050 and systemd migration](GATEWAY_SETUP.m
 
 # @ours.network/install — one installer for the whole stack
 
-Requires a patched Node.js (22.23.4+, 24.22.1+ or 26.12.1+; see [Security version requirements](#security-version-requirements)) and npm. Install the selected release channel:
+Requires a patched Node.js release (see Security versions) and npm. Install the selected release channel:
 
 ```sh
 npm install -g @ours.network/install@nightly
@@ -257,7 +265,7 @@ diagnostic artifact under the root's `runtime` directory; all installer calls us
 an explicit project directory, Compose file, project name and selected environment.
 Assets resolve from the installed package, independently of the working directory.
 
-Package mode requires a patched Node.js (22.23.4+, 24.22.1+ or 26.12.1+; see [Security version requirements](#security-version-requirements)), npm and a working systemd user manager on
+Package mode requires a patched Node.js release, npm and a working systemd user manager on
 Linux/WSL or a launchd GUI user domain on macOS. Source builds also require Git,
 Python 3, a C/C++ toolchain, make, and the selected repositories' own prerequisites.
 Docker mode requires a working Docker engine and Compose 2.35+; its build image
@@ -859,107 +867,3 @@ The published no-policy core delivery is a verified recovery omission that
 reproduces the reported symptom. The original incident cause remains unconfirmed:
 actual host Engine availability, installed policies and pre-reboot stopped state
 still require Owner confirmation.
-
-## Security version requirements
-
-Ours refuses to run on Node.js or cloudflared releases with known security
-defects that affect it. The checks run before setup changes anything and
-again before every tunnel start, and the refusal names the minimum version,
-the version found and where to update.
-
-**Node.js.** Only reviewed stable release lines are accepted, each with its
-own patched floor: 22 (22.23.4+), 24 (24.22.1+) and 26 (26.12.1+). Earlier
-patch levels of these lines, end-of-life lines (20, 21, 23, 25), prerelease
-or nightly builds and release lines that have not been reviewed yet (such as
-27) are refused. A new line is admitted by a reviewed change that adds its
-floor, never by a single global "newer than" comparison. The
-[October 2026 Node.js security releases](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)
-fix CVE-2026-111497: the bundled Brotli decoder can write out of bounds when
-decompressing attacker-controlled data, which can cause memory corruption,
-crashes, information disclosure and potentially remote code execution.
-Update from [nodejs.org](https://nodejs.org/en/download) or your package
-manager. The `engines` field in `package.json` records the same floors but
-is advisory; the runtime checks enforce them.
-
-**cloudflared.** A tunnel requires cloudflared **2026.10.2 or later**, as
-reported by `cloudflared --version` for the executable found on the PATH of
-the process that starts the tunnel. Older, prerelease, unrecognized, failing,
-missing or timed-out version checks are refused.
-[Cloudflare's eMudhra incident explanation](https://blog.cloudflare.com/emudhra-certificate-compromise/)
-describes why: earlier releases trust compromised eMudhra intermediate
-certificates, which allows server impersonation. Update with your package
-manager or
-[Cloudflare's update instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/update-cloudflared/),
-then check `cloudflared --version` again.
-
-**Native services.** In package mode, every installer start (setup, start,
-restart, update and recovery) registers each selected daemon, Telegram, Cowork
-and Messenger service again on the Node.js executable that passed the
-installer's own check:
-
-1. **Admission, before anything changes.** Every selected service is checked
-   first. If any check fails, nothing is registered, started or changed, and
-   the refusal names the service and its definition.
-   - The package that registers it must be a release whose generated service
-     definition was reviewed: `@ours.network/daemon` 5.0.0 or 4.1.1-nightly.4,
-     `@ours.network/tg-connector` 2.0.0 or 1.0.1-nightly.16, and
-     `@ours.network/cowork` 2.0.0 or 1.3.4-nightly.20261019.b0d73c0. Other
-     releases, and runtimes with only the older combined `ours` command, are
-     refused until the installer updates them.
-   - Every path the new definition records, and every value the Telegram
-     connector writes unquoted, must use only letters, digits and
-     `. _ / + @ : , -`. This ensures systemd or launchd starts exactly the
-     checked command, with no splitting, `%` specifiers or `$` substitution.
-   - A retained Telegram or Cowork definition must be in its recipe form.
-     Unknown keys or sections, more than one `ExecStart`, prefixes,
-     continuation lines, specifiers, and a launchd `Program`, `RootDirectory`
-     or other unsupported key are refused, so a custom definition is left
-     unchanged rather than replaced. Existing ownership checks still apply.
-   - On Linux, nothing else systemd would load may choose the unit's main
-     command. The installer refuses `SYSTEMD_UNIT_PATH`, a same-named unit with
-     higher precedence on the user search path, and a linked or template unit.
-     It also refuses a drop-in that applies to the unit (`<unit>.d`,
-     dash-prefix or type-wide `service.d`, in any user search-path directory)
-     and, in its `[Service]` section, assigns `ExecStart` (even empty) or sets
-     `RootDirectory` or `RootImage`. Lines are read as systemd reads them,
-     with comments and continuations. Other drop-ins, such as distribution
-     policy, are accepted and never changed.
-2. **Registration.** The package's own `install-service` runs on the verified
-   Node.js and records it. The installer rewrites its Messenger definition
-   whenever it differs. What was registered is read again before the
-   installer's own start. On Linux this includes, after `daemon-reload`, the
-   main command the user manager reports through
-   `systemctl --user show -p ExecStart -p RootDirectory -p RootImage`. It must
-   be exactly one command starting the verified Node.js, with no other root.
-   Otherwise the service is stopped and the start is refused. This check only
-   contains a failed registration; the admission step is what qualifies the
-   package's own first start inside `install-service`.
-3. **Refresh, then start.** The definition the service manager has loaded is
-   always refreshed before the installer starts the service, even when a
-   registration changed nothing: `systemctl --user daemon-reload` and
-   `restart` on Linux, and `bootout`, `bootstrap` and `kickstart` on macOS.
-
-Retained definitions are replaced, so the Node.js they recorded is never run.
-
-**Not covered.** The guarantee is about the service's main command as the
-systemd user manager or launchd resolves it from the definition. It does not
-cover:
-
-- a restart by systemd or launchd itself (or by the operator) after the
-  Node.js at a recorded path is replaced by an unpatched release. The next
-  installer start registers the service on a verified Node.js again;
-- other commands a drop-in adds (`ExecStartPre=`, `ExecStartPost=`,
-  `ExecReload=`), environment settings such as `NODE_OPTIONS`, bind mounts,
-  namespaces, and manager policy outside the unit.
-
-The refusals above name the definition or drop-in and say why it cannot be
-qualified. They are separate from the Node.js and cloudflared version errors.
-
-Docker installations rebuild their image on the patched `node:24.22.1` base on
-the next installer run.
-
-These checks do not install or upgrade prerequisites, disable TLS
-verification, rotate credentials or restart services. A process that is
-already running keeps the binaries it started with: update Node.js and
-cloudflared, then restart the affected services (and rebuild or recreate
-containers) yourself.

@@ -27,7 +27,6 @@ import { clientPackageNames, maintenanceServices, installationPaths, validateIns
 import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
 import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress, gatewayReadinessScript, describeGatewayReadiness } from './gateway.mjs';
 import { createServerOnboarding, retainedCredentialRefused } from './server-onboarding.mjs';
-import { definitionRecipe, managerMainCommand, packageRecipe, renderedProblem, serviceRefusal, systemdOverrideProblem } from './service-runtime.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
@@ -689,8 +688,6 @@ export function networkEffects(effects) {
     const daemonBinary = existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours';
     const name = { daemon: daemonBinary, telegram: 'ours-tg-connector', cowork: 'ours-cowork' }[service];
     const args = service === 'daemon' ? [...(daemonBinary === 'ours' ? ['daemon'] : []), op, ...(['install-service', 'uninstall-service'].includes(op) ? ['--yes'] : []), '--config', record.configPath, '--state-dir', installationPaths(record).daemon, '--json'] : [op];
-    // Run on this verified Node.js: install-service bakes the running process.execPath into
-    // the service definition, so a later start or restart keeps the checked runtime.
     return effects.run(process.execPath, [bin(record, name), ...args], { ...options, env: localEnv(record, service) });
   };
   const statelessGateway = (record, detail) => {
@@ -1753,86 +1750,25 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     }
     return;
   }
-  // Start (see service-runtime.mjs). Every selected service is admitted before anything is
-  // registered, stopped or started: no override can change how systemd starts it, a retained
-  // package definition is in its reviewed recipe form, the package that registers it is a
-  // reviewed recipe, and every path the new definition records can be written unchanged.
-  const platform = effects.platform.platform;
-  const refusal = (service, detail, outcome) => Object.assign(new Error(serviceRefusal(service, plans[service].path, detail, outcome)), { securityRefusal: true });
-  const overrides = service => linux ? systemdOverrideProblem({ env: effects.env, home: effects.home, uid: process.getuid(), unit: plans[service].name, fragment: plans[service].path }) : null;
-  const command = service => service === 'daemon' ? (existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours') : { telegram: 'ours-tg-connector', cowork: 'ours-cowork' }[service];
-  // The Telegram connector writes its Environment= lines unquoted, each value taken from its
-  // environment (what the installer passes, then what it inherits) or else its config file.
-  const telegramEnvironment = () => {
-    const env = { ...effects.env, ...localEnv(record, 'telegram') };
-    const file = existsSync(env.OURS_TG_CONFIG) ? JSON.parse(readFileSync(env.OURS_TG_CONFIG, 'utf8')) : {};
-    // Both reviewed connector versions resolve this string field against the invocation
-    // cwd before applying the environment override; non-strings use the empty default.
-    const daemonStateDir = typeof file.daemonStateDir === 'string' ? resolve(file.daemonStateDir) : '';
-    const keys = { OURS_TG_CONTROL_PORT: 'controlPort', OURS_TG_STATE_DIR: 'stateDir', OURS_TG_POLL_TIMEOUT: 'pollTimeoutSec', OURS_TG_DAEMON_URL: 'daemonUrl',
-      OURS_TG_DAEMON_STATE_DIR: 'daemonStateDir', OURS_TG_DAEMON_ID: 'daemonInstanceId', OURS_TG_DAEMON_CREDENTIAL_PATH: 'daemonCredentialPath' };
-    return Object.fromEntries(Object.entries(keys).map(([key, field]) => [key, env[key] ?? (field === 'daemonStateDir' ? daemonStateDir : file[field]) ?? '']));
-  };
-  const admit = service => {
-    const problem = overrides(service) ?? (() => {
-      if (service === 'messenger') return renderedProblem({ execPath: process.execPath, cliPath: bin(record, 'ours-messenger-server') });
-      if (service !== 'daemon' && existsSync(plans[service].path)) {
-        const retained = definitionRecipe(readFileSync(plans[service].path, 'utf8'), platform, plans[service].name);
-        if (retained.error) return retained.error;
-      }
-      const recipe = packageRecipe(service, bin(record, command(service)), join(record.workDir, 'node_modules'));
-      if (recipe.error) return recipe.error;
-      let environment;
-      try { environment = service === 'telegram' && linux ? telegramEnvironment() : {}; } catch { return 'cannot be qualified: its connector config cannot be read'; }
-      // Daemon dispatch passes process.argv[1] and --config to its adapter, which records
-      // resolve() of these lexical operands, rather than the bin link's realpath above.
-      return renderedProblem({ execPath: process.execPath,
-        cliPath: service === 'daemon' ? resolve(bin(record, command(service))) : recipe.cliPath,
-        ...(service === 'daemon' ? { configPath: resolve(record.configPath) } : {}), environment });
-    })();
-    if (problem) throw refusal(service, problem);
-  };
-  for (const service of selected) admit(service);
-  // What was registered is checked again before the installer's own start: the definition on
-  // disk, and on Linux the main command the user manager reports after reloading it. This only
-  // contains a failed registration; admission above is what qualifies the package's own first
-  // start. A mismatch stops the service and refuses.
-  const registered = async service => {
-    const path = plans[service].path;
-    const recorded = existsSync(path) ? definitionRecipe(readFileSync(path, 'utf8'), platform, plans[service].name) : { error: 'was not written by its registration' };
-    let problem = overrides(service) ?? recorded.error ?? (recorded.interpreter === process.execPath ? null : 'does not start the Node.js the installer verified');
-    if (!problem && linux) {
-      await effects.run('systemctl', ['--user', 'daemon-reload']);
-      const shown = await effects.run('systemctl', ['--user', 'show', plans[service].name, '-p', 'ExecStart', '-p', 'RootDirectory', '-p', 'RootImage']);
-      const main = managerMainCommand(shown.stdout);
-      problem = main.error ?? (main.program === process.execPath ? null : 'is started by systemd with a program other than the Node.js the installer verified');
-    }
-    if (!problem) return;
-    await manager(service, 'stop');
-    throw refusal(service, problem, 'Its registration ran; the installer stopped it again and did not start it.');
-  };
   const failures = [];
   for (const service of selected) {
     try {
       if (service === 'messenger') {
-        if (!existsSync(messenger.path) || readFileSync(messenger.path, 'utf8') !== messenger.text) {
+        if (!existsSync(messenger.path)) {
           mkdirSync(dirname(messenger.path), { recursive: true });
-          atomicWriteConfig(messenger.path, messenger.text);
+          writePrivateNew(messenger.path, messenger.text);
           if (linux) {
             await effects.run('systemctl', ['--user', 'daemon-reload']);
             await effects.run('systemctl', ['--user', 'enable', messenger.name]);
           }
         }
-      } else await ownerCommand(record, service, 'install-service');
-      await registered(service);
-      // Always reload what the service manager runs (on Linux, the daemon-reload above): a
-      // registration that changed nothing does not reload, and a job loaded earlier can
-      // still name another executable.
-      if (linux) await manager(service, 'restart');
-      else {
-        await manager(service, 'stop');
         await manager(service, 'start');
-      }
+      } else if (service === 'daemon') {
+        await ownerCommand(record, service, 'install-service');
+        await manager(service, 'start');
+      } else if (!existsSync(plans[service].path)) {
+        await ownerCommand(record, service, 'install-service');
+      } else await manager(service, 'start');
       let ready = false;
       // Restoring existing identities can take longer than 30 seconds.
       const readinessDeadline = Date.now() + 120_000;
@@ -1840,8 +1776,7 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
         try { await health(service); ready = true; break; } catch { await new Promise(resolve => setTimeout(resolve, 1000)); }
       }
       if (!ready) throw new Error('Application is not ready');
-    } catch (error) {
-      if (error?.securityRefusal) throw error;
+    } catch {
       if (service === 'daemon') throw new Error('Daemon API is not ready; consumers were not started');
       failures.push(service);
     }
