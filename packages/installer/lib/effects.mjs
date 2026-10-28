@@ -1766,9 +1766,12 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
   const telegramEnvironment = () => {
     const env = { ...effects.env, ...localEnv(record, 'telegram') };
     const file = existsSync(env.OURS_TG_CONFIG) ? JSON.parse(readFileSync(env.OURS_TG_CONFIG, 'utf8')) : {};
+    // Both reviewed connector versions resolve this string field against the invocation
+    // cwd before applying the environment override; non-strings use the empty default.
+    const daemonStateDir = typeof file.daemonStateDir === 'string' ? resolve(file.daemonStateDir) : '';
     const keys = { OURS_TG_CONTROL_PORT: 'controlPort', OURS_TG_STATE_DIR: 'stateDir', OURS_TG_POLL_TIMEOUT: 'pollTimeoutSec', OURS_TG_DAEMON_URL: 'daemonUrl',
       OURS_TG_DAEMON_STATE_DIR: 'daemonStateDir', OURS_TG_DAEMON_ID: 'daemonInstanceId', OURS_TG_DAEMON_CREDENTIAL_PATH: 'daemonCredentialPath' };
-    return Object.fromEntries(Object.entries(keys).map(([key, field]) => [key, env[key] ?? file[field] ?? '']));
+    return Object.fromEntries(Object.entries(keys).map(([key, field]) => [key, env[key] ?? (field === 'daemonStateDir' ? daemonStateDir : file[field]) ?? '']));
   };
   const admit = service => {
     const problem = overrides(service) ?? (() => {
@@ -1781,7 +1784,11 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       if (recipe.error) return recipe.error;
       let environment;
       try { environment = service === 'telegram' && linux ? telegramEnvironment() : {}; } catch { return 'cannot be qualified: its connector config cannot be read'; }
-      return renderedProblem({ execPath: process.execPath, cliPath: recipe.cliPath, environment });
+      // Daemon dispatch passes process.argv[1] and --config to its adapter, which records
+      // resolve() of these lexical operands, rather than the bin link's realpath above.
+      return renderedProblem({ execPath: process.execPath,
+        cliPath: service === 'daemon' ? resolve(bin(record, command(service))) : recipe.cliPath,
+        ...(service === 'daemon' ? { configPath: resolve(record.configPath) } : {}), environment });
     })();
     if (problem) throw refusal(service, problem);
   };

@@ -48,9 +48,10 @@ export function packageRecipe(service, binPath, modulesRoot) {
 }
 
 /** Why a value the new definition would record cannot be recorded unchanged, or null. */
-export function renderedProblem({ execPath, cliPath, environment = {} }) {
+export function renderedProblem({ execPath, cliPath, configPath, environment = {} }) {
   if (!SAFE_PATH.test(execPath)) return `would record a Node.js path that a service definition cannot hold unchanged (supported: ${SUPPORTED})`;
   if (!SAFE_PATH.test(cliPath)) return `would record a command path that a service definition cannot hold unchanged (supported: ${SUPPORTED})`;
+  if (configPath !== undefined && !SAFE_PATH.test(configPath)) return `would record a config path that a service definition cannot hold unchanged (supported: ${SUPPORTED})`;
   for (const [key, value] of Object.entries(environment)) {
     if (!SAFE_VALUE.test(String(value))) return `would record a ${key} value that its unquoted definition cannot hold unchanged (supported: ${SUPPORTED})`;
   }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { realEffects } from '../lib/effects.mjs';
@@ -170,15 +170,16 @@ function nativeHost(t, platform, { versions, workDir = 'server', env = {} } = {}
   const names = {
     daemon: linux ? unitNameForStateDir(daemonState).unit : launchdLabelForStateDir(daemonState).label,
     cowork: linux ? 'ours-cowork.service' : 'network.ours.cowork',
+    telegram: linux ? 'ours-telegram.service' : 'solutions.adaptframework.ours-telegram',
   };
   const path = service => linux ? join(unitDir, names[service]) : join(agentDir, `${names[service]}.plist`);
-  const environment = { cowork: { OURS_COWORK_STATE_DIR: installationPaths(record).cowork }, daemon: { OURS_STATE_DIR: daemonState } };
+  const environment = { cowork: { OURS_COWORK_STATE_DIR: installationPaths(record).cowork }, daemon: { OURS_STATE_DIR: daemonState }, telegram: { OURS_TG_STATE_DIR: installationPaths(record).telegram } };
   const definition = (service, program = process.execPath) => recipeDefinition(platform, names[service], program, cli[service], environment[service]);
   let recorded = process.execPath, writes = true, manager = null;
   const calls = [];
   effects.run = async (command, args) => {
     calls.push([command, ...args]);
-    const service = command === process.execPath && args[0]?.endsWith('/ours-cowork') ? 'cowork' : command === process.execPath && args[0]?.endsWith('/ours-daemon') ? 'daemon' : null;
+    const service = command === process.execPath ? { 'ours-cowork': 'cowork', 'ours-daemon': 'daemon', ours: 'daemon', 'ours-tg-connector': 'telegram' }[args[0]?.split('/').at(-1)] : null;
     // A published install-service records the Node.js that runs it, unless nothing changed.
     if (service && args.includes('install-service') && writes) { mkdirSync(dirname(path(service)), { recursive: true }); writeFileSync(path(service), definition(service, recorded)); }
     if (command === 'launchctl' && args[0] === 'print') return { ok: true, code: 0, stdout: '' };
@@ -297,6 +298,58 @@ for (const [label, env, config] of [
   if (config) { mkdirSync(dirname(configPath), { recursive: true }); writeFileSync(configPath, JSON.stringify(config)); }
   await assert.rejects(host.start(['telegram']), /Refusing to start telegram: .*value that its unquoted definition cannot hold unchanged/);
   assert.deepEqual(host.calls, []);
+});
+
+for (const legacy of [false, true]) test(`linux: the daemon's lexical ${legacy ? 'ours' : 'ours-daemon'} CLI is admitted before registration`, async t => {
+  const host = nativeHost(t, 'linux');
+  if (legacy) renameSync(join(host.record.workDir, 'node_modules/.bin/ours-daemon'), join(host.record.workDir, 'node_modules/.bin/ours'));
+  const alias = join(host.root, 'server-$NAME');
+  symlinkSync(host.record.workDir, alias);
+  host.record.workDir = alias;
+  // Package ownership resolves to safe storage; the adapter records the lexical alias.
+  assert.ok(packageRecipe('daemon', join(alias, 'node_modules/.bin', legacy ? 'ours' : 'ours-daemon'), join(alias, 'node_modules')).cliPath);
+  await assert.rejects(host.start(['daemon']), /Refusing to start daemon: .*command path that a service definition cannot hold unchanged/);
+  assert.deepEqual(host.calls, []);
+  assert.equal(existsSync(host.path('daemon')), false);
+});
+
+test('linux: the daemon config operand is admitted before registration', async t => {
+  const host = nativeHost(t, 'linux');
+  host.record.configPath = join(host.record.workDir, 'config-$NAME.json');
+  await assert.rejects(host.start(['daemon']), /Refusing to start daemon: .*config path that a service definition cannot hold unchanged/);
+  assert.deepEqual(host.calls, []);
+  assert.equal(existsSync(host.path('daemon')), false);
+});
+
+for (const [label, config, env, unsafeCwd, refused] of [
+  ['relative path under a spaced cwd', 'relative', {}, true, true],
+  ['empty string resolved to a spaced cwd', '', {}, true, true],
+  ['relative path under a safe cwd', 'relative', {}, false, false],
+  ['environment takes precedence over the resolved config', 'relative', { OURS_TG_DAEMON_STATE_DIR: '/srv/daemon' }, true, false],
+  ['empty environment overrides the config', 'relative', { OURS_TG_DAEMON_STATE_DIR: '' }, true, false],
+  ['non-string config uses the empty default', 123, {}, true, false],
+]) test(`linux: Telegram daemonStateDir ${label}`, async t => {
+  const host = nativeHost(t, 'linux', { env });
+  const configPath = join(installationPaths(host.record).telegram, 'config.json');
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, JSON.stringify({ daemonStateDir: config }));
+  const cwd = join(host.root, unsafeCwd ? 'working dir' : 'working-dir');
+  mkdirSync(cwd);
+  const previous = process.cwd();
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true }));
+  try {
+    process.chdir(cwd);
+    if (refused) {
+      await assert.rejects(host.start(['daemon', 'telegram']), /Refusing to start telegram: .*OURS_TG_DAEMON_STATE_DIR value that its unquoted definition cannot hold unchanged/);
+      assert.deepEqual(host.calls, []);
+      assert.equal(existsSync(host.path('daemon')), false);
+      assert.equal(existsSync(host.path('telegram')), false);
+    } else {
+      await host.start(['telegram']);
+      assert.ok(host.calls.some(call => call[0] === process.execPath && call[1].endsWith('/ours-tg-connector') && call.includes('install-service')));
+    }
+    assert.equal(readFileSync(configPath, 'utf8'), JSON.stringify({ daemonStateDir: config }));
+  } finally { process.chdir(previous); }
 });
 
 for (const platform of ['linux', 'darwin']) test(`${platform}: the installer's Messenger definition is rewritten onto the verified Node.js and reloaded`, async t => {
