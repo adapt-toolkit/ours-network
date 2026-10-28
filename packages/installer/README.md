@@ -892,67 +892,68 @@ manager or
 [Cloudflare's update instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/update-cloudflared/),
 then check `cloudflared --version` again.
 
-**Native services.** In package mode the installer registers the daemon,
-Telegram, Cowork and Messenger services on the Node.js executable that passed
-its own check. Before anything changes, it checks every selected service
-definition and the Node.js that each retained definition records. If any of
-them names an unpatched or unverifiable Node.js, nothing is started or
-changed. The error names the recorded executable and the version it reports,
-when that version can be read. To continue, update that Node.js, or remove the
-definition so the installer registers it again, then rerun the installer. The
-installer rewrites only its own Messenger definition onto the verified
-runtime.
+**Native services.** In package mode, every installer start (setup, start,
+restart, update and recovery) registers each selected daemon, Telegram, Cowork
+and Messenger service again on the Node.js executable that passed the
+installer's own check:
 
-Each service process also loads an installer-owned guard
-(`node-floor-guard.cjs` in the installation directory) through `NODE_OPTIONS`.
-Any later start or restart by systemd or launchd therefore refuses an
-interpreter that has become unpatched.
+1. **Admission, before anything changes.** Every selected service is checked
+   first. If any check fails, nothing is registered, started or changed, and
+   the refusal names the service and its definition.
+   - The package that registers it must be a release whose generated service
+     definition was reviewed: `@ours.network/daemon` 5.0.0 or 4.1.1-nightly.4,
+     `@ours.network/tg-connector` 2.0.0 or 1.0.1-nightly.16, and
+     `@ours.network/cowork` 2.0.0 or 1.3.4-nightly.20261019.b0d73c0. Other
+     releases, and runtimes with only the older combined `ours` command, are
+     refused until the installer updates them.
+   - Every path the new definition records, and every value the Telegram
+     connector writes unquoted, must use only letters, digits and
+     `. _ / + @ : , -`. This ensures systemd or launchd starts exactly the
+     checked command, with no splitting, `%` specifiers or `$` substitution.
+   - A retained Telegram or Cowork definition must be in its recipe form.
+     Unknown keys or sections, more than one `ExecStart`, prefixes,
+     continuation lines, specifiers, and a launchd `Program`, `RootDirectory`
+     or other unsupported key are refused, so a custom definition is left
+     unchanged rather than replaced. Existing ownership checks still apply.
+   - On Linux, nothing else systemd would load may choose the unit's main
+     command. The installer refuses `SYSTEMD_UNIT_PATH`, a same-named unit with
+     higher precedence on the user search path, and a linked or template unit.
+     It also refuses a drop-in that applies to the unit (`<unit>.d`,
+     dash-prefix or type-wide `service.d`, in any user search-path directory)
+     and, in its `[Service]` section, assigns `ExecStart` (even empty) or sets
+     `RootDirectory` or `RootImage`. Lines are read as systemd reads them,
+     with comments and continuations. Other drop-ins, such as distribution
+     policy, are accepted and never changed.
+2. **Registration.** The package's own `install-service` runs on the verified
+   Node.js and records it. The installer rewrites its Messenger definition
+   whenever it differs. What was registered is read again before the
+   installer's own start. On Linux this includes, after `daemon-reload`, the
+   main command the user manager reports through
+   `systemctl --user show -p ExecStart -p RootDirectory -p RootImage`. It must
+   be exactly one command starting the verified Node.js, with no other root.
+   Otherwise the service is stopped and the start is refused. This check only
+   contains a failed registration; the admission step is what qualifies the
+   package's own first start inside `install-service`.
+3. **Refresh, then start.** The definition the service manager has loaded is
+   always refreshed before the installer starts the service, even when a
+   registration changed nothing: `systemctl --user daemon-reload` and
+   `restart` on Linux, and `bootout`, `bootstrap` and `kickstart` on macOS.
 
-- On Linux, the guard is a systemd drop-in `ours-node-floor.conf`. It is in
-  place before a package's own `install-service` command starts the service.
-  Retiring a service removes the drop-in only when it is byte-for-byte this
-  installation's own, privately owned, and reached without links or
-  redirection. If a matching drop-in cannot be removed safely, retirement is
-  refused before anything stops. Other drop-ins are left alone.
-- On macOS, the guard is an `EnvironmentVariables` entry in the launchd plist.
-  It is added right after registration. Before every installer start, launchd
-  is made to load the plist on disk again (bootout, then bootstrap), so the
-  loaded copy carries the guard. The first start, which `install-service`
-  performs itself, runs on the installer's verified Node.js before the guard
-  is added. The guard applies from the installer's own start onwards.
+Retained definitions are replaced, so the Node.js they recorded is never run.
 
-The installer refuses to change, and does not start, a definition whose
-effective configuration it cannot verify. This covers:
+**Not covered.** The guarantee is about the service's main command as the
+systemd user manager or launchd resolves it from the definition. It does not
+cover:
 
-- unparseable commands;
-- a launchd plist that is not in the canonical form the published definitions
-  use: the standard XML header and Apple DOCTYPE, `<plist version="1.0">`, and
-  plain `dict`, `key`, `string`, `array`, `integer`, `true` and `false` tags with
-  no whitespace or attributes inside them, named entities only, and closed
-  comments. The plist is then read structurally as one root job dictionary:
-  `ProgramArguments` and `EnvironmentVariables` count only there, and the guard is
-  written only into the root `EnvironmentVariables`. Repeated keys, wrong value
-  types, and any of the job keys nested below the root are refused;
-- in a launchd plist: `NODE_OPTIONS` anywhere outside the installer's single
-  active guard entry, including in comments; numeric character references;
-  entities in keys; repeated keys; and a `Program` or `RootDirectory` key, which
-  would run something other than the checked first `ProgramArguments` entry;
-- in any drop-in systemd would apply (unit, dash-prefix and type-wide
-  drop-ins in every user unit search path):
-  - `EnvironmentFile=`, `UnsetEnvironment=` or `PassEnvironment=`;
-  - `RootDirectory=` or `RootImage=`, which change what the command path names;
-  - an environment reset;
-  - an `Environment=` value with escapes or `%` specifiers;
-  - an `ExecStart` override.
-  Continued lines are joined first, as systemd joins them;
-- a same-named unit ahead of the installer's own, or `SYSTEMD_UNIT_PATH`;
-- a guard drop-in that this installation did not write;
-- linked, foreign-owned or group- or world-writable guard files and
-  directories;
-- any directory above the unit directory or the installation directory, as
-  written or as resolved, that is owned by another user or is group- or
-  world-writable. A root-owned sticky directory such as `/tmp` is accepted.
-  The error names the directory and suggests `chmod go-w`.
+- a restart by systemd or launchd itself (or by the operator) after the
+  Node.js at a recorded path is replaced by an unpatched release. The next
+  installer start registers the service on a verified Node.js again;
+- other commands a drop-in adds (`ExecStartPre=`, `ExecStartPost=`,
+  `ExecReload=`), environment settings such as `NODE_OPTIONS`, bind mounts,
+  namespaces, and manager policy outside the unit.
+
+The refusals above name the definition or drop-in and say why it cannot be
+qualified. They are separate from the Node.js and cloudflared version errors.
 
 Docker installations rebuild their image on the patched `node:24.22.1` base on
 the next installer run.

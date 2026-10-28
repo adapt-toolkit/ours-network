@@ -27,7 +27,7 @@ import { clientPackageNames, maintenanceServices, installationPaths, validateIns
 import { validateHostProfile, validateGatewayClientProfile } from './target.mjs';
 import { serverBase, validateGatewayDiscovery, gatewayCompose, gatewayNginx, gatewayAddress, gatewayReadinessScript, describeGatewayReadiness } from './gateway.mjs';
 import { createServerOnboarding, retainedCredentialRefused } from './server-onboarding.mjs';
-import { definitionConflict, inspectInterpreter, interpreterRefusal, nodeFloorDropIn, NODE_FLOOR_DROP_IN, NODE_FLOOR_GUARD, NODE_FLOOR_GUARD_SOURCE, plistExecutableConflict, plistGuardState, plistWithGuard, recordedInterpreter, systemdEffectiveDropIns } from './service-runtime.mjs';
+import { definitionRecipe, managerMainCommand, packageRecipe, renderedProblem, serviceRefusal, systemdOverrideProblem } from './service-runtime.mjs';
 import { atomicWriteConfig, snapshotConfig, restoreConfig } from './config.mjs';
 import { select as selectOnTty, multiselect as multiselectOnTty, askLine as askLineOnTty } from './prompt.mjs';
 import { classifyHarnessProbe } from './logic.mjs';
@@ -1710,25 +1710,6 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     const response = await fetch(endpoint, { redirect: 'error', signal: AbortSignal.timeout(3000) });
     if (!response.ok) throw new Error(`${service} health check failed`);
   };
-  const lstatExists = path => { try { lstatSync(path); return true; } catch { return false; } };
-  // Every existing directory above a definition or the guard must also be one that no other
-  // user can rename entries in: owned by this user or root and not group/world-writable
-  // (a root-owned sticky directory such as /tmp protects entries owned by this user). Both
-  // the path as written and the directories it resolves to are checked.
-  const sharedAncestor = path => {
-    let dir = path;
-    while (!lstatExists(dir)) dir = dirname(dir);
-    const unsafeDir = stat => (stat.uid !== process.getuid() && stat.uid !== 0) || ((stat.mode & 0o022) && !(stat.uid === 0 && (stat.mode & 0o1000)));
-    for (let lexical = dir; ; lexical = dirname(lexical)) {
-      if (unsafeDir(lstatSync(lexical))) return lexical;
-      if (lexical === dirname(lexical)) break;
-    }
-    for (let real = realpathSync(dir); ; real = dirname(real)) {
-      if (unsafeDir(statSync(real))) return real;
-      if (real === dirname(real)) break;
-    }
-    return null;
-  };
   if (operation === 'status') {
     const running = [];
     for (const service of selected) {
@@ -1743,23 +1724,7 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     }
     return running;
   }
-  // This installation's Node.js floor drop-in is removed with its definition only when it is
-  // byte-exact, privately owned and reached without redirection. One that matches but cannot
-  // be removed safely refuses the retirement before anything stops; others are not ours.
-  const retiredDropIn = service => {
-    const directory = `${plans[service].path}.d`, path = join(directory, NODE_FLOOR_DROP_IN);
-    if (!lstatExists(path)) return null;
-    let text;
-    try { text = readFileSync(path, 'utf8'); } catch { return null; }
-    if (text !== nodeFloorDropIn(join(record.root, NODE_FLOOR_GUARD))) return null;
-    const dirStat = lstatSync(directory), stat = lstatSync(path);
-    const safe = dirStat.isDirectory() && dirStat.uid === process.getuid() && !(dirStat.mode & 0o022) && realpathSync(directory) === directory && !sharedAncestor(directory)
-      && stat.isFile() && stat.uid === process.getuid() && stat.nlink === 1;
-    if (!safe) throw Object.assign(new Error(`Refusing to retire ${service}: its Node.js floor drop-in ${path} is linked, redirected or writable by others, so it cannot be removed safely. Nothing was stopped or removed. Remove that drop-in yourself, then run the installer again.`), { securityRefusal: true });
-    return { directory, path };
-  };
   if (operation === 'stop' || operation === 'retire') {
-    const dropIns = operation === 'retire' && linux ? new Map(selected.map(service => [service, retiredDropIn(service)])) : new Map();
     for (const service of [...selected].reverse()) {
       if (operation === 'retire' && linux && service !== 'daemon' && existsSync(plans[service].path)) {
         await effects.run('systemctl', ['--user', 'disable', plans[service].name]);
@@ -1784,138 +1749,83 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
       for (const service of selected.filter(service => service !== 'daemon')) {
         rmSync(plans[service].path, { force: true });
       }
-      // The Node.js floor drop-in goes with its definition (checked above, before any stop).
-      // Other drop-ins stay, and the guard stays with the root.
-      if (linux) {
-        for (const found of dropIns.values()) {
-          if (!found) continue;
-          rmSync(found.path);
-          try { rmdirSync(found.directory); } catch { /* other drop-ins remain */ }
-        }
-        await effects.run('systemctl', ['--user', 'daemon-reload']);
-      }
+      if (linux) await effects.run('systemctl', ['--user', 'daemon-reload']);
     }
     return;
   }
-  // A definition records the Node.js it starts. Before anything changes, every selected
-  // definition and everything systemd would merge into it is qualified, and every retained
-  // definition's recorded Node.js reports its version (argv only); an unpatched one refuses
-  // the whole start. Then an installer-owned guard is loaded into each service process
-  // (NODE_OPTIONS=--require) so every later start or restart refuses an unpatched Node.js.
-  const refusal = (service, detail, outcome) => Object.assign(new Error(interpreterRefusal(service, detail, plans[service].path, outcome)), { securityRefusal: true, detail });
-  const guardPath = join(record.root, NODE_FLOOR_GUARD);
-  const dropInPath = service => join(`${plans[service].path}.d`, NODE_FLOOR_DROP_IN);
-  const dropInText = nodeFloorDropIn(guardPath);
-  const ownDropIn = service => existsSync(dropInPath(service)) && readFileSync(dropInPath(service), 'utf8') === dropInText;
-  // Installer-owned guard files and their directories must not be redirected or writable by others.
-  const unsafe = (service, path, why) => service ? refusal(service, `uses ${path}, which ${why}`)
-    : Object.assign(new Error(`Refusing to change ${path}: it ${why}. Nothing was started or changed.`), { securityRefusal: true });
-  const privatePath = (service, path, directory = false) => {
-    if (!lstatExists(path)) return;
-    const stat = lstatSync(path);
-    if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== process.getuid() || (stat.mode & 0o022) || (!directory && stat.nlink !== 1))
-      throw unsafe(service, path, 'is a link, not owned by this user or writable by others');
+  // Start (see service-runtime.mjs). Every selected service is admitted before anything is
+  // registered, stopped or started: no override can change how systemd starts it, a retained
+  // package definition is in its reviewed recipe form, the package that registers it is a
+  // reviewed recipe, and every path the new definition records can be written unchanged.
+  const platform = effects.platform.platform;
+  const refusal = (service, detail, outcome) => Object.assign(new Error(serviceRefusal(service, plans[service].path, detail, outcome)), { securityRefusal: true });
+  const overrides = service => linux ? systemdOverrideProblem({ env: effects.env, home: effects.home, uid: process.getuid(), unit: plans[service].name, fragment: plans[service].path }) : null;
+  const command = service => service === 'daemon' ? (existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours') : { telegram: 'ours-tg-connector', cowork: 'ours-cowork' }[service];
+  // The Telegram connector writes its Environment= lines unquoted, each value taken from its
+  // environment (what the installer passes, then what it inherits) or else its config file.
+  const telegramEnvironment = () => {
+    const env = { ...effects.env, ...localEnv(record, 'telegram') };
+    const file = existsSync(env.OURS_TG_CONFIG) ? JSON.parse(readFileSync(env.OURS_TG_CONFIG, 'utf8')) : {};
+    const keys = { OURS_TG_CONTROL_PORT: 'controlPort', OURS_TG_STATE_DIR: 'stateDir', OURS_TG_POLL_TIMEOUT: 'pollTimeoutSec', OURS_TG_DAEMON_URL: 'daemonUrl',
+      OURS_TG_DAEMON_STATE_DIR: 'daemonStateDir', OURS_TG_DAEMON_ID: 'daemonInstanceId', OURS_TG_DAEMON_CREDENTIAL_PATH: 'daemonCredentialPath' };
+    return Object.fromEntries(Object.entries(keys).map(([key, field]) => [key, env[key] ?? file[field] ?? '']));
   };
-  const privateAncestors = (service, path) => {
-    const dir = sharedAncestor(path);
-    if (dir) throw unsafe(service, dir, `can be changed by another user (make it private with chmod go-w ${dir}, then run the installer again)`);
+  const admit = service => {
+    const problem = overrides(service) ?? (() => {
+      if (service === 'messenger') return renderedProblem({ execPath: process.execPath, cliPath: bin(record, 'ours-messenger-server') });
+      if (service !== 'daemon' && existsSync(plans[service].path)) {
+        const retained = definitionRecipe(readFileSync(plans[service].path, 'utf8'), platform, plans[service].name);
+        if (retained.error) return retained.error;
+      }
+      const recipe = packageRecipe(service, bin(record, command(service)), join(record.workDir, 'node_modules'));
+      if (recipe.error) return recipe.error;
+      let environment;
+      try { environment = service === 'telegram' && linux ? telegramEnvironment() : {}; } catch { return 'cannot be qualified: its connector config cannot be read'; }
+      return renderedProblem({ execPath: process.execPath, cliPath: recipe.cliPath, environment });
+    })();
+    if (problem) throw refusal(service, problem);
   };
-  const validate = service => {
-    const path = plans[service].path;
-    const present = existsSync(path);
-    const text = present ? readFileSync(path, 'utf8') : '';
-    privateAncestors(service, dirname(path));
-    if (linux) {
-      privatePath(service, dirname(path), true);
-      privatePath(service, `${path}.d`, true);
-      privatePath(service, dropInPath(service));
-      if (lstatExists(dropInPath(service)) && !ownDropIn(service)) throw refusal(service, `has ${dropInPath(service)}, which this installation did not write`);
-      let dropIns;
-      try { dropIns = systemdEffectiveDropIns({ env: effects.env, home: effects.home, uid: process.getuid(), unit: plans[service].name, fragment: path, ownDropIn: dropInPath(service) }); } catch (error) { throw refusal(service, `cannot be qualified: ${error.message}`); }
-      const conflict = definitionConflict(text, dropIns);
-      if (conflict) throw refusal(service, conflict);
-    } else if (present) {
-      const executable = plistExecutableConflict(text);
-      if (executable) throw refusal(service, executable);
-      if (plistGuardState(text, guardPath) === 'conflict') throw refusal(service, 'mentions NODE_OPTIONS, or a character reference that could spell it, outside the installer\'s single active Node.js floor guard entry');
-      if (!plistWithGuard(text, guardPath)) throw refusal(service, 'has no single active EnvironmentVariables dictionary for the Node.js floor guard');
-    }
-    // install-service always rewrites the daemon definition; registered() checks what it recorded.
-    if (present && service !== 'daemon' && !recordedInterpreter(text, effects.platform.platform)) throw refusal(service, 'names no Node.js interpreter that can be verified');
-  };
-  const interpreterProblem = async service => {
-    const interpreter = recordedInterpreter(readFileSync(plans[service].path, 'utf8'), effects.platform.platform);
-    if (!interpreter) return 'names no Node.js interpreter that can be verified';
-    const { patched, version } = await inspectInterpreter(effects, interpreter);
-    return patched ? null : `records ${interpreter} (${version ? `Node.js ${version}` : 'its version could not be verified'}), which is not a patched Node.js`;
-  };
-  // Retained definitions are checked as they are. The installer-owned Messenger definition is
-  // rewritten onto this verified runtime; package definitions are never rewritten here.
-  const preflight = async service => {
-    if (service === 'daemon' || !existsSync(plans[service].path)) return;
-    const problem = await interpreterProblem(service);
-    if (problem && service !== 'messenger') throw refusal(service, problem);
-  };
-  const reload = () => effects.run('systemctl', ['--user', 'daemon-reload']);
-  const placeDropIn = async service => {
-    if (!linux || ownDropIn(service)) return false;
-    mkdirSync(`${plans[service].path}.d`, { recursive: true, mode: 0o700 });
-    atomicWriteConfig(dropInPath(service), dropInText);
-    return true;
-  };
-  // Published install-service commands register and start their service before returning,
-  // on the installer's own verified Node.js. On Linux the guard drop-in is already in place
-  // for that first start; on macOS the guard is added to the plist and reloaded right after.
-  // The definition they wrote is then qualified like a retained one.
+  for (const service of selected) admit(service);
+  // What was registered is checked again before the installer's own start: the definition on
+  // disk, and on Linux the main command the user manager reports after reloading it. This only
+  // contains a failed registration; admission above is what qualifies the package's own first
+  // start. A mismatch stops the service and refuses.
   const registered = async service => {
-    const outcome = 'Its install-service command registered and started it; the installer stopped it again and did not start it.';
-    try {
-      validate(service);
-      const problem = existsSync(plans[service].path) ? await interpreterProblem(service) : null;
-      if (problem) throw refusal(service, problem);
-    } catch (error) {
-      if (!error?.securityRefusal) throw error;
-      await manager(service, 'stop');
-      throw refusal(service, error.detail, outcome);
+    const path = plans[service].path;
+    const recorded = existsSync(path) ? definitionRecipe(readFileSync(path, 'utf8'), platform, plans[service].name) : { error: 'was not written by its registration' };
+    let problem = overrides(service) ?? recorded.error ?? (recorded.interpreter === process.execPath ? null : 'does not start the Node.js the installer verified');
+    if (!problem && linux) {
+      await effects.run('systemctl', ['--user', 'daemon-reload']);
+      const shown = await effects.run('systemctl', ['--user', 'show', plans[service].name, '-p', 'ExecStart', '-p', 'RootDirectory', '-p', 'RootImage']);
+      const main = managerMainCommand(shown.stdout);
+      problem = main.error ?? (main.program === process.execPath ? null : 'is started by systemd with a program other than the Node.js the installer verified');
     }
-  };
-  // launchd keeps a loaded definition's environment until it is reloaded, so the plist on
-  // disk, guarded, is always loaded again before the installer starts the service.
-  const guardPlist = async service => {
-    if (linux || !existsSync(plans[service].path)) return;
-    const current = readFileSync(plans[service].path, 'utf8');
-    if (plistGuardState(current, guardPath) !== 'present') atomicWriteConfig(plans[service].path, plistWithGuard(current, guardPath));
+    if (!problem) return;
     await manager(service, 'stop');
-    await effects.run('launchctl', ['bootstrap', `gui/${process.getuid()}`, plans[service].path]);
+    throw refusal(service, problem, 'Its registration ran; the installer stopped it again and did not start it.');
   };
-  // Start: nothing changes unless every selected definition is acceptable.
-  privateAncestors(null, record.root);
-  privatePath(null, record.root, true);
-  privatePath(null, guardPath);
-  for (const service of selected) validate(service);
-  for (const service of selected) await preflight(service);
-  if (!existsSync(guardPath) || readFileSync(guardPath, 'utf8') !== NODE_FLOOR_GUARD_SOURCE) atomicWriteConfig(guardPath, NODE_FLOOR_GUARD_SOURCE);
   const failures = [];
   for (const service of selected) {
     try {
-      const placed = await placeDropIn(service);
       if (service === 'messenger') {
-        if (!existsSync(messenger.path) || await interpreterProblem(service)) {
+        if (!existsSync(messenger.path) || readFileSync(messenger.path, 'utf8') !== messenger.text) {
           mkdirSync(dirname(messenger.path), { recursive: true });
           atomicWriteConfig(messenger.path, messenger.text);
           if (linux) {
-            await reload();
+            await effects.run('systemctl', ['--user', 'daemon-reload']);
             await effects.run('systemctl', ['--user', 'enable', messenger.name]);
-          } else await manager(service, 'stop');
-          try { validate(service); } catch (error) { throw error?.securityRefusal ? refusal(service, error.detail, 'The installer rewrote its own definition and did not start it.') : error; }
-        } else if (placed) await reload();
-      } else if (service === 'daemon' || !existsSync(plans[service].path)) {
-        await ownerCommand(record, service, 'install-service');
-        await registered(service);
-        if (linux) await reload();
-      } else if (placed) await reload();
-      await guardPlist(service);
-      await manager(service, 'start');
+          }
+        }
+      } else await ownerCommand(record, service, 'install-service');
+      await registered(service);
+      // Always reload what the service manager runs (on Linux, the daemon-reload above): a
+      // registration that changed nothing does not reload, and a job loaded earlier can
+      // still name another executable.
+      if (linux) await manager(service, 'restart');
+      else {
+        await manager(service, 'stop');
+        await manager(service, 'start');
+      }
       let ready = false;
       // Restoring existing identities can take longer than 30 seconds.
       const readinessDeadline = Date.now() + 120_000;

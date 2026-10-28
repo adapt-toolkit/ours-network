@@ -1,276 +1,102 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
-import { isSecureNodeVersion, NODE_DOWNLOAD_URL, NODE_SECURITY_ADVISORY } from './security-versions.mjs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, sep } from 'node:path';
+import { NODE_DOWNLOAD_URL, NODE_SECURITY_ADVISORY, NODE_SECURITY_REQUIREMENT } from './security-versions.mjs';
 
-// Native services start the Node.js their definition records. The installer migrates a
-// retained definition whose interpreter is unpatched, and loads an installer-owned guard
-// into every service process (NODE_OPTIONS=--require), so each later start or restart by
-// systemd or launchd refuses an interpreter that has become unpatched since.
-
-export const NODE_FLOOR_GUARD = 'node-floor-guard.cjs';
-export const NODE_FLOOR_DROP_IN = 'ours-node-floor.conf';
-const DROP_IN_MARKER = '# Managed by @ours.network/install: refuse an unpatched Node.js before every start.';
-
-// Plain JavaScript without backslashes, dollar or percent signs; floors match security-versions.mjs.
-export const NODE_FLOOR_GUARD_SOURCE = `'use strict';
-// Managed by @ours.network/install. Loaded into native services through NODE_OPTIONS.
-const v = process.versions.node.split('.').map(Number), f = { 22: [23, 4], 24: [22, 1], 26: [12, 1] }[v[0]];
-if (v.length !== 3 || v.some(n => !Number.isInteger(n)) || !f || v[1] < f[0] || (v[1] === f[0] && v[2] < f[1])) {
-  process.stderr.write('Node.js ' + process.versions.node + ' is not permitted. Ours requires a patched supported Node.js release: 22.23.4+, 24.22.1+, 26.12.1+ within those release lines. '
-    + 'Earlier patch levels are affected by CVE-2026-111497: https://nodejs.org/en/blog/vulnerability/october-2026-security-releases '
-    + 'Update Node.js (https://nodejs.org/en/download), then run the Ours installer again.' + String.fromCharCode(10));
-  process.exit(1);
-}
-`;
-
-/** The NODE_OPTIONS value that loads the guard; refuses paths it cannot quote safely. */
-export function guardNodeOptions(guardPath) {
-  if (!isAbsolute(guardPath) || /[\0\n\r"\\%$<>&']/.test(guardPath)) throw new Error('Node.js floor guard path is not safe for NODE_OPTIONS');
-  return `--require "${guardPath}"`;
-}
-
-/** systemd drop-in that loads the guard into the unit's actual process. */
-export function nodeFloorDropIn(guardPath) {
-  const value = `NODE_OPTIONS=${guardNodeOptions(guardPath)}`.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-  return `${DROP_IN_MARKER}\n[Service]\nEnvironment="${value}"\n`;
-}
-
-// The only plist forms the installer reads: the header, doctype and tags the published
-// definitions use, written canonically (no whitespace or attributes inside tags beyond
-// these exact forms), named entities only, and comments that are closed. Anything else
-// refuses the definition before any change, so every key is found where launchd finds it.
-const PLIST_TAGS = new Set(['<?xml version="1.0" encoding="UTF-8"?>', '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-  '<plist version="1.0">', '</plist>', '<dict>', '</dict>', '<key>', '</key>', '<string>', '</string>', '<array>', '</array>', '<integer>', '</integer>', '<true/>', '<false/>']);
-export function plistCanonical(text) {
-  if (typeof text !== 'string') return false;
-  const clean = text.replace(/<!--[\s\S]*?-->/g, '');
-  if (clean.includes('<!--')) return false;
-  const tags = clean.match(/<[^<>]*>/g) ?? [];
-  if (!tags.every(tag => PLIST_TAGS.has(tag))) return false;
-  const textOutsideTags = clean.replace(/<[^<>]*>/g, '');
-  return !/[<>]/.test(textOutsideTags) && !/&(?!(?:amp|lt|gt|quot|apos);)/.test(textOutsideTags);
-}
-
-const decodeXml = value => value.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[entity]);
-const count = (text, part) => text.split(part).length - 1;
-// Keys launchd reads from the root job dictionary; anywhere else they are not supported.
-const JOB_KEYS = new Set(['Program', 'ProgramArguments', 'EnvironmentVariables', 'RootDirectory', 'NODE_OPTIONS']);
+// Native services run the Node.js their definition records. At every installer-controlled
+// start, each selected service is first admitted without changing anything; then it is
+// registered again through its own install-service command on this installer's verified
+// Node.js (process.execPath), the definition the service manager has loaded is refreshed,
+// and only then is the service started. Not covered: a restart by systemd or launchd itself
+// after the Node.js at a recorded path was replaced by an unpatched release. The next
+// installer start registers the service on a verified Node.js again.
 
 /**
- * The root launchd job of a canonical plist, parsed structurally: the single `<plist>`
- * value must be a dictionary, every dictionary has unique keys and one value per key,
- * values are strings, integers, booleans, arrays or dictionaries, and only whitespace and
- * closed comments separate them. ProgramArguments (a non-empty string array) and
- * EnvironmentVariables (a string dictionary) are taken from the root job only, and none of
- * the job keys may appear deeper. Returns { job } or { error }; nothing is executed.
+ * Package versions whose generated service definitions were reviewed. Each writes
+ * [process.execPath, its own CLI, serve, ...] and reloads its job; any other version is refused.
  */
-export function parsePlistJob(text) {
-  if (!plistCanonical(text)) return { error: 'non-canonical syntax' };
-  const tokens = [...text.matchAll(/<!--[\s\S]*?-->|<[^<>]*>|[^<]+/g)].map(m => ({ value: m[0], end: m.index + m[0].length }));
-  if (tokens.map(t => t.value).join('') !== text) return { error: 'unrecognized content' };
-  let i = 0;
-  const fail = error => { throw Object.assign(new Error(error), { plist: true }); };
-  const skip = () => { while (i < tokens.length && (tokens[i].value.startsWith('<!--') || (!tokens[i].value.startsWith('<') && !tokens[i].value.trim()))) i++; };
-  const expect = tag => { if (tokens[i]?.value !== tag) fail(`expected ${tag}`); i++; };
-  const content = () => (tokens[i] && !tokens[i].value.startsWith('<') ? decodeXml(tokens[i++].value) : '');
-  const value = () => {
-    skip();
-    const tag = tokens[i]?.value;
-    if (tag === '<string>') { i++; const v = content(); expect('</string>'); return { type: 'string', value: v }; }
-    if (tag === '<integer>') { i++; const v = content(); expect('</integer>'); if (!/^-?\d+$/.test(v)) fail('invalid integer'); return { type: 'integer', value: v }; }
-    if (tag === '<true/>' || tag === '<false/>') { i++; return { type: 'boolean', value: tag === '<true/>' }; }
-    if (tag === '<array>') {
-      i++; const items = [];
-      for (;;) { skip(); if (tokens[i]?.value === '</array>') { i++; return { type: 'array', items }; } items.push(value()); }
-    }
-    if (tag === '<dict>') {
-      const openEnd = tokens[i].end; i++; const entries = new Map();
-      for (;;) {
-        skip();
-        if (tokens[i]?.value === '</dict>') { i++; return { type: 'dict', entries, openEnd }; }
-        // Keys are taken literally: an entity in a key is not a supported form.
-        expect('<key>'); if (tokens[i]?.value.includes('&')) fail('an entity in a key'); const key = content(); expect('</key>');
-        if (!key || entries.has(key)) fail(key ? `repeated key ${key}` : 'empty key');
-        entries.set(key, value());
-      }
-    }
-    fail('unsupported value');
-  };
-  let root;
-  try {
-    skip();
-    if (tokens[i]?.value.startsWith('<?xml')) { i++; skip(); }
-    if (tokens[i]?.value.startsWith('<!DOCTYPE')) { i++; skip(); }
-    expect('<plist version="1.0">');
-    root = value();
-    skip(); expect('</plist>'); skip();
-    if (i !== tokens.length) fail('content after the plist');
-    if (root.type !== 'dict') fail('the root is not a dictionary');
-  } catch (error) {
-    if (error?.plist) return { error: error.message };
-    throw error;
+export const SERVICE_RECIPES = Object.freeze({
+  daemon: { name: '@ours.network/daemon', versions: ['5.0.0', '4.1.1-nightly.4'] },
+  telegram: { name: '@ours.network/tg-connector', versions: ['2.0.0', '1.0.1-nightly.16'] },
+  cowork: { name: '@ours.network/cowork', versions: ['2.0.0', '1.3.4-nightly.20261019.b0d73c0'] },
+});
+
+// Paths and values every recipe records verbatim: no whitespace, quotes, backslashes, `%`
+// specifiers or `$` substitutions, which systemd would split or expand in a command line.
+const SAFE_PATH = /^\/[A-Za-z0-9._/+@:,-]*$/;
+const SAFE_VALUE = /^[A-Za-z0-9._/+@:,-]*$/;
+const SUPPORTED = 'letters, digits and . _ / + @ : , -';
+
+/**
+ * The CLI an installed package's bin link runs, when the package is one of the reviewed
+ * recipes: { cliPath } or { error }. Only package.json is read; nothing is executed.
+ */
+export function packageRecipe(service, binPath, modulesRoot) {
+  const recipe = SERVICE_RECIPES[service];
+  let cliPath;
+  try { cliPath = realpathSync(binPath); } catch { return { error: `has no installed ${recipe.name} command` }; }
+  if (!cliPath.startsWith(realpathSync(modulesRoot) + sep) || !lstatSync(cliPath).isFile()) return { error: `runs ${recipe.name} from outside this installation` };
+  for (let dir = dirname(cliPath); dir.startsWith(realpathSync(modulesRoot) + sep); dir = dirname(dir)) {
+    const manifest = join(dir, 'package.json');
+    if (!existsSync(manifest)) continue;
+    let pkg;
+    try { pkg = JSON.parse(readFileSync(manifest, 'utf8')); } catch { return { error: `has an unreadable ${recipe.name} package.json` }; }
+    if (pkg.name !== recipe.name) continue;
+    if (!recipe.versions.includes(pkg.version)) return { error: `would be registered by ${recipe.name} ${typeof pkg.version === 'string' ? pkg.version.slice(0, 40) : 'of an unknown version'}, whose service definition this installer has not reviewed (update the component through the installer)` };
+    return { cliPath };
   }
-  // Below the root job, the job keys are not supported anywhere (except NODE_OPTIONS in its environment).
-  const nested = (node, environment = false) => {
-    if (node.type === 'array') return node.items.some(item => nested(item));
-    if (node.type !== 'dict') return false;
-    return [...node.entries].some(([key, child]) => (!environment && JOB_KEYS.has(key)) || nested(child));
-  };
-  for (const [key, child] of root.entries) if (nested(child, key === 'EnvironmentVariables')) return { error: `a launchd job key is nested under ${key}` };
-  if (root.entries.has('NODE_OPTIONS')) return { error: 'NODE_OPTIONS is a root key' };
-  const args = root.entries.get('ProgramArguments');
-  if (!args || args.type !== 'array' || !args.items.length || args.items.some(item => item.type !== 'string')) return { error: 'ProgramArguments is not a non-empty list of strings' };
-  const env = root.entries.get('EnvironmentVariables');
-  if (env && (env.type !== 'dict' || [...env.entries.values()].some(item => item.type !== 'string'))) return { error: 'EnvironmentVariables is not a dictionary of strings' };
-  return { job: {
-    keys: new Set(root.entries.keys()),
-    programArguments: args.items.map(item => item.value),
-    environment: env ? [...env.entries].map(([key, item]) => [key, item.value]) : null,
-    environmentOpenEnd: env?.openEnd ?? null,
-  } };
+  return { error: `runs a command that is not part of ${recipe.name}` };
 }
 
-/**
- * The root job's EnvironmentVariables as key/value pairs, or null when the plist is not
- * accepted by parsePlistJob, has no root EnvironmentVariables, or (as before) spells
- * `<key>EnvironmentVariables</key>` anywhere else, including inside a comment.
- */
-export function plistEnvironment(text) {
-  if (typeof text !== 'string' || text.includes('&#') || count(text, '<key>EnvironmentVariables</key>') !== 1) return null;
-  return parsePlistJob(text).job?.environment ?? null;
-}
-
-/**
- * Whether a launchd plist carries the installer's guard: 'present' only when the root job's
- * EnvironmentVariables has exactly one NODE_OPTIONS holding exactly the guard and
- * NODE_OPTIONS appears nowhere else, including comments; 'absent' when NODE_OPTIONS appears
- * nowhere; otherwise 'conflict', including every plist that plistEnvironment does not accept.
- */
-export function plistGuardState(text, guardPath) {
-  const environment = plistEnvironment(text);
-  if (environment === null) return 'conflict';
-  const mentions = count(text, 'NODE_OPTIONS');
-  if (mentions === 0) return 'absent';
-  const options = environment.filter(([key]) => key === 'NODE_OPTIONS');
-  return mentions === 1 && options.length === 1 && options[0][1] === guardNodeOptions(guardPath) ? 'present' : 'conflict';
-}
-
-/** Adds the guard to the root job's EnvironmentVariables dictionary, or returns null. */
-export function plistWithGuard(text, guardPath) {
-  const state = plistGuardState(text, guardPath);
-  if (state === 'present') return text;
-  if (state !== 'absent') return null;
-  const at = parsePlistJob(text).job.environmentOpenEnd;
-  const entry = `<key>NODE_OPTIONS</key><string>${guardNodeOptions(guardPath).replaceAll('&', '&amp;').replaceAll('"', '&quot;')}</string>`;
-  const guarded = text.slice(0, at) + entry + text.slice(at);
-  // The result must satisfy the same root-job contract, with the guard as its only addition.
-  const before = parsePlistJob(text).job, after = parsePlistJob(guarded).job;
-  const same = after && after.programArguments.join('\0') === before.programArguments.join('\0')
-    && JSON.stringify(after.environment.filter(([key]) => key !== 'NODE_OPTIONS')) === JSON.stringify(before.environment);
-  return same && plistGuardState(guarded, guardPath) === 'present' ? guarded : null;
-}
-
-/**
- * Why a launchd plist runs something other than its root job's first ProgramArguments entry,
- * or null. The plist must be canonical and structurally a single root job; Program takes
- * precedence over ProgramArguments[0] and RootDirectory changes what every path names, so
- * neither is interpreted and either refuses.
- */
-export function plistExecutableConflict(text) {
-  if (typeof text !== 'string' || text.includes('&#')) return 'uses a numeric character reference';
-  if (!plistCanonical(text)) return 'uses plist syntax the installer does not read (only the canonical tags of published definitions are accepted)';
-  const parsed = parsePlistJob(text);
-  if (parsed.error) return `has a plist structure the installer does not read (${parsed.error})`;
-  for (const key of ['Program', 'RootDirectory']) if (parsed.job.keys.has(key)) return `sets ${key}, which changes the program launchd runs`;
+/** Why a value the new definition would record cannot be recorded unchanged, or null. */
+export function renderedProblem({ execPath, cliPath, environment = {} }) {
+  if (!SAFE_PATH.test(execPath)) return `would record a Node.js path that a service definition cannot hold unchanged (supported: ${SUPPORTED})`;
+  if (!SAFE_PATH.test(cliPath)) return `would record a command path that a service definition cannot hold unchanged (supported: ${SUPPORTED})`;
+  for (const [key, value] of Object.entries(environment)) {
+    if (!SAFE_VALUE.test(String(value))) return `would record a ${key} value that its unquoted definition cannot hold unchanged (supported: ${SUPPORTED})`;
+  }
   return null;
 }
 
-/** The interpreter (first program argument) of a systemd unit or launchd plist, or null. Text only; nothing is executed. */
-export function recordedInterpreter(text, platform) {
-  if (typeof text !== 'string') return null;
-  if (platform === 'darwin') {
-    if (plistExecutableConflict(text) || count(text, '<key>ProgramArguments</key>') !== 1) return null;
-    const value = parsePlistJob(text).job.programArguments[0];
-    return isAbsolute(value) && !/[\0\n\r]/.test(value) ? value : null;
-  }
-  if (platform !== 'linux') return null;
-  const starts = execStarts(text);
-  if (starts.length !== 1) return null;
-  // Exec prefixes (-, @, :, +, !) change how the command runs; they are not interpreted.
-  const command = starts[0].trimStart();
-  let value;
-  if (command.startsWith('"')) {
-    let i = 1, out = '';
-    for (; i < command.length && command[i] !== '"'; i++) {
-      if (command[i] === '\\') { i++; if (i >= command.length) return null; }
-      out += command[i];
-    }
-    if (command[i] !== '"') return null;
-    value = out;
-  } else value = command.split(/\s/, 1)[0];
-  if (!value || /[%$\\\0\n\r]/.test(value) || !isAbsolute(value)) return null;
-  return value;
-}
+// The keys the reviewed recipes and the installer's Messenger write; any other key refuses.
+const UNIT_KEYS = { '[Unit]': ['Description', 'After', 'Wants', 'StartLimitIntervalSec'], '[Service]': ['Type', 'ExecStart', 'Environment', 'Restart', 'RestartSec'], '[Install]': ['WantedBy'] };
+const PLIST_KEYS = new Set(['Label', 'ProgramArguments', 'EnvironmentVariables', 'RunAtLoad', 'KeepAlive', 'StandardOutPath', 'StandardErrorPath']);
 
 /**
- * systemd's logical lines (systemd.syntax(7)): a trailing backslash joins the next line with
- * a space, and comment lines inside a continuation are skipped. Returns [section, line] pairs.
+ * A definition in the bounded recipe form: { interpreter } (the program it starts) or
+ * { error }. systemd units have only the recipe sections and keys, one ExecStart without a
+ * prefix, continuation, specifier or substitution; plists are canonical with only the recipe
+ * root keys and the expected Label. Text only; nothing is executed.
  */
-function logicalLines(text) {
-  const result = [];
-  let section = '', pending = null;
+export function definitionRecipe(text, platform, name) {
+  if (platform === 'darwin') {
+    const { job, error } = parsePlistJob(text);
+    if (error) return { error: `is not a supported launchd definition (${error})` };
+    const other = [...job.keys].find(key => !PLIST_KEYS.has(key));
+    if (other) return { error: `uses the launchd key ${other.slice(0, 40)}, which this installer does not support` };
+    if (job.label !== name) return { error: 'has a different launchd Label' };
+    return isAbsolute(job.programArguments[0]) ? { interpreter: job.programArguments[0] } : { error: 'does not start an absolute program path' };
+  }
+  let section = null;
+  const starts = [];
   for (const source of text.replace(/\r\n?/g, '\n').split('\n')) {
     const line = source.trim();
-    if (pending !== null && /^[#;]/.test(line)) continue;
-    if (pending === null && (!line || /^[#;]/.test(line))) continue;
-    const joined = pending === null ? line : `${pending} ${line}`;
-    if (joined.endsWith('\\')) { pending = joined.slice(0, -1).trimEnd(); continue; }
-    pending = null;
-    if (/^\[.*\]$/.test(joined)) { section = joined; continue; }
-    result.push([section, joined]);
-  }
-  if (pending !== null) result.push([section, pending]);
-  return result;
-}
-
-function execStarts(text) {
-  return logicalLines(text).filter(([section, line]) => section === '[Service]' && /^ExecStart\s*=/.test(line)).map(([, line]) => line.replace(/^ExecStart\s*=/, ''));
-}
-
-/**
- * Why the unit or another user drop-in makes the service's effective environment or
- * command ambiguous, or null. EnvironmentFile= overrides Environment= and
- * UnsetEnvironment= is applied last, so either could drop NODE_OPTIONS; an empty
- * Environment= resets earlier assignments. Diagnostics name only the directive and file.
- */
-export function definitionConflict(text, otherDropIns = []) {
-  // Environment= values are C-unquoted and %-expanded by systemd; any escape or specifier could
-  // spell NODE_OPTIONS or reset it, so those forms are refused rather than interpreted.
-  const directives = source => {
-    const found = [];
-    for (const [section, line] of logicalLines(source)) {
-      if (section !== '[Service]') continue;
-      // RootDirectory= and RootImage= change which executable every path names.
-      if (/^(EnvironmentFile|UnsetEnvironment|PassEnvironment|RootDirectory|RootImage)\s*=/.test(line)) found.push(line.split('=')[0].trim());
-      else if (/^Environment\s*=/.test(line)) {
-        const value = line.replace(/^Environment\s*=/, '');
-        if (!value.replace(/["'\s]/g, '')) found.push('an empty Environment= reset');
-        else if (value.includes('\\')) found.push('an escaped Environment= value');
-        else if (value.replaceAll('%%', '').includes('%')) found.push('a specifier in an Environment= value');
-      }
+    if (!line || /^[#;]/.test(line)) continue;
+    if (line.endsWith('\\')) return { error: 'continues a line with a backslash' };
+    if (/^\[.*\]$/.test(line)) {
+      if (!UNIT_KEYS[line]) return { error: `has the section ${line.slice(0, 40)}, which this installer does not support` };
+      section = line;
+      continue;
     }
-    return found;
-  };
-  const own = directives(text);
-  if (own.length) return `uses ${own[0]}, which can change the service environment`;
-  if (/NODE_OPTIONS/.test(text)) return 'already sets NODE_OPTIONS';
-  for (const { name, text: dropIn } of otherDropIns) {
-    const found = directives(dropIn);
-    if (found.length) return `has drop-in ${name}, which uses ${found[0]}`;
-    if (/NODE_OPTIONS/.test(dropIn)) return `has drop-in ${name}, which sets NODE_OPTIONS`;
-    if (execStarts(dropIn).length) return `has drop-in ${name}, which overrides ExecStart`;
+    const key = /^([A-Za-z]+)\s*=/.exec(line)?.[1];
+    if (!section || !UNIT_KEYS[section].includes(key)) return { error: `uses ${key ? `${key}=` : 'a line'} ${section ? `in ${section}` : 'outside a section'}, which this installer does not support` };
+    if (key === 'Type' && line.replace(/^Type\s*=\s*/, '') !== 'simple') return { error: 'is not Type=simple' };
+    if (key === 'ExecStart') starts.push(line.replace(/^ExecStart\s*=\s*/, ''));
   }
-  return null;
+  if (starts.length !== 1) return { error: 'does not have exactly one ExecStart' };
+  const command = starts[0];
+  if (/[%$\\]/.test(command)) return { error: 'has an ExecStart with a specifier, substitution or escape' };
+  const program = command.startsWith('"') ? /^"([^"]*)"(?:\s|$)/.exec(command)?.[1] : command.split(/\s/, 1)[0];
+  return program && isAbsolute(program) ? { interpreter: program } : { error: 'does not start an absolute program path (or uses an ExecStart prefix)' };
 }
 
 /**
@@ -302,58 +128,163 @@ export function dropInDirectoryNames(unit) {
   return names;
 }
 
-/**
- * Every fragment and drop-in systemd could load for a user unit, read without following
- * them into anything but their contents. Throws a reason when the effective definition is
- * ambiguous: a custom search path, a same-named fragment ahead of the installer's one, or a
- * drop-in that cannot be read. Returns the drop-ins other than the installer's own.
- */
-export function systemdEffectiveDropIns({ env, home, uid, unit, fragment, ownDropIn }) {
-  if (env.SYSTEMD_UNIT_PATH) throw new Error('SYSTEMD_UNIT_PATH replaces the systemd user unit search path');
-  const path = systemdUserSearchPath(env, home, uid);
-  const fragmentDir = fragment.slice(0, fragment.length - unit.length - 1);
-  const position = path.indexOf(fragmentDir);
-  if (position < 0) throw new Error(`${fragmentDir} is not in the systemd user unit search path`);
-  for (const dir of path.slice(0, position)) {
-    const shadow = join(dir, unit);
-    if (exists(shadow)) throw new Error(`${shadow} takes precedence over ${fragment}`);
-  }
-  const dropIns = [];
-  for (const dir of path) for (const name of dropInDirectoryNames(unit)) {
-    const directory = join(dir, name);
-    if (!existsSync(directory)) continue;
-    let entries;
-    try { entries = readdirSync(directory); } catch { throw new Error(`drop-in directory ${directory} cannot be read`); }
-    for (const entry of entries.filter(entry => entry.endsWith('.conf')).sort()) {
-      const file = join(directory, entry);
-      if (file === ownDropIn) continue;
-      try { dropIns.push({ name: file, text: readFileSync(file, 'utf8') }); } catch { throw new Error(`drop-in ${file} cannot be read`); }
-    }
-  }
-  return dropIns;
-}
-
 const exists = path => { try { lstatSync(path); return true; } catch { return false; } };
 
 /**
- * Runs only `<interpreter> -p process.versions.node` with argv and without NODE_OPTIONS.
- * Anything unparseable is unpatched; `version` is reported only when it parses safely.
+ * systemd's logical lines (systemd.syntax(7)): a trailing backslash joins the next line with
+ * a space, and comment lines inside a continuation are skipped. Returns [section, line] pairs.
  */
-export async function inspectInterpreter(effects, interpreter) {
-  if (interpreter === process.execPath) return { patched: true, version: process.versions.node };
-  try {
-    const result = await effects.run(interpreter, ['-p', 'process.versions.node'], { timeout: 10_000, env: { NODE_OPTIONS: '' } });
-    const output = String(result.stdout ?? '').trim();
-    return { patched: isSecureNodeVersion(output), version: /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[0-9A-Za-z.]{1,40})?$/.test(output) ? output : null };
-  } catch { return { patched: false, version: null }; }
+function logicalLines(text) {
+  const result = [];
+  let section = '', pending = null;
+  for (const source of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const line = source.trim();
+    if (pending !== null && /^[#;]/.test(line)) continue;
+    if (pending === null && (!line || /^[#;]/.test(line))) continue;
+    const joined = pending === null ? line : `${pending} ${line}`;
+    if (joined.endsWith('\\')) { pending = joined.slice(0, -1).trimEnd(); continue; }
+    pending = null;
+    if (/^\[.*\]$/.test(joined)) { section = joined; continue; }
+    result.push([section, joined]);
+  }
+  if (pending !== null) result.push([section, pending]);
+  return result;
 }
 
-export async function interpreterIsPatched(effects, interpreter) {
-  return (await inspectInterpreter(effects, interpreter)).patched;
+// The [Service] settings that choose the main command or the root its paths are resolved in.
+const RUNTIME_KEYS = ['ExecStart', 'RootDirectory', 'RootImage'];
+
+/**
+ * Why a drop-in or another unit systemd would load could change which program the unit's
+ * main command runs, or null: a replaced search path, a linked or template unit, a same-named
+ * unit with higher precedence, or a drop-in (its own, dash-prefix or type-wide, anywhere on
+ * the search path) that assigns ExecStart (even empty) or a RootDirectory or RootImage value. Other drop-ins,
+ * such as distribution policy, are accepted and never changed. Nothing is executed.
+ */
+export function systemdOverrideProblem({ env, home, uid, unit, fragment }) {
+  if (env.SYSTEMD_UNIT_PATH) return 'cannot be qualified: SYSTEMD_UNIT_PATH replaces the systemd user unit search path';
+  if (unit.includes('@')) return 'is a template unit, which this installer does not support';
+  const path = systemdUserSearchPath(env, home, uid);
+  const position = path.indexOf(dirname(fragment));
+  if (position < 0) return `cannot be qualified: ${dirname(fragment)} is not in the systemd user unit search path`;
+  if (exists(fragment) && lstatSync(fragment).isSymbolicLink()) return 'is a link, which this installer does not support';
+  for (const dir of path.slice(0, position)) if (exists(join(dir, unit))) return `cannot be qualified: ${join(dir, unit)} takes precedence over it`;
+  for (const dir of path) for (const name of dropInDirectoryNames(unit)) {
+    const directory = join(dir, name);
+    if (!exists(directory)) continue;
+    let entries;
+    try { entries = readdirSync(directory).filter(entry => entry.endsWith('.conf')); } catch { return `cannot be qualified: the drop-in directory ${directory} cannot be read`; }
+    for (const entry of entries) {
+      let text;
+      try { text = readFileSync(join(directory, entry), 'utf8'); } catch { return `cannot be qualified: the drop-in ${join(directory, entry)} cannot be read`; }
+      for (const [section, line] of logicalLines(text)) {
+        const [, key, value] = /^([A-Za-z]+)\s*=\s*(.*)$/.exec(line) ?? [];
+        // Any ExecStart assignment replaces or clears the main command; an empty root reset does not change it.
+        if (section === '[Service]' && RUNTIME_KEYS.includes(key) && (key === 'ExecStart' || value)) return `has the drop-in ${join(directory, entry)}, which sets ${key}= and so could change which program it runs`;
+      }
+    }
+  }
+  return null;
 }
 
-export function interpreterRefusal(service, detail, path, outcome = 'Nothing was started or changed.') {
+/**
+ * The main command the systemd user manager reports for a unit, from the complete output of
+ * `systemctl --user show <unit> -p ExecStart -p RootDirectory -p RootImage`: { program } when
+ * there is exactly one ExecStart record whose path is argv[0] and both root settings are
+ * empty, otherwise { error }. Any other shape is unverifiable.
+ */
+export function managerMainCommand(output) {
+  const properties = new Map();
+  for (const line of String(output).split('\n').filter(Boolean)) {
+    const [, key, value] = /^(ExecStart|RootDirectory|RootImage)=(.*)$/.exec(line) ?? [];
+    if (!key || properties.has(key)) return { error: 'could not be verified from the service manager' };
+    properties.set(key, value);
+  }
+  if (properties.size !== 3) return { error: 'could not be verified from the service manager' };
+  if (properties.get('RootDirectory') || properties.get('RootImage')) return { error: 'runs in another root directory or image' };
+  const record = /^\{ path=([^ ;]+) ; argv\[\]=([^ ;]+)(?: [^;]*)? ; [^{}]*\}$/.exec(properties.get('ExecStart'));
+  if (!record || record[1] !== record[2]) return { error: 'could not be verified from the service manager' };
+  return { program: record[1] };
+}
+
+export function serviceRefusal(service, path, detail, outcome = 'Nothing was registered, started or changed.') {
   return `Refusing to start ${service}: its service definition ${path} ${detail}. ${outcome} `
-    + `Native services must run a patched Node.js (22.23.4+, 24.22.1+ or 26.12.1+; CVE-2026-111497: ${NODE_SECURITY_ADVISORY}). `
-    + `Update that Node.js (${NODE_DOWNLOAD_URL}) or remove the definition so the installer registers it again, then run the Ours installer again.`;
+    + `Native services are registered only in their reviewed definition form, on the installer's own patched Node.js (${NODE_SECURITY_REQUIREMENT}; CVE-2026-111497: ${NODE_SECURITY_ADVISORY}; ${NODE_DOWNLOAD_URL}).`;
+}
+
+// The only plist forms the installer reads: the header, doctype and tags the published
+// definitions use, written canonically (no whitespace or attributes inside tags beyond
+// these exact forms), named entities only, and comments that are closed. Anything else
+// refuses the definition before any change, so every key is found where launchd finds it.
+const PLIST_TAGS = new Set(['<?xml version="1.0" encoding="UTF-8"?>', '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+  '<plist version="1.0">', '</plist>', '<dict>', '</dict>', '<key>', '</key>', '<string>', '</string>', '<array>', '</array>', '<integer>', '</integer>', '<true/>', '<false/>']);
+export function plistCanonical(text) {
+  if (typeof text !== 'string') return false;
+  const clean = text.replace(/<!--[\s\S]*?-->/g, '');
+  if (clean.includes('<!--')) return false;
+  const tags = clean.match(/<[^<>]*>/g) ?? [];
+  if (!tags.every(tag => PLIST_TAGS.has(tag))) return false;
+  const textOutsideTags = clean.replace(/<[^<>]*>/g, '');
+  return !/[<>]/.test(textOutsideTags) && !/&(?!(?:amp|lt|gt|quot|apos);)/.test(textOutsideTags);
+}
+
+const decodeXml = value => value.replace(/&(amp|lt|gt|quot|apos);/g, (_, entity) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[entity]);
+
+/**
+ * The root launchd job of a canonical plist, parsed structurally: the single `<plist>`
+ * value must be a dictionary, every dictionary has unique keys and one value per key,
+ * values are strings, integers, booleans, arrays or dictionaries, and only whitespace and
+ * closed comments separate them. ProgramArguments must be a non-empty string array and
+ * Label a string. Returns { job } or { error }; nothing is executed.
+ */
+export function parsePlistJob(text) {
+  if (!plistCanonical(text)) return { error: 'non-canonical syntax' };
+  const tokens = [...text.matchAll(/<!--[\s\S]*?-->|<[^<>]*>|[^<]+/g)].map(m => m[0]);
+  if (tokens.join('') !== text) return { error: 'unrecognized content' };
+  let i = 0;
+  const fail = error => { throw Object.assign(new Error(error), { plist: true }); };
+  const skip = () => { while (i < tokens.length && (tokens[i].startsWith('<!--') || (!tokens[i].startsWith('<') && !tokens[i].trim()))) i++; };
+  const expect = tag => { if (tokens[i] !== tag) fail(`expected ${tag}`); i++; };
+  const content = () => (tokens[i] && !tokens[i].startsWith('<') ? decodeXml(tokens[i++]) : '');
+  const value = () => {
+    skip();
+    const tag = tokens[i];
+    if (tag === '<string>') { i++; const v = content(); expect('</string>'); return { type: 'string', value: v }; }
+    if (tag === '<integer>') { i++; const v = content(); expect('</integer>'); if (!/^-?\d+$/.test(v)) fail('invalid integer'); return { type: 'integer', value: v }; }
+    if (tag === '<true/>' || tag === '<false/>') { i++; return { type: 'boolean', value: tag === '<true/>' }; }
+    if (tag === '<array>') {
+      i++; const items = [];
+      for (;;) { skip(); if (tokens[i] === '</array>') { i++; return { type: 'array', items }; } items.push(value()); }
+    }
+    if (tag === '<dict>') {
+      i++; const entries = new Map();
+      for (;;) {
+        skip();
+        if (tokens[i] === '</dict>') { i++; return { type: 'dict', entries }; }
+        // Keys are taken literally: an entity in a key is not a supported form.
+        expect('<key>'); if (tokens[i]?.includes('&')) fail('an entity in a key'); const key = content(); expect('</key>');
+        if (!key || entries.has(key)) fail(key ? `repeated key ${key.slice(0, 40)}` : 'empty key');
+        entries.set(key, value());
+      }
+    }
+    fail('unsupported value');
+  };
+  let root;
+  try {
+    skip();
+    if (tokens[i]?.startsWith('<?xml')) { i++; skip(); }
+    if (tokens[i]?.startsWith('<!DOCTYPE')) { i++; skip(); }
+    expect('<plist version="1.0">');
+    root = value();
+    skip(); expect('</plist>'); skip();
+    if (i !== tokens.length) fail('content after the plist');
+    if (root.type !== 'dict') fail('the root is not a dictionary');
+  } catch (error) {
+    if (error?.plist) return { error: error.message };
+    throw error;
+  }
+  const args = root.entries.get('ProgramArguments');
+  if (!args || args.type !== 'array' || !args.items.length || args.items.some(item => item.type !== 'string')) return { error: 'ProgramArguments is not a non-empty list of strings' };
+  const label = root.entries.get('Label');
+  return { job: { keys: new Set(root.entries.keys()), label: label?.type === 'string' ? label.value : null, programArguments: args.items.map(item => item.value) } };
 }
