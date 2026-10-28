@@ -533,7 +533,7 @@ test('native start waits for a slow daemon before starting consumers and still b
       effects.verifyHostProfile = async () => {
         if (elapsed < readyAfter) throw new Error('Daemon API is still starting');
       };
-      const record = { root, workDir: join(root, 'runtime'), mode: 'packages', project: 'ours-fixture', services: ['daemon', 'cowork'] };
+      const record = { root, workDir: join(root, 'runtime'), configPath: join(root, 'config.json'), mode: 'packages', project: 'ours-fixture', services: ['daemon', 'cowork'] };
       let settled = false;
       let failure;
       const started = effects.serverLifecycle(record, 'start').catch(error => { failure = error; }).finally(() => { settled = true; });
