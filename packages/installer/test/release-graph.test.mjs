@@ -159,7 +159,9 @@ test('host CLI selection is a separate strict graph and does not relax service g
 
 test('checkout policy matches the published release binding and resolves server/client selections', async () => {
   const shipped = JSON.parse(readFileSync(new URL('../assets/sources.json', import.meta.url), 'utf8'));
-  const release = JSON.parse(readFileSync(new URL('../../../releases/nightly.json', import.meta.url), 'utf8'));
+  const installer = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const channel = installer.version.includes('-nightly.') ? 'nightly' : 'stable';
+  const release = JSON.parse(readFileSync(new URL(`../../../releases/${channel}.json`, import.meta.url), 'utf8'));
   assert.deepEqual(shipped, { release, packages: Object.fromEntries(Object.entries(release.packages).map(([name, p]) => [name, { type: 'npm', version: p.version }])) });
   const server = await resolveSourcePolicy(shipped, 'server');
   assert.ok(server.packages['@ours.network/daemon']);
