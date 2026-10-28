@@ -688,7 +688,7 @@ export function networkEffects(effects) {
     const daemonBinary = existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours';
     const name = { daemon: daemonBinary, telegram: 'ours-tg-connector', cowork: 'ours-cowork' }[service];
     const args = service === 'daemon' ? [...(daemonBinary === 'ours' ? ['daemon'] : []), op, ...(['install-service', 'uninstall-service'].includes(op) ? ['--yes'] : []), '--config', record.configPath, '--state-dir', installationPaths(record).daemon, '--json'] : [op];
-    return effects.run(process.execPath, [bin(record, name), ...args], { ...options, env: localEnv(record, service) });
+    return effects.run(bin(record, name), args, { ...options, env: localEnv(record, service) });
   };
   const statelessGateway = (record, detail) => {
     const labels = detail?.Config?.Labels ?? {};

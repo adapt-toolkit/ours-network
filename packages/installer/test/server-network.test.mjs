@@ -474,8 +474,7 @@ test('real native start reactivates a retained daemon definition through its own
       effects.verifyHostProfile = async () => {};
       await effects.serverLifecycle(record, 'start');
       const install = calls.findIndex(call => call.includes('install-service'));
-      assert.equal(calls[install][0], process.execPath);
-      assert.equal(calls[install][1].endsWith(splitRuntime ? '/ours-daemon' : '/ours'), true);
+      assert.equal(calls[install][0].endsWith(splitRuntime ? '/ours-daemon' : '/ours'), true);
       assert.equal(calls[install].includes('daemon'), !splitRuntime);
       const managerStart = calls.findIndex(call => JSON.stringify(call) === JSON.stringify(fixture.managerStart));
       assert.ok(install >= 0 && managerStart > install, `${fixture.platform}: owning install precedes native manager start; calls=${JSON.stringify(calls)}`);
@@ -498,7 +497,7 @@ test('native start waits for a slow daemon before starting consumers and still b
       let elapsed = 0;
       let consumerStartedAt;
       effects.run = async (command, args) => {
-        if (command === process.execPath && args[0].endsWith('/ours-cowork') && args.includes('install-service')) consumerStartedAt = elapsed;
+        if (command.endsWith('/ours-cowork') && args.includes('install-service')) consumerStartedAt = elapsed;
         return { code: 0, stdout: '' };
       };
       effects.verifyHostProfile = async () => {
@@ -714,7 +713,7 @@ test('domain maintenance stops only its selected writers in either installation 
         assert.deepEqual(stops[0].slice(stops[0].indexOf('stop')), ['stop', 'cowork']);
       } else {
         assert.ok(calls.length > 0);
-        assert.ok(calls.every(call => call[0] === process.execPath && call[1].endsWith('/ours-cowork')), JSON.stringify(calls));
+        assert.ok(calls.every(call => call[0].endsWith('/ours-cowork')), JSON.stringify(calls));
       }
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
@@ -956,32 +955,4 @@ test('client gateway capability rejection occurs before importing active managed
   assert.equal(imported, false);
   assert.deepEqual(effects.recorder.wrote, []);
   assert.match(effects.recorder.out.join('\n'), /old Fleet artifact/);
-});
-
-test('native service commands run on the verified Node.js, never an unsafe node on the service PATH', async () => {
-  const { realEffects } = await import('../lib/effects.mjs');
-  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } = await import('node:fs');
-  const { join } = await import('node:path');
-  const { tmpdir } = await import('node:os');
-  const root = mkdtempSync(join(tmpdir(), 'ours-native-node-'));
-  try {
-    // An unpatched `node` first on the PATH the service command inherits.
-    const unsafe = join(root, 'unsafe-bin'), marker = join(root, 'unsafe-node-ran'), capture = join(root, 'runtime.json');
-    mkdirSync(unsafe);
-    writeFileSync(join(unsafe, 'node'), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\necho v22.23.2\n`);
-    chmodSync(join(unsafe, 'node'), 0o700);
-    const effects = realEffects({ env: { PATH: `${unsafe}:/usr/bin:/bin`, HOME: root }, home: root });
-    effects.platform = { platform: 'linux' };
-    const record = effects.newInstallation(join(root, 'server'), 'packages');
-    const binDir = join(record.workDir, 'node_modules/.bin');
-    mkdirSync(binDir, { recursive: true });
-    // Its `#!/usr/bin/env node` line would select the unsafe node if executed directly.
-    writeFileSync(join(binDir, 'ours-cowork'), `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(capture)}, JSON.stringify({ execPath: process.execPath, args: process.argv.slice(2) }) + '\\n');\nif (process.argv[2] === 'status') process.exit(6);\n`);
-    chmodSync(join(binDir, 'ours-cowork'), 0o700);
-    await effects.serverLifecycle(record, 'stop', ['cowork']);
-    const runs = readFileSync(capture, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    assert.deepEqual(runs.map(run => run.args[0]), ['stop', 'status']);
-    for (const run of runs) assert.equal(run.execPath, process.execPath);
-    assert.equal(existsSync(marker), false);
-  } finally { rmSync(root, { recursive: true, force: true }); }
 });

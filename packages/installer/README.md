@@ -88,7 +88,7 @@ Use stable Node.js 22.23.4+, 24.22.1+ or 26.12.1+ within those reviewed lines ([
 
 Workspace setup checks the PATH-selected `cloudflared --version` before grant redemption or setup writes. Requires 2026.10.2+ ([incident](https://blog.cloudflare.com/emudhra-certificate-compromise/), [update instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/update-cloudflared/)); missing, failed, timed-out or unrecognized output refuses setup.
 
-New images use Node.js 24.22.1. Existing images, retained Dockerfiles, running processes and native service-manager settings are not migrated or audited: update/rebuild and restart them separately. Installer package commands use its checked Node executable; arbitrary manager settings and future starts are outside these checks. Fleet tunnel guards require the separate Fleet release and installer manifest update.
+New images use Node.js 24.22.1. Existing images, retained Dockerfiles, running processes and native service-manager settings are not migrated or audited: update/rebuild and restart them separately. Native service-manager settings and future starts are outside these checks. Fleet tunnel guards require the separate Fleet release and installer manifest update.
 
 ## Install first, connect the App afterwards
 
