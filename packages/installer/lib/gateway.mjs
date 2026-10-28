@@ -175,35 +175,26 @@ const READINESS_KIND = /^(EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|
  * 401/403, a well-formed RPC error under any status, any other status or an
  * invalid body — fails at once. The probe only reads; nothing else is retried. Output carries stage and a fixed kind only,
  * never the token or a response body.
- *
- * The output reports the last attempt's failure and the total attempt count,
- * with one diagnostic fallback: when the last attempt's request (or body) timed
- * out because the total deadline shortened its own limit, in a stage strictly
- * earlier than the previous reported failure, that attempt did not reach the
- * stage, so the previous failure's stage and kind are reported instead. This
- * does not imply that the earlier condition still holds. Every other timeout,
- * every other kind and permanent failures report themselves.
  */
 export function gatewayReadinessScript({ base, instanceId, tokenPath = '/var/lib/ours/daemon-token',
   deadlineMs = GATEWAY_READINESS_WAIT_MS, retryMs = GATEWAY_READINESS_RETRY_MS }) {
   return `const fs=require('node:fs');const base=${JSON.stringify(base)};const instanceId=${JSON.stringify(instanceId)};
 const tokenPath=${JSON.stringify(tokenPath)};const deadline=Date.now()+${Number(deadlineMs)};const retryMs=${Number(retryMs)};
 const NET=['EAI_AGAIN','ENOTFOUND','ECONNREFUSED','ECONNRESET','ETIMEDOUT','EPIPE','UND_ERR_SOCKET','UND_ERR_CONNECT_TIMEOUT'];
-class Check extends Error{constructor(kind,transient,cut=false){super(kind);this.kind=kind;this.transient=transient;this.cut=cut;}}
+class Check extends Error{constructor(kind,transient){super(kind);this.kind=kind;this.transient=transient;}}
 const status=s=>new Check('HTTP_'+s,s===502||s===503||s===504);
-// cut: the request's own 5s limit was shortened by the total deadline.
-const request=async(path,options)=>{const remaining=deadline-Date.now(),cut=remaining<5000,left=Math.max(1,Math.min(5000,remaining));
-  try{const r=await fetch(base+path,{...options,redirect:'error',signal:AbortSignal.timeout(left)});r.cut=cut;return r;}
-  catch(e){const code=e?.cause?.code;if(NET.includes(code))throw new Check(code,true);if(e?.name==='TimeoutError'||e?.cause?.name==='TimeoutError')throw new Check('TIMEOUT',true,cut);throw new Check('CHECK_FAILED',false);}};
+const request=async(path,options)=>{const left=Math.max(1,Math.min(5000,deadline-Date.now()));
+  try{return await fetch(base+path,{...options,redirect:'error',signal:AbortSignal.timeout(left)});}
+  catch(e){const code=e?.cause?.code;if(NET.includes(code))throw new Check(code,true);if(e?.name==='TimeoutError'||e?.cause?.name==='TimeoutError')throw new Check('TIMEOUT',true);throw new Check('CHECK_FAILED',false);}};
 const json=async(path,options={})=>{const r=await request(path,options);
   if(!r.ok){let body;try{body=await r.json();}catch{}
     // A well-formed RPC error is the service's answer, whatever the status: never retried.
     if(body&&typeof body==='object'&&body.version===1&&body.error)throw new Check('RPC_ERROR',false);throw status(r.status);}
   // The request signal also bounds the body: a stalled body is a timeout, not an invalid answer.
   // A connection dropped mid-body is transport, not content; only a parse failure is invalid.
-  try{return await r.json();}catch(e){if(e?.name==='TimeoutError'||e?.name==='AbortError')throw new Check('TIMEOUT',true,r.cut);
+  try{return await r.json();}catch(e){if(e?.name==='TimeoutError'||e?.name==='AbortError')throw new Check('TIMEOUT',true);
     const code=e?.cause?.code;if(NET.includes(code))throw new Check(code,true);throw new Check('INVALID',false);}};
-const STAGES=['selection','unauthenticated-management','credential','authenticated-daemon','authenticated-management'];let stage='selection';
+let stage='selection';
 const attempt=async()=>{
   stage='selection';const selection=await json('/daemon/selection');
   if(selection?.instanceId!==instanceId)throw new Check('INVALID',false);
@@ -218,12 +209,10 @@ const attempt=async()=>{
   const result=await json('/cowork/management/rpc',{method:'POST',headers,body:JSON.stringify({version:1,id:'installer-readiness',method:'room.list',params:{}})});
   if(result?.version!==1||result.id!=='installer-readiness'||!Array.isArray(result.result)||result.error)throw new Check('INVALID',false);
 };
-(async()=>{let attempts=0,last=null;for(;;){attempts++;try{await attempt();return;}catch(e){
+(async()=>{let attempts=0;for(;;){attempts++;try{await attempt();return;}catch(e){
   const c=e instanceof Check?e:new Check('CHECK_FAILED',false);
-  // Diagnostic fallback: only a deadline-cut TIMEOUT in a strictly earlier stage reports the previous failure.
-  const seen=c.kind==='TIMEOUT'&&c.cut&&last&&STAGES.indexOf(stage)<STAGES.indexOf(last.stage)?last:{stage,kind:c.kind,transient:c.transient};
-  if(!c.transient||Date.now()+retryMs>=deadline){process.stdout.write('gateway-readiness:'+seen.stage+':'+seen.kind+':'+attempts+(seen.transient?':transient':''));process.exitCode=1;return;}
-  last=seen;await new Promise(r=>setTimeout(r,retryMs));}}})();`;
+  if(!c.transient||Date.now()+retryMs>=deadline){process.stdout.write('gateway-readiness:'+stage+':'+c.kind+':'+attempts+(c.transient?':transient':''));process.exitCode=1;return;}
+  await new Promise(r=>setTimeout(r,retryMs));}}})();`;
 }
 
 /** Operator text for a failed readiness probe; `undefined` when the output is not the probe's. */
