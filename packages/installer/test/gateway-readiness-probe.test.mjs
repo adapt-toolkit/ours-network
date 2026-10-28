@@ -138,8 +138,7 @@ test('a connection dropped while reading the body is transient and recovers', as
 // or TIMEOUT; either way it is transient and never INVALID.
 test('a persistently dropped body fails transiently with the socket code', async t => {
   const g = await gateway(t, { '/daemon/identities': () => 'reset-body' });
-  // The usual transport budget leaves room for a retry when the host is loaded.
-  const result = await run(t, g.base, { deadlineMs: 2_000 });
+  const result = await run(t, g.base, { deadlineMs: 600 });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /^gateway-readiness:authenticated-daemon:(UND_ERR_SOCKET|TIMEOUT):\d+:transient$/);
   assert.match(describeGatewayReadiness(result.stdout), /^authenticated-daemon, (UND_ERR_SOCKET|TIMEOUT); still not ready/);
