@@ -1070,6 +1070,54 @@ export async function runFleetManagedCliSetup(args, effects, plan, target) {
   return { state: declared.every(role => good.includes(role.setup.state)) ? 'prepared' : 'attention', report };
 }
 
+/**
+ * Fleet's `init` only adds missing role defaults; installed copies stay
+ * byte-identical. Adopting a newer packaged default is Fleet's own
+ * `migrate-role-defaults`, which changes only files that exactly match a known
+ * packaged revision and preserves every customized one. Ask the installed
+ * Fleet for its zero-write plan first; apply it only when it replaces or adds
+ * defaults without removing any, because a removal is left for the operator to
+ * review. Nothing is started or restarted, and a failure never fails the run.
+ */
+export async function runFleetRoleDefaultMigration(args, effects, plan, target) {
+  const fleet = args.acquiredFleet || plan.init[0];
+  const env = target.mode === 'host-profile' ? profileEnv(target) : daemonEnv(target.stateDir, target.port);
+  const shown = `${fleet === plan.init[0] ? fleet : shellQuote(fleet)} migrate-role-defaults --configuration ${shellQuote(plan.configPath)}`;
+  const migrate = async write => {
+    const result = await effects.run(fleet, ['migrate-role-defaults', '--configuration', plan.configPath, ...(write ? ['--write'] : [])], { env });
+    const lines = (result.stdout ?? '').split('\n');
+    const listed = prefix => lines.filter(line => line.startsWith(prefix)).map(line => line.slice(prefix.length));
+    return { removals: listed('Remove '), replacements: listed('Replace '), additions: listed('Add '),
+      preserved: listed('Preserve customized '), backup: listed('Recovery backup: ')[0] ?? null };
+  };
+  let dry;
+  try { dry = await migrate(false); } catch (error) {
+    effects.out(warn(`Fleet role defaults were not checked (${installerFailure(error)}); existing role files are unchanged. Review with: ${shown}`));
+    return { state: 'failed' };
+  }
+  if (!dry.removals.length && !dry.replacements.length && !dry.additions.length) {
+    effects.out(ok(`Fleet role defaults are current${dry.preserved.length ? `; ${dry.preserved.length} customized file(s) left unchanged` : ''}.`));
+    return { state: 'current', preserved: dry.preserved };
+  }
+  if (dry.removals.length) {
+    effects.out(warn('Newer Fleet role defaults are available, but adopting them removes files, so nothing was changed:'));
+    for (const path of dry.removals) effects.out(info(`  remove ${path}`));
+    effects.out(info(`Review the plan with: ${shown}  — then apply it with --write.`));
+    return { state: 'attention', plan: dry };
+  }
+  let applied;
+  try { applied = await migrate(true); } catch (error) {
+    effects.out(warn(`Fleet role defaults were not updated (${installerFailure(error)}); Fleet restores the previous files on failure. Review with: ${shown}`));
+    return { state: 'failed' };
+  }
+  for (const path of applied.replacements) effects.out(ok(`Updated unmodified Fleet default ${path}.`));
+  for (const path of applied.additions) effects.out(ok(`Added Fleet default ${path}.`));
+  for (const path of applied.preserved) effects.out(info(`Kept customized ${path} unchanged.`));
+  if (applied.backup) effects.out(info(`Previous Fleet configuration kept at ${applied.backup}.`));
+  effects.out(info('Agents already running keep their current instructions until their next session; existing task members keep the role they were launched with.'));
+  return { state: 'migrated', ...applied };
+}
+
 export const FLEET_SERVICE_REFRESH_CAPABILITY = 'service.refresh-v1';
 
 /** Order matters only for the supervisor: it stops and resumes agents, so it goes last. */
@@ -1203,6 +1251,7 @@ export async function runFleetPhase(args, effects, { target, isDefaultStateDir }
     // A retained configuration means Fleet was set up before, so its service
     // definitions may pin the release this run just replaced.
     if (!args.dryRun && effects.readText(plan.configPath) !== null) {
+      await runFleetRoleDefaultMigration(args, effects, plan, target);
       await runFleetManagedCliSetup(args, effects, plan, target);
       await runFleetServiceRefresh(args, effects, plan, target);
     }
@@ -1231,6 +1280,7 @@ export async function runFleetPhase(args, effects, { target, isDefaultStateDir }
     return { key: 'fleet', label: plan.label, state: 'failed', note: 'Fleet configuration was not published' };
   }
   effects.out(ok('ours-fleet installed and initialized; no fleet roles were started.'));
+  if (!args.dryRun) await runFleetRoleDefaultMigration(args, effects, plan, target);
   if (!args.dryRun) await runFleetManagedCliSetup(args, effects, plan, target);
   if (!args.dryRun) await runFleetServiceRefresh(args, effects, plan, target);
   if (plan.instruction) effects.out(info(plan.instruction));

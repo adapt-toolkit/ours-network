@@ -13,7 +13,7 @@
         "@ours.network/codex": "2.0.2",
         "@ours.network/cowork": "2.0.2",
         "@ours.network/daemon": "5.1.0",
-        "@ours.network/fleet": "2.2.4",
+        "@ours.network/fleet": "2.2.5",
         "@ours.network/mcp": "2.0.2",
         "@ours.network/messenger-server": "2.0.2",
         "@ours.network/notifications": "1.0.1",
@@ -1046,9 +1046,9 @@
       }
     },
     "node_modules/@ours.network/fleet": {
-      "version": "2.2.4",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-2.2.4.tgz",
-      "integrity": "sha512-30rjNYnzNyGQdIvkQMTKcZDf/Si1Ip5aISewUxLFswbnzilhTW6XsWM6O0oiAexdG02Rm9PKR7MCSkNR21fbOw==",
+      "version": "2.2.5",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-2.2.5.tgz",
+      "integrity": "sha512-11cFUc6t9QHAPIfVLLdCyngoIkIFdPaNoFaLCoJypjnmyD5Rpume2xPZ2Ul+1aLH/CqXEKCGqI97e57OE8qBmQ==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.3.0",

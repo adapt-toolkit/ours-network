@@ -45,6 +45,7 @@ test('after Fleet configuration, the installed Fleet prepares its own policy and
   // Version-matched: the exact acquired executable, never whatever `ours-fleet` is on PATH.
   assert.deepEqual(e.recorder.ran, [
     ['/exact/root/node_modules/.bin/ours-fleet', 'init', '--configuration', CONFIG, '--settings', '/home/me/private/fleet.json'],
+    ['/exact/root/node_modules/.bin/ours-fleet', 'migrate-role-defaults', '--configuration', CONFIG],
     ['/exact/root/node_modules/.bin/ours-fleet', 'managed-cli', 'setup', '--configuration', CONFIG, '--json'],
   ]);
   assert.deepEqual(e.recorder.ranEnv.at(-1), { OURS_CONFIG: PROFILE });
@@ -57,11 +58,11 @@ test('after Fleet configuration, the installed Fleet prepares its own policy and
   assert.match(output, /generated configuration only\. It was not executed: no agent session or model was started, and it is not evidence that a command reached a supervisor/);
 });
 
-test('starts nothing: only init and the static setup command run', async () => {
+test('starts nothing: only init, the role-default plan and the static setup command run', async () => {
   const e = fleet();
   await runFleetPhase(prepared, e, { target: TARGET, isDefaultStateDir: false });
   for (const call of e.recorder.ran) {
-    assert.ok(['init', 'managed-cli'].includes(call[1]), call.join(' '));
+    assert.ok(['init', 'migrate-role-defaults', 'managed-cli'].includes(call[1]), call.join(' '));
     for (const forbidden of ['up', 'spawn', 'restart', 'send', 'attach', '_run', 'task', 'room']) assert.equal(call.includes(forbidden), false, call.join(' '));
   }
 });
@@ -130,7 +131,10 @@ test('a retained configuration is re-prepared on update even when agent setup is
   const e = fleet();
   const row = await runFleetPhase({ ...ARGS, acquiredFleet: '/exact/ours-fleet', disableFleetAgentsSetup: true }, e, { target: TARGET, isDefaultStateDir: false });
   assert.equal(row.note, 'agents setup deferred');
-  assert.deepEqual(e.recorder.ran, [['/exact/ours-fleet', 'managed-cli', 'setup', '--configuration', CONFIG, '--json']]);
+  assert.deepEqual(e.recorder.ran, [
+    ['/exact/ours-fleet', 'migrate-role-defaults', '--configuration', CONFIG],
+    ['/exact/ours-fleet', 'managed-cli', 'setup', '--configuration', CONFIG, '--json'],
+  ]);
   const fresh = fleet({ text: {} });
   await runFleetPhase({ ...ARGS, acquiredFleet: '/exact/ours-fleet', disableFleetAgentsSetup: true }, fresh, { target: TARGET, isDefaultStateDir: false });
   assert.deepEqual(fresh.recorder.ran, [], 'no configuration yet: nothing to prepare, nothing run');

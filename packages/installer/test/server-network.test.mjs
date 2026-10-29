@@ -338,10 +338,11 @@ test('client profile resolves relative Fleet settings and retains profile and ou
 
   assert.equal(await runInstall(['client', 'install', '--config', profilePath], effects), 0);
   assert.deepEqual(effects.recorder.interactive, []);
-  assert.deepEqual(effects.recorder.ran.at(-1), [
+  const init = effects.recorder.ran.findIndex(call => call[1] === 'init');
+  assert.deepEqual(effects.recorder.ran[init], [
     '/exact/ours-fleet', 'init', '--configuration', fleetConfig, '--settings', '/home/me/.ours-client/fleet-settings.json',
   ]);
-  assert.deepEqual(effects.recorder.ranEnv.at(-1), { OURS_CONFIG: '/home/me/.ours-client/profile.json' });
+  assert.deepEqual(effects.recorder.ranEnv[init], { OURS_CONFIG: '/home/me/.ours-client/profile.json' });
 });
 
 test('native Messenger definitions preserve selection, escape values and reject control injection', () => {
