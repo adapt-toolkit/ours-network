@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "channel": "stable",
-  "installerVersion": "2.0.3",
+  "installerVersion": "2.0.4",
   "packages": {
     "@ours.network/sdk": {
       "version": "5.1.0",
