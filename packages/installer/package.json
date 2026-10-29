@@ -31,6 +31,7 @@
     "node": ">=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1 <27"
   },
   "scripts": {
+    "pretest": "node ../../scripts/prepare-installer.mjs",
     "test": "node --test",
     "prepack": "node ../../scripts/prepare-installer.mjs"
   },
