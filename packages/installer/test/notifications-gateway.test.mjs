@@ -75,6 +75,24 @@ test('selects a producer credential only for authenticated send and target retir
   assert.equal(f.seen.length, 2);
 });
 
+test('passes only the three mission POST routes with the authenticated producer credential', async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const headers = { 'x-ours-api-token': SERVER, 'x-ours-notifications-producer': PRODUCER };
+  for (const route of ['associate', 'bootstrap', 'delete']) {
+    const path = '/api/v1/missions/' + route;
+    assert.equal(await f.call(path, { method: 'POST', headers }), 200);
+    assert.equal(f.seen.at(-1).headers.authorization, `Bearer ${PRODUCER}`);
+    assert.equal(f.seen.at(-1).headers['x-ours-api-token'], undefined);
+    assert.equal(f.seen.at(-1).headers['x-ours-notifications-producer'], undefined);
+    for (const method of ['GET', 'PUT', 'DELETE']) assert.equal(await f.call(path, { method, headers }), 401);
+    assert.equal(await f.call(path, { method: 'POST', headers: { 'x-ours-notifications-producer': PRODUCER } }), 401);
+    assert.equal(await f.call(path, { method: 'POST', headers: { ...headers, 'x-ours-api-token': 'wrong' } }), 401);
+  }
+  for (const path of ['/api/v1/missions/other', '/api/v1/missions/delete/all', '/api/v1/missions/associate/'])
+    assert.equal(await f.call(path, { method: 'POST', headers }), 401);
+  assert.equal(f.seen.length, 3);
+});
+
 test('authenticates presence upgrades the same way', async t => {
   const f = await fixture(); t.after(() => f.close());
   assert.equal(await f.upgrade({ 'x-ours-api-token': 'wrong' }), 401);

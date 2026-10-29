@@ -521,9 +521,16 @@ removed. Messenger produces message notifications over loopback.
 
 `prepare` creates the private configuration once in
 `storage/state/notifications/config.json`: the owner token, separate Fleet and
-Messenger producer tokens, and VAPID keys. Later runs only validate it; rotating
-the owner token or VAPID keys would orphan every browser subscription, so a
-differing configuration is refused rather than rewritten. Back it up with the
+Messenger producer tokens, and VAPID keys. Fresh setup and updates explicitly grant
+`mission-ownership` only to the installer-selected `owner` / `fleet` producer,
+so Fleet can register and retire its mission notification targets. Messenger
+keeps its existing message-only producer permissions. The migration retains all
+tokens, VAPID keys, preferences and other configuration fields, and is idempotent;
+an existing Fleet delivery token must match the selected producer before any
+grant. A differing or ambiguous configuration is refused for maintenance rather
+than guessed. The gateway passes only the exact mission association, bootstrap
+and deletion POST routes using that producer credential, after checking the
+server credential; Notifications still enforces its account and capability scope. Back it up with the
 rest of the server state. A local client setup binds the Fleet producer token
 to this server in `~/.ours-client/notifications-producer.json`; Fleet then sends
 agent completions through `<serverUrl>/notifications/`. Remote clients and

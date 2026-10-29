@@ -36,7 +36,7 @@ export function createNotificationsAdapter({ service, userToken, verifyServerCre
     try { verified = await verifyServerCredential(credential); } catch { return 503; }
     if (verified !== true) return verified === false ? 401 : 503;
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-    if (producer !== undefined && !(req.method === 'POST' && ['/api/v1/send', '/api/v1/delete-target'].includes(path))) return 401;
+    if (producer !== undefined && !(req.method === 'POST' && ['/api/v1/send', '/api/v1/delete-target', '/api/v1/missions/associate', '/api/v1/missions/bootstrap', '/api/v1/missions/delete'].includes(path))) return 401;
     req.headers.authorization = `Bearer ${producer ?? userToken}`;
     return 200;
   };

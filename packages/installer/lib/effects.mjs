@@ -1187,9 +1187,11 @@ export function networkEffects(effects) {
         // Execute the shipped installer helper against the SAME selected image
         // and Compose volume/user/environment contract, without retag/rebuild.
         const diagnosticsUrl = `data:text/javascript;base64,${readFileSync(join(INSTALLER_ASSETS, 'scripts/runtime/diagnostics.mjs')).toString('base64')}`;
+        const notificationConfigUrl = `data:text/javascript;base64,${readFileSync(join(INSTALLER_ASSETS, 'scripts/runtime/notification-config.mjs')).toString('base64')}`;
         const helper = `process.argv.splice(1, 0, '/opt/ours/docker/client-setup.mjs');\n` + readFileSync(join(INSTALLER_ASSETS, 'scripts/runtime/client-setup.mjs'), 'utf8')
           .replace("'../maintenance/build-context.mjs'", "'/opt/ours/maintenance/build-context.mjs'")
-          .replace("'./diagnostics.mjs'", JSON.stringify(diagnosticsUrl));
+          .replace("'./diagnostics.mjs'", JSON.stringify(diagnosticsUrl))
+          .replace("'./notification-config.mjs'", JSON.stringify(notificationConfigUrl));
         const accessArgs = (...args) => ['--entrypoint', 'node', 'access', '--input-type=module', '-e', helper, '--', ...args];
         if (!output) return compose(record, ['run', '--rm', '--no-deps', '-T', ...accessArgs(operation)], { sensitive: true, env: { OURS_ACCESS_MIGRATE: migrate ? '1' : '0' } });
         privateDirectory(dirname(output));
