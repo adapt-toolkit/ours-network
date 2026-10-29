@@ -4,58 +4,58 @@
   "installerVersion": "2.0.3",
   "packages": {
     "@ours.network/sdk": {
-      "version": "5.0.1",
-      "integrity": "sha512-V05UlHsttQrzoyVKm+hwMb84ym47svn1yzp7Kp56JAsGWKXH6TtHLfzSlbxHf42+Hv89a2T3Zx5HXmUNWX7eFg=="
+      "version": "5.1.0",
+      "integrity": "sha512-hdlMNS3VNXq/JCu8Zvzq1MbKmfAkmZNqYNKh5tLkXLLyyRvc3aWxM1Va13cWXUs6hTJsP7Q9nkEhrmeXaG8fKg=="
     },
     "@ours.network/cli": {
-      "version": "4.0.1",
-      "integrity": "sha512-kFLW5E6aB3YN6VbMMu18gx/A/aJSG8yypHtvsG2jDius0tHBi+ckvQ9XxWRis9exnIw1nqu7ajfQq4J+HI7iNw=="
+      "version": "4.1.0",
+      "integrity": "sha512-AOO+JbgLoj3jBJN/ysnlR24w/SfYqCNFoWKxSfOUknNh8lFu6g2Np8dfYRsXUKZPBA30cXtpsVfCb+SsVvLr/g=="
     },
     "@ours.network/tg-connector": {
-      "version": "2.0.1",
-      "integrity": "sha512-o37XVXLbVmyKdnJiZpY7skfvAve2d3Wo9VO1vstaKFVFvbsXME1zoJNPONBrVcqXu0RxPoaer4teSll2JCrFoQ=="
+      "version": "2.0.2",
+      "integrity": "sha512-7dzbwXBBxxMzWd5slWR9yH/CvbjjQNHOZ7i2axHzWGuHx5oUbaNLM2sAvlHH29C7OacVT0owy/ZRQUdty4gjEw=="
     },
     "@ours.network/cowork": {
-      "version": "2.0.1",
-      "integrity": "sha512-KrDQ+4S33BZJ3HuD+704kdq/Ezk5qrVB78YsSkAxS1dlq6z3EHPDkn4579I23/0QwbhKko71o4qUYo7JOAlz2w=="
+      "version": "2.0.2",
+      "integrity": "sha512-pe9q6ErkuxA/Nj/HZxGZT2O6jPo0chmF9j+zrRnr5E0keGeLkfm+Zqw5PyLsppX5yXOgBGCe9ygiF8DBMdz2lA=="
     },
     "@ours.network/messenger-server": {
-      "version": "2.0.1",
-      "integrity": "sha512-P/mg84GJKZRpX+vrEaoIJDuRof/+vFPYH+AwCElERgIhRAz48iqj+a/HuYa+NpE0flzdlW5cFEZJvelkNcFy1A=="
+      "version": "2.0.2",
+      "integrity": "sha512-Gdqrzn+TBj1ftrfIkslN1dHFmV8e3EYQG4OCUbCe01RTlDP21ut+ntnjG2dy1dDtzBxl2JX0Oupd4Mokquddqg=="
     },
     "@ours.network/notifications": {
       "version": "1.0.1",
       "integrity": "sha512-4AUpWQd13m53EinmxF6Q2OO9xfkZ5+UrKwTvlnq3LaLCnPz/AfchzaHkAWDAq9ZeIMZHpsgaJ0FptS+ToFXzbg=="
     },
     "@ours.network/fleet": {
-      "version": "2.2.0",
-      "integrity": "sha512-oA/M5FGjFg23NkPl7sIWaVxhwZ+7vqyHWKzbpm0U2mzeQuwHJiCKjgK+V5oJkU5sa2y3vL6v88AffvTXMEfNbA=="
+      "version": "2.2.3",
+      "integrity": "sha512-SaBiLZ/l4o8fDNfE5RSlG1DFtK5GEMt737ieNDdrD/5zz/JNgvZGBugtP3nl6CJiGVf9eDFdMlEmYhXyLifBBA=="
     },
     "@ours.network/mcp": {
-      "version": "2.0.1",
-      "integrity": "sha512-P/+RyV3oJf6KQ4H/D7XVHye8yazEfT9fwDaV8ldkCeFN+/7k7MoxJcZPTZrZic2Ielf5kmuSu2misK2FVyv6zA=="
+      "version": "2.0.2",
+      "integrity": "sha512-vVqzS+Vqyy1kDscQwtUvA/c/xtNrwK23aPCjHfrtDdyXgqtBQH4Jo36v4nOp2Zi8oVVQ8Byv1CS1Z6ObbF/Npg=="
     },
     "@ours.network/codex": {
-      "version": "2.0.1",
-      "integrity": "sha512-YZZXi+dwxSz2IgHQ334auOLpKZlmg0MCPmGaXnS2ZjI6GZFKzJxjYegvvEkQOVEKJL8CEhuZ7DFdJ5i4+oW6Xw=="
+      "version": "2.0.2",
+      "integrity": "sha512-tcWWbL+rgkASZfgjKWGl7duihRAomQGtVLF9ylPa2HjlVcqkjMjSUMw6xrIbyPZrc/MHF2BC6g1pdB7tKV82gA=="
     },
     "@ours.network/claude-code": {
-      "version": "2.0.1",
-      "integrity": "sha512-AxhhV2yXxJyVZRPOD2yhYSag9BvgEpXriYios9qxrN3d107LYELZswXPpfxYJckNg4dIwHYouBGf9i2VJT4v9g=="
+      "version": "2.0.2",
+      "integrity": "sha512-2Bp70/I4DZnxXBB3xQqHXA0S4R0ZbVYNvK5DTg9DbbqIYIJ9tlL33jHx2JK/iCSdA/sbXiFjiE54ubxQbPSw3Q=="
     },
     "@ours.network/daemon": {
-      "version": "5.0.1",
-      "integrity": "sha512-fovi1la/WmajrPnSKGH+d7f1CqoMxPcbjhU6fRBSpKIVdxkQPLwflbJwL/vfAwuwrl1SOLLMJFUJskVXYJdDRw=="
+      "version": "5.1.0",
+      "integrity": "sha512-SATI3xeZkZS3YtD01KrAFqSQoJZIFRUp9Ye50EI7ATxQVfyzurOJCgYISfl/U71/6rKw9WgreX4TtXOt47o8Sg=="
     }
   },
   "hostCli": {
     "@ours.network/sdk": {
-      "version": "5.0.1",
-      "integrity": "sha512-V05UlHsttQrzoyVKm+hwMb84ym47svn1yzp7Kp56JAsGWKXH6TtHLfzSlbxHf42+Hv89a2T3Zx5HXmUNWX7eFg=="
+      "version": "5.1.0",
+      "integrity": "sha512-hdlMNS3VNXq/JCu8Zvzq1MbKmfAkmZNqYNKh5tLkXLLyyRvc3aWxM1Va13cWXUs6hTJsP7Q9nkEhrmeXaG8fKg=="
     },
     "@ours.network/cli": {
-      "version": "4.0.1",
-      "integrity": "sha512-kFLW5E6aB3YN6VbMMu18gx/A/aJSG8yypHtvsG2jDius0tHBi+ckvQ9XxWRis9exnIw1nqu7ajfQq4J+HI7iNw=="
+      "version": "4.1.0",
+      "integrity": "sha512-AOO+JbgLoj3jBJN/ysnlR24w/SfYqCNFoWKxSfOUknNh8lFu6g2Np8dfYRsXUKZPBA30cXtpsVfCb+SsVvLr/g=="
     }
   }
 }
