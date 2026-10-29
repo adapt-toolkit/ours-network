@@ -61,6 +61,7 @@ test('a retained-configuration update re-points existing Fleet services at the n
   const row = await runFleetPhase({ ...ARGS, disableFleetAgentsSetup: true }, e, { target: TARGET, isDefaultStateDir: false });
   assert.equal(row.state, 'installed');
   assert.deepEqual(e.recorder.ran, [
+    [ARGS.acquiredFleet, 'migrate-role-defaults', '--configuration', CONFIG],
     [ARGS.acquiredFleet, 'managed-cli', 'setup', '--configuration', CONFIG, '--json'],
     [ARGS.acquiredFleet, 'service', 'refresh', '--json'],
     ['systemctl', '--user', 'try-restart', 'ours-fleet.service'],
@@ -76,7 +77,7 @@ test('a retained-configuration update re-points existing Fleet services at the n
 test('a full Fleet initialization also refreshes, after init and policy setup', async () => {
   const e = fleet({ services: [service({ running: 'current' }), service({ service: 'web', state: 'current', running: 'current' })] });
   await runFleetPhase({ ...ARGS, fleetSettingsPath: '/home/me/private/fleet.json' }, e, { target: TARGET, isDefaultStateDir: false });
-  assert.deepEqual(e.recorder.ran.map(call => call[1]), ['init', 'managed-cli', 'service']);
+  assert.deepEqual(e.recorder.ran.map(call => call[1]), ['init', 'migrate-role-defaults', 'managed-cli', 'service']);
   assert.doesNotMatch(said(e), /Restarted|previous release/);
 });
 

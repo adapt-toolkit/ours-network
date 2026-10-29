@@ -191,7 +191,8 @@ test('ours-fleet publishes its own configuration through the interactive wizard'
     return result;
   };
   const row = await runFleetPhase(ARGS, e, { target: AT_DEFAULT, isDefaultStateDir: true });
-  assert.deepEqual(ranAsText(e), ['npm i -g @ours.network/fleet@latest', `ours-fleet init --configuration ${join(HOME, 'fleet.yaml')}`]);
+  assert.deepEqual(ranAsText(e), ['npm i -g @ours.network/fleet@latest', `ours-fleet init --configuration ${join(HOME, 'fleet.yaml')}`,
+    `ours-fleet migrate-role-defaults --configuration ${join(HOME, 'fleet.yaml')}`]);
   assert.deepEqual(e.recorder.wroteText, [], 'the installer never writes Fleet-owned configuration');
   // Installing a package needs no daemon selection. Initialization may inspect
   // daemon state, so it receives the complete state-directory/endpoint pair;
@@ -239,10 +240,11 @@ test('prepared Fleet settings use the captured runner with settings, profile, an
   });
   assert.equal(row.state, 'installed');
   assert.deepEqual(e.recorder.interactive, []);
-  assert.deepEqual(e.recorder.ran.at(-1), [
+  const init = e.recorder.ran.findIndex(call => call[1] === 'init');
+  assert.deepEqual(e.recorder.ran[init], [
     'ours-fleet', 'init', '--configuration', join(HOME, 'fleet.yaml'), '--settings', settingsPath,
   ]);
-  assert.deepEqual(e.recorder.ranEnv.at(-1), { OURS_CONFIG: profilePath });
+  assert.deepEqual(e.recorder.ranEnv[init], { OURS_CONFIG: profilePath });
 });
 
 test('a cancelled Fleet wizard publishes nothing and is reported incomplete', async () => {
