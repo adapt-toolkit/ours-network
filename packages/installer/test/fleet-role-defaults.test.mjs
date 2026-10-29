@@ -90,7 +90,27 @@ test('a refused plan or a failed write warns once and does not fail the installa
   const result = await runFleetRoleDefaultMigration(ARGS, failed, PLAN, TARGET);
   assert.equal(result.state, 'failed');
   assert.equal(migrations(failed).length, 2, 'no retry');
-  assert.match(said(failed), /Fleet role defaults were not updated .*Fleet restores the previous files on failure/);
+  assert.match(said(failed), /Fleet role-default migration failed \(.*\)\. Inspect any staging or recovery path named in that error before retrying: .*migrate-role-defaults/);
+  assert.doesNotMatch(said(failed), /restore/);
+});
+
+test('an unrecognised Fleet report is never taken as current or applied', async () => {
+  const silent = fleet();
+  const run = silent.run;
+  silent.run = async (cmd, args, opts) => args[0] === 'migrate-role-defaults' ? (await run(cmd, args, opts), { ok: true, code: 0, stdout: '' }) : run(cmd, args, opts);
+  const result = await runFleetRoleDefaultMigration(ARGS, silent, PLAN, TARGET);
+  assert.equal(result.state, 'failed');
+  assert.equal(migrations(silent).length, 1, 'no write');
+  assert.match(said(silent), /Fleet role defaults were not checked \(.*unrecognised report.*\); existing role files are unchanged/);
+  assert.doesNotMatch(said(silent), /are current/);
+  const odd = fleet({ plan: { replacements: [join(ROOT, 'roles/Developer.yaml')] } });
+  const oddRun = odd.run;
+  odd.run = async (cmd, args, opts) => {
+    const result = await oddRun(cmd, args, opts);
+    return args.includes('--write') ? { ...result, stdout: result.stdout.replace('Applied packaged role-default migration.', 'Something else.') } : result;
+  };
+  assert.equal((await runFleetRoleDefaultMigration(ARGS, odd, PLAN, TARGET)).state, 'failed');
+  assert.doesNotMatch(said(odd), /Updated unmodified/);
 });
 
 test('a dry run or a missing configuration migrates nothing', async () => {

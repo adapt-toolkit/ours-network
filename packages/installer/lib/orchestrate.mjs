@@ -1086,6 +1086,8 @@ export async function runFleetRoleDefaultMigration(args, effects, plan, target) 
   const migrate = async write => {
     const result = await effects.run(fleet, ['migrate-role-defaults', '--configuration', plan.configPath, ...(write ? ['--write'] : [])], { env });
     const lines = (result.stdout ?? '').split('\n');
+    // Fleet's first line states what it did; anything else is not a plan this installer can trust.
+    if (lines[0] !== (write ? 'Applied packaged role-default migration.' : 'Dry run only; no files were changed.')) throw new Error('unrecognised report');
     const listed = prefix => lines.filter(line => line.startsWith(prefix)).map(line => line.slice(prefix.length));
     return { removals: listed('Remove '), replacements: listed('Replace '), additions: listed('Add '),
       preserved: listed('Preserve customized '), backup: listed('Recovery backup: ')[0] ?? null };
@@ -1107,7 +1109,7 @@ export async function runFleetRoleDefaultMigration(args, effects, plan, target) 
   }
   let applied;
   try { applied = await migrate(true); } catch (error) {
-    effects.out(warn(`Fleet role defaults were not updated (${installerFailure(error)}); Fleet restores the previous files on failure. Review with: ${shown}`));
+    effects.out(warn(`Fleet role-default migration failed (${installerFailure(error)}). Inspect any staging or recovery path named in that error before retrying: ${shown}`));
     return { state: 'failed' };
   }
   for (const path of applied.replacements) effects.out(ok(`Updated unmodified Fleet default ${path}.`));
