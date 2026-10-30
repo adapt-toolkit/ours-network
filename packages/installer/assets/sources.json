@@ -2,84 +2,84 @@
   "release": {
     "schema": 1,
     "channel": "stable",
-    "installerVersion": "2.0.3",
+    "installerVersion": "2.0.5",
     "packages": {
       "@ours.network/sdk": {
-        "version": "5.1.0",
-        "integrity": "sha512-hdlMNS3VNXq/JCu8Zvzq1MbKmfAkmZNqYNKh5tLkXLLyyRvc3aWxM1Va13cWXUs6hTJsP7Q9nkEhrmeXaG8fKg=="
+        "version": "5.2.0",
+        "integrity": "sha512-iQskFZQPrsZ6oTpsuyvoNrm2DG2IUF928xM0mSOzDEvm+3QeSYK4ZawEMMAcx/gHhwn6O4LUYcac1tiDrNCwgQ=="
       },
       "@ours.network/cli": {
-        "version": "4.1.0",
-        "integrity": "sha512-AOO+JbgLoj3jBJN/ysnlR24w/SfYqCNFoWKxSfOUknNh8lFu6g2Np8dfYRsXUKZPBA30cXtpsVfCb+SsVvLr/g=="
+        "version": "4.2.0",
+        "integrity": "sha512-4RpFVbn+kyf/JcYd/0jCPq4iAtu5H7wCedQv0CPFNFcCK3+2yK9ogwwq97sFZmM07CwUU0/fZk3Layu80hSd2A=="
       },
       "@ours.network/tg-connector": {
-        "version": "2.0.2",
-        "integrity": "sha512-7dzbwXBBxxMzWd5slWR9yH/CvbjjQNHOZ7i2axHzWGuHx5oUbaNLM2sAvlHH29C7OacVT0owy/ZRQUdty4gjEw=="
+        "version": "2.0.3",
+        "integrity": "sha512-NXto1ouf9l6k2LtRUdpakrnZnxbCymlPLqjy61LBPaVtjiUHF6lS7IJy7dIazHVBOUShbvMOXpT4H+ZCfpMsdw=="
       },
       "@ours.network/cowork": {
-        "version": "2.0.2",
-        "integrity": "sha512-pe9q6ErkuxA/Nj/HZxGZT2O6jPo0chmF9j+zrRnr5E0keGeLkfm+Zqw5PyLsppX5yXOgBGCe9ygiF8DBMdz2lA=="
+        "version": "2.0.3",
+        "integrity": "sha512-rTolJ7m+q9fn0tuucrrE8xwUSOIMq4zPmSzq541Cfj2aCxbicAlujO/LU0AucRvP1o7Ls3r/EtE5dv6lHRr6Pw=="
       },
       "@ours.network/messenger-server": {
-        "version": "2.0.2",
-        "integrity": "sha512-Gdqrzn+TBj1ftrfIkslN1dHFmV8e3EYQG4OCUbCe01RTlDP21ut+ntnjG2dy1dDtzBxl2JX0Oupd4Mokquddqg=="
+        "version": "2.0.3",
+        "integrity": "sha512-zmOT67wmqp6HlgDrBy2bdvyKiuDQ64JXU1q8rgWQKv/DCJiXVt/xpC0mqCJccrNLKoTFk5IACd1nBPHkcrocCg=="
       },
       "@ours.network/notifications": {
         "version": "1.0.1",
         "integrity": "sha512-4AUpWQd13m53EinmxF6Q2OO9xfkZ5+UrKwTvlnq3LaLCnPz/AfchzaHkAWDAq9ZeIMZHpsgaJ0FptS+ToFXzbg=="
       },
       "@ours.network/fleet": {
-        "version": "2.2.5",
-        "integrity": "sha512-11cFUc6t9QHAPIfVLLdCyngoIkIFdPaNoFaLCoJypjnmyD5Rpume2xPZ2Ul+1aLH/CqXEKCGqI97e57OE8qBmQ=="
+        "version": "2.2.6",
+        "integrity": "sha512-Fl8sBN1N4HdzHc3bpomai0hOJei96dXJ3oDiQ2MD57/x7XnzDulh6krgUfAHLKhbOeyIZMnk/AQ/KfcJmPdyQA=="
       },
       "@ours.network/mcp": {
-        "version": "2.0.2",
-        "integrity": "sha512-vVqzS+Vqyy1kDscQwtUvA/c/xtNrwK23aPCjHfrtDdyXgqtBQH4Jo36v4nOp2Zi8oVVQ8Byv1CS1Z6ObbF/Npg=="
+        "version": "2.0.3",
+        "integrity": "sha512-cMfwMBhMuyo6FpFwuzgc4UMjotK0ZoDNkvGz7rgqnz495t3X6Bd7qgV39chRV8P6W8f5KDHLNEk4wgAmjYroNQ=="
       },
       "@ours.network/codex": {
-        "version": "2.0.2",
-        "integrity": "sha512-tcWWbL+rgkASZfgjKWGl7duihRAomQGtVLF9ylPa2HjlVcqkjMjSUMw6xrIbyPZrc/MHF2BC6g1pdB7tKV82gA=="
+        "version": "2.0.3",
+        "integrity": "sha512-9TLOI+RjbSU+XmRPxIGnrsXuUsW13Xpjueq6kk0vPB6k4CptaBUqoVpzYAM6H9SbZ3kA2cTg7/tPyT5D5Q5iuQ=="
       },
       "@ours.network/claude-code": {
-        "version": "2.0.2",
-        "integrity": "sha512-2Bp70/I4DZnxXBB3xQqHXA0S4R0ZbVYNvK5DTg9DbbqIYIJ9tlL33jHx2JK/iCSdA/sbXiFjiE54ubxQbPSw3Q=="
+        "version": "2.0.3",
+        "integrity": "sha512-qVwWr+oPc19HiYHsauMS57GWj2aefYi4enT8C3dQM24vWQ1ZlXwMHuJZbMfGfERafIxpY9uNYyYNbL3ytNIdFg=="
       },
       "@ours.network/daemon": {
-        "version": "5.1.0",
-        "integrity": "sha512-SATI3xeZkZS3YtD01KrAFqSQoJZIFRUp9Ye50EI7ATxQVfyzurOJCgYISfl/U71/6rKw9WgreX4TtXOt47o8Sg=="
+        "version": "5.2.0",
+        "integrity": "sha512-qveOkNjIjm5utKyRsS1+oDpK2PzrcjxP/O353CcvRIiPDY72/rSTcJyHN31RaKD3d0HXc5193G7DWy6HJMpSTA=="
       }
     },
     "hostCli": {
       "@ours.network/sdk": {
-        "version": "5.1.0",
-        "integrity": "sha512-hdlMNS3VNXq/JCu8Zvzq1MbKmfAkmZNqYNKh5tLkXLLyyRvc3aWxM1Va13cWXUs6hTJsP7Q9nkEhrmeXaG8fKg=="
+        "version": "5.2.0",
+        "integrity": "sha512-iQskFZQPrsZ6oTpsuyvoNrm2DG2IUF928xM0mSOzDEvm+3QeSYK4ZawEMMAcx/gHhwn6O4LUYcac1tiDrNCwgQ=="
       },
       "@ours.network/cli": {
-        "version": "4.1.0",
-        "integrity": "sha512-AOO+JbgLoj3jBJN/ysnlR24w/SfYqCNFoWKxSfOUknNh8lFu6g2Np8dfYRsXUKZPBA30cXtpsVfCb+SsVvLr/g=="
+        "version": "4.2.0",
+        "integrity": "sha512-4RpFVbn+kyf/JcYd/0jCPq4iAtu5H7wCedQv0CPFNFcCK3+2yK9ogwwq97sFZmM07CwUU0/fZk3Layu80hSd2A=="
       }
     }
   },
   "packages": {
     "@ours.network/sdk": {
       "type": "npm",
-      "version": "5.1.0"
+      "version": "5.2.0"
     },
     "@ours.network/cli": {
       "type": "npm",
-      "version": "4.1.0"
+      "version": "4.2.0"
     },
     "@ours.network/tg-connector": {
       "type": "npm",
-      "version": "2.0.2"
+      "version": "2.0.3"
     },
     "@ours.network/cowork": {
       "type": "npm",
-      "version": "2.0.2"
+      "version": "2.0.3"
     },
     "@ours.network/messenger-server": {
       "type": "npm",
-      "version": "2.0.2"
+      "version": "2.0.3"
     },
     "@ours.network/notifications": {
       "type": "npm",
@@ -87,23 +87,23 @@
     },
     "@ours.network/fleet": {
       "type": "npm",
-      "version": "2.2.5"
+      "version": "2.2.6"
     },
     "@ours.network/mcp": {
       "type": "npm",
-      "version": "2.0.2"
+      "version": "2.0.3"
     },
     "@ours.network/codex": {
       "type": "npm",
-      "version": "2.0.2"
+      "version": "2.0.3"
     },
     "@ours.network/claude-code": {
       "type": "npm",
-      "version": "2.0.2"
+      "version": "2.0.3"
     },
     "@ours.network/daemon": {
       "type": "npm",
-      "version": "5.1.0"
+      "version": "5.2.0"
     }
   }
 }
