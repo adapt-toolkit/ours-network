@@ -2,7 +2,7 @@
   "release": {
     "schema": 1,
     "channel": "stable",
-    "installerVersion": "2.0.5",
+    "installerVersion": "2.0.6",
     "packages": {
       "@ours.network/sdk": {
         "version": "5.2.0",
@@ -29,8 +29,8 @@
         "integrity": "sha512-4AUpWQd13m53EinmxF6Q2OO9xfkZ5+UrKwTvlnq3LaLCnPz/AfchzaHkAWDAq9ZeIMZHpsgaJ0FptS+ToFXzbg=="
       },
       "@ours.network/fleet": {
-        "version": "2.2.6",
-        "integrity": "sha512-Fl8sBN1N4HdzHc3bpomai0hOJei96dXJ3oDiQ2MD57/x7XnzDulh6krgUfAHLKhbOeyIZMnk/AQ/KfcJmPdyQA=="
+        "version": "2.3.1",
+        "integrity": "sha512-Q/kXlc85gHZaUNv/W4N97pxbEe5n4fkr8JEtKfFIkaFwbVwzXQT6yeOFDvn4fUWgnrOkjd5t/D632c1l+iM5Tw=="
       },
       "@ours.network/mcp": {
         "version": "2.0.3",
@@ -87,7 +87,7 @@
     },
     "@ours.network/fleet": {
       "type": "npm",
-      "version": "2.2.6"
+      "version": "2.3.1"
     },
     "@ours.network/mcp": {
       "type": "npm",
