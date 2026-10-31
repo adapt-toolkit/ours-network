@@ -14,6 +14,11 @@ export const USAGE = `ours-install — interactive setup with optional CLI prese
   Collaboration tools only (one Ours service in Docker, plugins for Claude Code and Codex):
     ours-install --plugin-only --state-dir ~/.ours-install --identity-name "Your Name" --integrations claude-code,codex
 
+  Run the newest installer release (@latest, or @nightly) without typing npx:
+    ours-install update [--nightly]
+    Uses npx --yes @ours.network/install@<tag>; without npx, npm i -g installs that
+    tag and its ours-install starts. Either way the new installer opens its normal setup.
+
   Remove Ours completely (lists everything first; asks you to type "remove ours"):
     ours-install remove [--state-dir PATH] [--dry-run]
 
