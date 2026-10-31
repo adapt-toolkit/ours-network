@@ -13,7 +13,7 @@
         "@ours.network/codex": "2.0.3",
         "@ours.network/cowork": "2.0.3",
         "@ours.network/daemon": "5.2.0",
-        "@ours.network/fleet": "2.3.1",
+        "@ours.network/fleet": "2.3.2",
         "@ours.network/mcp": "2.0.3",
         "@ours.network/messenger-server": "2.0.3",
         "@ours.network/notifications": "1.0.1",
@@ -486,9 +486,6 @@
       "cpu": [
         "arm64"
       ],
-      "libc": [
-        "glibc"
-      ],
       "license": "SEE LICENSE IN LICENSE.md",
       "optional": true,
       "os": [
@@ -501,9 +498,6 @@
       "integrity": "sha512-OHoZOZ8Cf2TBr6oXIXPwyvUxj9jrq2w8E4poA8dMpacXszcPSPiCQCMuuOh4aWJzfeJE1+TtWxhKMVb2csXyZQ==",
       "cpu": [
         "arm64"
-      ],
-      "libc": [
-        "musl"
       ],
       "license": "SEE LICENSE IN LICENSE.md",
       "optional": true,
@@ -518,9 +512,6 @@
       "cpu": [
         "x64"
       ],
-      "libc": [
-        "glibc"
-      ],
       "license": "SEE LICENSE IN LICENSE.md",
       "optional": true,
       "os": [
@@ -533,9 +524,6 @@
       "integrity": "sha512-K+FWj+LcGhC1Z7wqeWoLxm1iemcba5xKpLLFVwYm4V6HyMx3ruYd/2r2TiQtjT+JWeNFWIys0ScHiItR6vWAiA==",
       "cpu": [
         "x64"
-      ],
-      "libc": [
-        "musl"
       ],
       "license": "SEE LICENSE IN LICENSE.md",
       "optional": true,
@@ -1058,9 +1046,9 @@
       }
     },
     "node_modules/@ours.network/fleet": {
-      "version": "2.3.1",
-      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-2.3.1.tgz",
-      "integrity": "sha512-Q/kXlc85gHZaUNv/W4N97pxbEe5n4fkr8JEtKfFIkaFwbVwzXQT6yeOFDvn4fUWgnrOkjd5t/D632c1l+iM5Tw==",
+      "version": "2.3.2",
+      "resolved": "https://registry.npmjs.org/@ours.network/fleet/-/fleet-2.3.2.tgz",
+      "integrity": "sha512-6WQPlXCGWq8D2C/jjNOJ9vTjdDUQiKkQUURRQ3kxQEHoVHtlameoSdef54dPcNGhMPd6xcLMQ7YQ1Hru+dCj5Q==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.3.0",
@@ -3403,9 +3391,9 @@
       "license": "ISC"
     },
     "node_modules/set-cookie-parser": {
-      "version": "3.2.1",
-      "resolved": "https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-3.2.1.tgz",
-      "integrity": "sha512-Npd1Pt+4zb3BrSZDPd2qFwRpS6b1EUEasRrO8xS0zMJi0fApXXK5YuzP0minyJnxwnFHoVoJwA55q0A0cu63gQ==",
+      "version": "3.2.2",
+      "resolved": "https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-3.2.2.tgz",
+      "integrity": "sha512-df017qMeYuXo4emL09nlyMpi2i2MtEIKS/6jtXH3vmjFgIRsOi852/5RmhJ4EkvN3ZF8jXadM/EkTPXgc8yPIw==",
       "license": "MIT"
     },
     "node_modules/setprototypeof": {
