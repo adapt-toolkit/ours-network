@@ -7,12 +7,15 @@ import { realEffects } from './lib/effects.mjs';
 import { installerFailure } from './lib/diagnostics.mjs';
 import { runWorkspaceSetup } from './lib/workspace-setup.mjs';
 import { runSetup } from './lib/setup.mjs';
+import { runSelfUpdate, selfUpdateTag } from './lib/self-update.mjs';
 import { closeSync, makeWriter, openTty } from './lib/ui.mjs';
 
 if (!isSecureNodeVersion(process.versions.node)) {
   process.stderr.write(`${nodeVersionError(process.versions.node)}\n`);
   process.exit(1);
 }
+const updateTag = selfUpdateTag(process.argv.slice(2));
+if (updateTag) process.exit(runSelfUpdate(updateTag));
 const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 const ttyFd = openTty();
 
