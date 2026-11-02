@@ -98,6 +98,8 @@ ours-install --username alex --name Alex --surname Taylor --disable-fleet-agents
 
 This permanent command contains no tunnel credentials or enrollment expiry. On a terminal it asks for the remaining installation choices, including Docker, Podman or native packages. The username is local and has no global uniqueness check. A fresh root is named `<username>@<hostname>`; the optional `--hostname` defaults to the machine name. Messenger stores Name and Surname through its supported profile API. Retried setup retains root identities and existing Messenger profiles.
 
+A person known by one full name can pass `--full-name` instead, for example `ours-install --username alex --full-name 'Alex Taylor' --hostname home --disable-fleet-agents-setup`. Name and Surname are then optional and stored only as given; the full name is never split, and the installer does not ask for the missing parts. The full name names the person's own identity, under the same at most 64 NFC characters rule as Name and Surname together.
+
 `--disable-fleet-agents-setup` installs the Fleet CLI and saves the choice without opening its agent/model wizard or rewriting existing Fleet configuration. Configure agents in the App after device linking. Complete presets still work unattended; partial presets require a terminal and cannot use `OURS_ASSUME_YES`.
 
 ### Fleet task commands from a harness command sandbox

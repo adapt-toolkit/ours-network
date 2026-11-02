@@ -96,6 +96,16 @@ test('with Name and Surname, Messenger runs as the person\'s own identity create
   assert.deepEqual(events[identity], ['identity', 'ada@home']); assert.deepEqual(events[own], ['messenger-identity', 'Ada Lovelace']);
   assert.ok(identity < own && own < consumers); assert.equal(selected, 'Ada Lovelace');
 });
+test('a full name names the person\'s own identity and reaches Messenger unsplit, with absent parts left null', async () => {
+  for (const [extra, label, profile] of [
+    [{ fullName: 'Prince' }, 'Prince', { fullName: 'Prince', name: null, surname: null }],
+    [{ fullName: 'Ada King', name: 'Ada' }, 'Ada King', { fullName: 'Ada King', name: 'Ada', surname: null }],
+  ]) {
+    const { events, selected } = await selectedMessenger(fixture(), { localUsername: 'ada', hostname: 'home', identityName: 'ada@home', ...extra });
+    assert.ok(events.some(e => Array.isArray(e) && e[0] === 'messenger-identity' && e[1] === label)); assert.equal(selected, label);
+    assert.deepEqual(events.find(e => Array.isArray(e) && e[0] === 'human-profile')?.[1], profile);
+  }
+});
 test('an installation whose Messenger ran as the root moves to the person\'s own identity when Name and Surname are given', async () => {
   const { events, selected } = await selectedMessenger(fixture(true, { messengerIdentity: 'ada@home' }), person);
   assert.ok(events.some(e => Array.isArray(e) && e[0] === 'messenger-identity' && e[1] === 'Ada Lovelace')); assert.equal(selected, 'Ada Lovelace');

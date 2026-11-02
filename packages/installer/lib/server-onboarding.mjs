@@ -192,7 +192,10 @@ process.stdout.write(JSON.stringify(output));
     },
     async serverEnsureHumanProfile(record, human) {
       validateRecord(record);
-      for (const key of ['name', 'surname']) if (typeof human[key] !== 'string' || !human[key].trim() || human[key].length > 100 || /[\x00-\x1f\x7f]/.test(human[key])) throw new Error('Invalid Messenger human profile');
+      // Each part is independent and may be absent; nothing is split or combined (Messenger optional profile).
+      const profile = Object.fromEntries(['fullName', 'name', 'surname'].map(key => [key, human[key] ?? null]));
+      for (const value of Object.values(profile)) if (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 100 || /[\x00-\x1f\x7f]/.test(value))) throw new Error('Invalid Messenger human profile');
+      if (!profile.fullName && !(profile.name && profile.surname)) throw new Error('Invalid Messenger human profile');
       // Messenger owns the profile lifecycle. Never rename the daemon root or
       // overwrite a profile already present on a retained installation.
       const script = `
@@ -214,7 +217,7 @@ else { await request('identity/profile', selection.human); process.stdout.write(
         // Behind the gateway Messenger accepts mutations only from the gateway origin.
         origin: record.gateway ? gatewayAddress(record).origin : `http://127.0.0.1:${record.messengerPort}`,
         credentialPath: docker ? '/credentials/messenger/daemon-token' : installationPaths(record).credentials.messenger,
-        human: { name: human.name, surname: human.surname } };
+        human: profile };
       const args = ['--input-type=module', '-e', script, JSON.stringify(selection)];
       const result = docker ? await compose(record, ['exec', '-T', 'messenger', 'node', ...args])
         : await effects.run(process.execPath, args, { env: localEnv(record), sensitive: true });

@@ -49,6 +49,7 @@ export const USAGE = `ours-install — interactive setup with optional CLI prese
   --username USERNAME       local username; no global uniqueness check
   --name NAME               Messenger given name
   --surname SURNAME         Messenger family name
+  --full-name NAME          Messenger full name; Name and Surname then become optional and are never derived from it
   --hostname NAME           optional host/workspace name; defaults to this machine
   --disable-fleet-agents-setup  install Fleet CLI without its roles/model wizard
   --identity-name NAME      desired Human name for a fresh server; existing root is retained

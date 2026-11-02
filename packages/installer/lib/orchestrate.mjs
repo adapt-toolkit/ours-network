@@ -42,7 +42,7 @@ import { configJournal, reportRollback } from './journal.mjs';
 import { detectDaemons, planDaemonSelection, resolveSelection } from './detect.mjs';
 import { detectPlatform, resolveChannel } from './logic.mjs';
 import { daemonEnv } from './effects.mjs';
-import { productOf, serverRole, PRODUCT_LABELS } from './product.mjs';
+import { productOf, serverRole, PRODUCT_LABELS, personName } from './product.mjs';
 import {
   buildClaudeMarketplace, buildCodexMarketplace, marketplaceJson, marketplacePaths,
   validateChannelVersion,
@@ -1593,7 +1593,7 @@ async function executeServerCommand(args, effects) {
   }
   const showInstallProgress = args.operation === 'install' && !(existing && (record.schema === 1 || record.layoutConversion));
   const installStageCount = (existing ? 7 : 9) + (args.identityName ? 2 : 0)
-    + (args.identityName && args.name && args.surname && (!existing || [undefined, null, args.identityName, `${args.name} ${args.surname}`].includes(record.messengerIdentity)) ? 1 : 0);
+    + (args.identityName && personName(args) && (!existing || [undefined, null, args.identityName, personName(args)].includes(record.messengerIdentity)) ? 1 : 0);
   let completedInstallStages = 0;
   const installStage = async (label, explanation, action) => {
     if (!showInstallProgress) return action();
@@ -1648,7 +1648,7 @@ async function executeServerCommand(args, effects) {
       const identity = await installStage('Human identity', 'Keep the existing Human identity, or create it on a fresh daemon.', () => effects.serverEnsureIdentity(record, args.identityName));
       // Messenger runs as the person's own identity under the Human identity when Name and Surname are known.
       // An installation whose Messenger already runs as some other identity under it keeps that identity.
-      const person = args.name && args.surname ? `${args.name} ${args.surname}` : undefined;
+      const person = personName(args);
       const selected = existing ? record.messengerIdentity : undefined;
       if (person && (!selected || selected === identity.name || selected === person)) {
         const own = await installStage('Messenger identity', 'Keep or create your own identity under the Human identity; Messenger runs as it.', () => effects.serverEnsureMessengerIdentity(record, person));

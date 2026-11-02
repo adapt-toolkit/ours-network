@@ -267,3 +267,40 @@ for(const key of ['name','surname'])for(const migration of [false,true])test(`${
  assert.equal(options[key],'Supplied');assert.equal(options.localUsername,'Taylor'.toLowerCase());assert(options.name);assert(options.surname);
  if(migration)assert.equal(options.identityName,'Retained Human');
 });
+
+test('a full name stands on its own: Name and Surname become optional and are never derived from it',()=>{
+ const base=['--mode=docker','--state-dir=/private/ours','--username=alex','--hostname=work','--integrations=fleet','--disable-fleet-agents-setup'];
+ for(const [extra,want] of [
+  [['--full-name=Prince'],{fullName:'Prince',name:undefined,surname:undefined}],
+  [['--full-name= Ada King ','--name=Ada'],{fullName:'Ada King',name:'Ada',surname:undefined}],
+  [['--full-name=Ada King','--surname=Lovelace'],{fullName:'Ada King',name:undefined,surname:'Lovelace'}],
+  [['--full-name=Ada Lovelace','--name=Ada','--surname=Lovelace'],{fullName:'Ada Lovelace',name:'Ada',surname:'Lovelace'}],
+ ]){
+  const options=parse([...base,...extra]);
+  assert.deepEqual({fullName:options.fullName,name:options.name,surname:options.surname},want,extra.join(' '));
+  assert.equal(options.identityName,'alex@work');
+ }
+ // The selected identity label obeys the existing person-name rule, and fails instead of being cut.
+ assert.throws(()=>parse([...base,'--full-name='+'x'.repeat(65)]),/Full name must contain at most 64/);
+ assert.throws(()=>parse([...base,'--full-name=a/b']),/Full name must contain at most 64/);
+ assert.throws(()=>parse([...base,'--full-name='+'x'.repeat(101)]),/fullName must contain at most 100/);
+ // Without a full name the complete pair is still required, and the hostname still needs a profile.
+ assert.throws(()=>parse([...base,'--name=Ada']),/Missing human profile option: surname/);
+ assert.throws(()=>parse(['--mode=docker','--state-dir=/private/ours','--identity-name=x','--hostname=work','--integrations=none']),/--hostname requires username/);
+ assert.throws(()=>parse([...base.filter(a=>!a.startsWith('--username')),'--full-name=Prince']),/Missing human profile option: localUsername/);
+ assert.throws(()=>parse(['--plugin-only','--mode=docker','--state-dir=/private/ours','--username=alex','--full-name=Prince']),/--full-name belongs to the complete workspace/);
+ assert.throws(()=>parse(['client','--config=/private/profile.json','--integrations=none','--username=alex','--full-name=Prince']),/is only valid for server or all scope/);
+});
+
+test('a full-name preset is not asked for Name or Surname, on fresh, retained and migration paths',async()=>{
+ for(const fixture of [
+  {},
+  {existing:{mode:'docker',messengerIdentity:'Existing Root'},answers:{'Proceed with this update and keep a recovery backup?':true}},
+  {legacy:{stateDir:'/private/old'},answers:{[migrationConsent]:true}},
+ ]){
+  const f=interactiveFixture(fixture);
+  const options=await collectSetupOptions(f.effects,{localUsername:'alex',fullName:'Prince',disableFleetAgentsSetup:true});
+  assert.equal(options.fullName,'Prince');assert.equal(options.name,undefined);assert.equal(options.surname,undefined);
+  assert(!f.questions.some(row=>['Name: ','Surname: '].includes(row[0])),JSON.stringify(Object.keys(fixture)));
+ }
+});

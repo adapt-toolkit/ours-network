@@ -307,3 +307,52 @@ test('a rerun replaces a saved credential this server refuses, and keeps one it 
   assert.equal(f.calls.filter(c => c.operation === 'access-issue').length, 2);
   assert.match(f.messages.join('\n'), /no longer accepted/);
 });
+
+test('a fresh Messenger receives independent full name, Name and Surname through the executed helper', async t => {
+  const { createServer } = await import('node:http');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const exec = promisify(execFile);
+  const { installationPaths } = await import('../lib/plan.mjs');
+  const { mkdirSync } = await import('node:fs');
+  const f = fixture(t), credential = installationPaths(f.record).credentials.messenger;
+  mkdirSync(dirname(credential), { recursive: true, mode: 0o700 }); writeFileSync(credential, 'fixture-token', { mode: 0o600 });
+  const posted = [];
+  const server = createServer((req, res) => {
+    assert.equal(req.headers['x-ours-api-token'], 'fixture-token');
+    let body = ''; req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      if (req.method === 'GET') return res.end(JSON.stringify({ cid: 'a'.repeat(64), name: 'alex@work', humanProfile: undefined }));
+      assert.equal(req.url, '/api/identity/profile'); assert.equal(req.headers['x-ours-messenger-csrf'], '1');
+      posted.push(JSON.parse(body)); res.end(JSON.stringify(JSON.parse(body)));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
+  f.record.messengerPort = server.address().port;
+  f.effects.run = async (command, args, options) => { const result = await exec(command, args, { env: { ...process.env, ...options.env } }); return { code: 0, stdout: result.stdout }; };
+  for (const profile of [{ fullName: 'Prince' }, { fullName: 'Ada King', name: 'Ada', surname: null }, { name: 'Ada', surname: 'Lovelace' }])
+    await f.helper().serverEnsureHumanProfile(f.record, profile);
+  assert.deepEqual(posted, [
+    { fullName: 'Prince', name: null, surname: null },
+    { fullName: 'Ada King', name: 'Ada', surname: null },
+    { fullName: null, name: 'Ada', surname: 'Lovelace' },
+  ], 'a full name is sent as given and never split; absent parts are null');
+  assert.equal(f.calls.length, 0, 'no daemon root identity operation, credential issuance or Compose mutation');
+});
+
+test('profile handoff refuses an empty or malformed profile before running anything', async t => {
+  const f = fixture(t), runs = [];
+  f.effects.run = async (...args) => { runs.push(args); return { code: 0, stdout: '' }; };
+  for (const profile of [{}, { name: 'Ada' }, { surname: 'Lovelace' }, { fullName: ' ' }, { fullName: 'x'.repeat(101) }, { fullName: 'a\u0007b' }, { fullName: 7 }])
+    await assert.rejects(f.helper().serverEnsureHumanProfile(f.record, profile), /Invalid Messenger human profile/, JSON.stringify(profile));
+  assert.equal(runs.length, 0);
+});
+
+test('Docker profile handoff carries the full name in the helper JSON argument', async t => {
+  const f = fixture(t); Object.assign(f.record, { mode: 'docker', gateway: { version: 1 }, port: 3057, messengerPort: 8421 });
+  const selections = [];
+  f.deps.compose = async (selected, args) => { assert.deepEqual(args.slice(0, 4), ['exec', '-T', 'messenger', 'node']); selections.push(JSON.parse(args.at(-1))); return { code: 0, stdout: '' }; };
+  await f.helper().serverEnsureHumanProfile(f.record, { fullName: 'Prince', name: null, surname: null });
+  assert.deepEqual(selections[0].human, { fullName: 'Prince', name: null, surname: null });
+});
