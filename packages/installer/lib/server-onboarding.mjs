@@ -195,7 +195,7 @@ process.stdout.write(JSON.stringify(output));
       // Each part is independent and may be absent; nothing is split or combined (Messenger optional profile).
       const profile = Object.fromEntries(['fullName', 'name', 'surname'].map(key => [key, human[key] ?? null]));
       for (const value of Object.values(profile)) if (value !== null && (typeof value !== 'string' || !value.trim() || value.length > 100 || /[\x00-\x1f\x7f]/.test(value))) throw new Error('Invalid Messenger human profile');
-      if (!profile.fullName && !(profile.name && profile.surname)) throw new Error('Invalid Messenger human profile');
+      if (!profile.fullName && !profile.name && !profile.surname) throw new Error('Invalid Messenger human profile');
       // Messenger owns the profile lifecycle. Never rename the daemon root or
       // overwrite a profile already present on a retained installation.
       const script = `

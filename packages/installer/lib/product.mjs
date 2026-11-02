@@ -68,5 +68,5 @@ ${volume('/var/lib/ours-mcp', 'state/mcp')}
 }
 export const PLUGIN_ONLY_COMPOSE = 'compose.plugin-only.yaml';
 
-/** The person's own identity name: the full name when given, else Name and Surname together. */
-export const personName = ({ fullName, name, surname }) => fullName ?? (name && surname ? `${name} ${surname}` : undefined);
+/** The person's own identity name: the full name when given, else Name and Surname together, else the one part given. */
+export const personName = ({ fullName, name, surname }) => fullName ?? (name && surname ? `${name} ${surname}` : name ?? surname ?? undefined);

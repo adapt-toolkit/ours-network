@@ -331,12 +331,13 @@ test('a fresh Messenger receives independent full name, Name and Surname through
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
   f.record.messengerPort = server.address().port;
   f.effects.run = async (command, args, options) => { const result = await exec(command, args, { env: { ...process.env, ...options.env } }); return { code: 0, stdout: result.stdout }; };
-  for (const profile of [{ fullName: 'Prince' }, { fullName: 'Ada King', name: 'Ada', surname: null }, { name: 'Ada', surname: 'Lovelace' }])
+  for (const profile of [{ fullName: 'Prince' }, { fullName: 'Ada King', name: 'Ada', surname: null }, { name: 'Ada', surname: 'Lovelace' }, { name: 'Prince' }])
     await f.helper().serverEnsureHumanProfile(f.record, profile);
   assert.deepEqual(posted, [
     { fullName: 'Prince', name: null, surname: null },
     { fullName: 'Ada King', name: 'Ada', surname: null },
     { fullName: null, name: 'Ada', surname: 'Lovelace' },
+    { fullName: null, name: 'Prince', surname: null },
   ], 'a full name is sent as given and never split; absent parts are null');
   assert.equal(f.calls.length, 0, 'no daemon root identity operation, credential issuance or Compose mutation');
 });
@@ -344,7 +345,7 @@ test('a fresh Messenger receives independent full name, Name and Surname through
 test('profile handoff refuses an empty or malformed profile before running anything', async t => {
   const f = fixture(t), runs = [];
   f.effects.run = async (...args) => { runs.push(args); return { code: 0, stdout: '' }; };
-  for (const profile of [{}, { name: 'Ada' }, { surname: 'Lovelace' }, { fullName: ' ' }, { fullName: 'x'.repeat(101) }, { fullName: 'a\u0007b' }, { fullName: 7 }])
+  for (const profile of [{}, { name: null, surname: null, fullName: null }, { fullName: ' ' }, { name: '' }, { fullName: 'x'.repeat(101) }, { fullName: 'a\u0007b' }, { fullName: 7 }])
     await assert.rejects(f.helper().serverEnsureHumanProfile(f.record, profile), /Invalid Messenger human profile/, JSON.stringify(profile));
   assert.equal(runs.length, 0);
 });

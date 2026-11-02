@@ -100,6 +100,7 @@ test('a full name names the person\'s own identity and reaches Messenger unsplit
   for (const [extra, label, profile] of [
     [{ fullName: 'Prince' }, 'Prince', { fullName: 'Prince', name: null, surname: null }],
     [{ fullName: 'Ada King', name: 'Ada' }, 'Ada King', { fullName: 'Ada King', name: 'Ada', surname: null }],
+    [{ name: 'Prince', profileAsGiven: true }, 'Prince', { fullName: null, name: 'Prince', surname: null }],
   ]) {
     const { events, selected } = await selectedMessenger(fixture(), { localUsername: 'ada', hostname: 'home', identityName: 'ada@home', ...extra });
     assert.ok(events.some(e => Array.isArray(e) && e[0] === 'messenger-identity' && e[1] === label)); assert.equal(selected, label);

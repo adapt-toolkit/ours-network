@@ -304,3 +304,28 @@ test('a full-name preset is not asked for Name or Surname, on fresh, retained an
   assert(!f.questions.some(row=>['Name: ','Surname: '].includes(row[0])),JSON.stringify(Object.keys(fixture)));
  }
 });
+
+test('a profile given as is accepts any one known part, labels the identity with it and asks for nothing missing',async()=>{
+ const base=['--mode=docker','--state-dir=/private/ours','--username=alex','--hostname=work','--integrations=fleet','--disable-fleet-agents-setup','--profile-as-given'];
+ for(const [extra,want] of [
+  [['--name=Prince'],{fullName:undefined,name:'Prince',surname:undefined}],
+  [['--surname=Lovelace'],{fullName:undefined,name:undefined,surname:'Lovelace'}],
+  [['--name=Ada','--surname=Lovelace'],{fullName:undefined,name:'Ada',surname:'Lovelace'}],
+ ]){
+  const options=parse([...base,...extra]);
+  assert.deepEqual({fullName:options.fullName,name:options.name,surname:options.surname},want,extra.join(' '));
+  assert.equal(options.identityName,'alex@work');
+ }
+ assert.throws(()=>parse(base),/--profile-as-given requires --username with at least one of/);
+ assert.throws(()=>parse([...base,'--name='+'x'.repeat(65)]),/Name or Surname must contain at most 64/);
+ assert.throws(()=>parse(['--plugin-only','--mode=docker','--state-dir=/private/ours','--username=alex','--name=A','--profile-as-given']),/belongs to the complete workspace/);
+ assert.throws(()=>parse(['client','--config=/private/profile.json','--integrations=none','--username=alex','--name=A','--profile-as-given']),/is only valid for server or all scope/);
+ // Without it, a single part still needs its pair, as before.
+ assert.throws(()=>parse(base.filter(a=>a!=='--profile-as-given').concat('--name=Prince')),/Missing human profile option: surname/);
+ for(const fixture of [{},{existing:{mode:'docker',messengerIdentity:'Existing Root'},answers:{'Proceed with this update and keep a recovery backup?':true}},{legacy:{stateDir:'/private/old'},answers:{[migrationConsent]:true}}]){
+  const f=interactiveFixture(fixture);
+  const options=await collectSetupOptions(f.effects,{localUsername:'alex',name:'Prince',profileAsGiven:true,disableFleetAgentsSetup:true});
+  assert.equal(options.name,'Prince');assert.equal(options.surname,undefined);
+  assert(!f.questions.some(row=>['Name: ','Surname: '].includes(row[0])),JSON.stringify(Object.keys(fixture)));
+ }
+});
