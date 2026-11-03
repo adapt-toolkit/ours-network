@@ -7,7 +7,7 @@
     "@ours.network/sdk": "5.2.1-nightly.1",
     "@ours.network/cli": "4.2.1-nightly.1",
     "@ours.network/cowork": "2.0.4-nightly.20261103.1776baf",
-    "@ours.network/fleet": "2.4.0-nightly.1",
-    "@ours.network/fleet-codex": "2.4.0-nightly.1"
+    "@ours.network/fleet": "2.4.0-nightly.2",
+    "@ours.network/fleet-codex": "2.4.0-nightly.2"
   }
 }

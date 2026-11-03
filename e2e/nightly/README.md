@@ -6,9 +6,7 @@ Start with [GETTING_STARTED.md](./GETTING_STARTED.md) for requirements, the firs
 
 Latest active run: **37/37 passed**, with 6 TODO and 2 withdrawn exclusions. See [active matrix](ACTIVE_COVERAGE_MATRIX.md) and [run report](RUN_REPORT.md).
 
-The manifests now pin the SDK 5.2.1-nightly.1 family (CLI 4.2.1-nightly.1, daemon 5.2.1-nightly.1, MCP and agent adapters 2.1.0-nightly.1, Cowork 2.0.4-nightly.20261103.1776baf, Messenger server 2.0.4-nightly.1, Telegram connector 2.0.4-nightly.2). The 37/37 result above was measured on the earlier SDK 4 pins; this set has not been run yet.
-
-**TODO:** Fleet, Fleet Codex and Fleet Claude Code are pinned to 2.4.0-nightly.1, the current `nightly` tag, as a placeholder. Refresh them and their lock entries when the next Fleet nightly is published.
+The manifests now pin the SDK 5.2.1-nightly.1 family (CLI 4.2.1-nightly.1, daemon 5.2.1-nightly.1, MCP and agent adapters 2.1.0-nightly.1, Cowork 2.0.4-nightly.20261103.1776baf, Messenger server 2.0.4-nightly.1, Telegram connector 2.0.4-nightly.2, Fleet, Fleet Codex and Fleet Claude Code 2.4.0-nightly.2). The 37/37 result above was measured on the earlier SDK 4 pins; this set has not been run yet.
 
 ## Test language
 

@@ -6,12 +6,12 @@
     "@cucumber/cucumber": "13.2.1",
     "@ours.network/sdk": "5.2.1-nightly.1",
     "@ours.network/cli": "4.2.1-nightly.1",
-    "@ours.network/fleet": "2.4.0-nightly.1",
+    "@ours.network/fleet": "2.4.0-nightly.2",
     "@ours.network/mcp": "2.1.0-nightly.1",
     "@ours.network/codex": "2.1.0-nightly.1",
     "@ours.network/claude-code": "2.1.0-nightly.1",
     "@ours.network/hermes": "2.1.0-nightly.1",
-    "@ours.network/fleet-codex": "2.4.0-nightly.1",
-    "@ours.network/fleet-claude-code": "2.4.0-nightly.1"
+    "@ours.network/fleet-codex": "2.4.0-nightly.2",
+    "@ours.network/fleet-claude-code": "2.4.0-nightly.2"
   }
 }
