@@ -12,8 +12,8 @@
       "integrity": "sha512-4NjAsMVwvE+QGwvwmH+teakw0RhV1cLatJXBRZk9B2DUO2yXmObHG3xWXC9JLBPZDEjSPcXO8TTELNjwEuG+cA=="
     },
     "@ours.network/tg-connector": {
-      "version": "2.0.4-nightly.1",
-      "integrity": "sha512-31H+Dlh1cwoaIDxI5JG4hPmXl2Z4uGWzXE/GztUvhEouq7q0LR8dPqHf/2Hebjs1yNMQcwNKZO9UlVe2f3lGWA=="
+      "version": "2.0.4-nightly.2",
+      "integrity": "sha512-+0Bm56TAWCZLfrE2rs5HaDP542755DbvBN9rkpIrCW7GtJB4ld6bNtx9FTz0iiEkq0BGBASLphcIXeWe8OOVqQ=="
     },
     "@ours.network/cowork": {
       "version": "2.0.4-nightly.20261103.1776baf",
@@ -24,12 +24,12 @@
       "integrity": "sha512-4mXTygmha1zmY6dfAS4GYtcjUZ5VO8ecX237oGCre1DmnrghK44fhCwgx8NY+AAd9vowR+Jr8AjB3wsFWPQ58A=="
     },
     "@ours.network/notifications": {
-      "version": "0.3.1-nightly.7",
-      "integrity": "sha512-oE6f1P1/QkX+oGuZGiw0dtpeg2sLsh93SvPyshexuFlOr3/5SbR07G8QmTqCRJbQ04h2QB/YlFFlRRgu9iHlCQ=="
+      "version": "1.0.3-nightly.1",
+      "integrity": "sha512-f0FujFVa8W34XixeLl8A7BQpG1ehshbuTRBPCENO6nep34jRTlJPP6ev6K4nWsDcVMEFRFQZNBY5sX3XT1SnIA=="
     },
     "@ours.network/fleet": {
-      "version": "2.4.0-nightly.1",
-      "integrity": "sha512-L0yhVm86SNtJ0cR41c36y7tRQpbhAynEliQ5m7VytOQ4cTeIbyFY4MSQxhYKTsbOJTueLohLwMJGlF8NhMrp7w=="
+      "version": "2.4.0-nightly.2",
+      "integrity": "sha512-w04w3gMPPRSXUCY7Z/wUQO8rRSqIyqgq8xN+eEOtxCaXba25G41K89NKVrqp1HMZG8mC8e/srqlApTsB7vVYng=="
     },
     "@ours.network/mcp": {
       "version": "2.1.0-nightly.1",
