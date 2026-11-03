@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { readinessFaultShim, startCandidateRegistry, assertRetained, INSTALLER } from './nightly-qualification.mjs';
+import { readinessFaultShim, startCandidateRegistry, assertRetained, INSTALLER, OFFLINE_SEED, OFFLINE_SEED_SHELL } from './nightly-qualification.mjs';
 
 const run = promisify(execFile);
 const selfUpdate = fileURLToPath(new URL('../packages/installer/lib/self-update.mjs', import.meta.url));
@@ -97,4 +97,60 @@ test('retention comparison allows only the version and the unread filter to chan
   assert.throws(() => assertRetained(baseline, { ...current, credentials: { owner: 'p' } }, '1.0.3-nightly.1', 'fixture'), /retained exactly/);
   assert.throws(() => assertRetained(baseline, { ...current, unreadFilter: { filter: null, ids: ['a', 'b'] } }, '1.0.3-nightly.1', 'fixture'), /unread filter/);
   assert.throws(() => assertRetained(baseline, current, '1.0.2', 'fixture'), /candidate Notifications is running/);
+});
+
+// A stand-in Store with the published Store's lock behaviour: an exclusive lock file it removes on close.
+const FAKE_STORE = `import { openSync, closeSync, writeFileSync, unlinkSync } from 'node:fs';
+export class Store {
+  constructor(file) { this.lock = file + '.lock'; closeSync(openSync(this.lock, 'wx')); this.rows = []; writeFileSync(file + '.opened', ''); }
+  produce(input) { const row = { id: input.eventId }; this.rows.push(row); return row; }
+  due() { const row = this.rows.shift(); return row ? [{ id: 'job-' + row.id, notificationId: row.id }] : []; }
+  finish() {}
+  close() { unlinkSync(this.lock); }
+}`;
+
+function seedFixture(t) {
+  const dir = temp(t, 'qualification-seed-');
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ users: [{ userId: 'owner' }], producers: [] }));
+  writeFileSync(join(dir, 'store.mjs'), FAKE_STORE);
+  const env = { ...process.env, QUALIFICATION_NOTIFICATIONS_DIR: dir, QUALIFICATION_STORE_MODULE: join(dir, 'store.mjs'), QUALIFICATION_SEED: OFFLINE_SEED };
+  const seed = () => new Promise(resolve => {
+    const child = spawn('/bin/sh', ['-c', OFFLINE_SEED_SHELL], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout.on('data', d => out += d); child.stderr.on('data', d => err += d);
+    child.on('exit', code => resolve({ code, out, err }));
+  });
+  return { dir, seed };
+}
+
+test('offline seeding refuses while a writer holds the Notifications directory flock and leaves its lock file', async t => {
+  const { dir, seed } = seedFixture(t);
+  writeFileSync(join(dir, 'state.json.lock'), 'live-writer-token');
+  const holder = spawn('flock', ['-n', dir, 'sleep', '30'], { stdio: 'ignore' });
+  t.after(() => holder.kill('SIGKILL'));
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const result = await seed();
+  assert.equal(result.code, 75);
+  assert.match(result.err, /in use by another writer/);
+  assert.equal(readFileSync(join(dir, 'state.json.lock'), 'utf8'), 'live-writer-token');
+  assert.equal(existsSync(join(dir, 'state.json.opened')), false, 'the Store was never opened');
+});
+
+test('offline seeding under the flock clears a stale lock file, reports it, and releases its own lock', async t => {
+  const { dir, seed } = seedFixture(t);
+  writeFileSync(join(dir, 'state.json.lock'), 'stale-token');
+  const stale = await seed();
+  assert.equal(stale.code, 0, stale.err);
+  assert.deepEqual(JSON.parse(stale.out), { offline: true, staleLockCleared: true });
+  assert.equal(existsSync(join(dir, 'state.json.lock')), false);
+  const clean = await seed();
+  assert.equal(clean.code, 0, clean.err);
+  assert.deepEqual(JSON.parse(clean.out), { offline: true, staleLockCleared: false });
+});
+
+test('the offline seed refuses to run without the directory flock', async t => {
+  const { dir } = seedFixture(t);
+  await assert.rejects(run(process.execPath, ['--input-type=module', '-e', OFFLINE_SEED], { env: { ...process.env, QUALIFICATION_NOTIFICATIONS_DIR: dir, QUALIFICATION_STORE_MODULE: join(dir, 'store.mjs') } }),
+    /requires the Notifications directory flock/);
+  assert.equal(existsSync(join(dir, 'state.json.opened')), false);
 });

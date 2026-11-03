@@ -123,17 +123,21 @@ if (action === 'seed') {
 process.stdout.write(JSON.stringify(result));`;
 
 /**
- * Offline seeding with the image's own Notifications Store, run only while the
- * writer is stopped: it refuses a present store lock and the caller holds the
- * same directory flock every writer holds. It adds a pending retry (deadline
- * RETRY_DEADLINE, synthetic 503) and an accepted delivery (synthetic 201); the
- * provider transport is never called.
+ * Offline seeding with the image's own Notifications Store. It runs only under
+ * OFFLINE_SEED_SHELL, which holds the Notifications directory flock that every
+ * writer holds for its lifetime (start-messenger.sh, fd 4). Holding it proves no
+ * writer is alive, so a store lock file left behind is stale; it is cleared the
+ * same way start-messenger.sh clears it, and reported. It adds a pending retry
+ * (deadline RETRY_DEADLINE, synthetic 503) and an accepted delivery (synthetic
+ * 201); the provider transport is never called.
  */
-export const OFFLINE_SEED = `import { existsSync, readFileSync } from 'node:fs';
+export const OFFLINE_SEED = `import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 const dir = process.env.QUALIFICATION_NOTIFICATIONS_DIR || '/storage/state/notifications';
 const { Store } = await import(process.env.QUALIFICATION_STORE_MODULE || '/opt/ours/node_modules/@ours.network/notifications/dist/store.js');
 const file = dir + '/state.json';
-if (existsSync(file + '.lock')) throw new Error('Notification store lock present; the writer is not stopped');
+if (process.env.QUALIFICATION_WRITER_FLOCK !== 'held') throw new Error('Offline seeding requires the Notifications directory flock');
+const staleLock = existsSync(file + '.lock');
+if (staleLock) unlinkSync(file + '.lock');
 const config = JSON.parse(readFileSync(dir + '/config.json', 'utf8'));
 const trusted = config.producers.filter(p => p.capabilities?.includes('mission-ownership')).map(p => ({ userId: p.userId, source: p.source }));
 const store = new Store(file, { lifecycleProducers: trusted });
@@ -148,7 +152,10 @@ try {
   settle(store.produce(input('nightly-qualification-delivered')), 'sent', Date.now(), 'provider_accepted', 201);
 } finally { store.close(); }
 if (existsSync(file + '.lock')) throw new Error('Notification store lock was not released');
-process.stdout.write('{"offline":true}');`;
+process.stdout.write(JSON.stringify({ offline: true, staleLockCleared: staleLock }));`;
+
+/** Hold the writers' directory flock for the whole seed; exit 75 if any writer holds it. */
+export const OFFLINE_SEED_SHELL = 'dir="${QUALIFICATION_NOTIFICATIONS_DIR:-/storage/state/notifications}"; exec 4<"$dir" || exit 1; flock -n 4 || { echo "Notification state is in use by another writer" >&2; exit 75; }; QUALIFICATION_WRITER_FLOCK=held exec node --input-type=module -e "$QUALIFICATION_SEED"';
 
 const messengerContainer = record => `${record.project}-messenger-1`;
 export const notifications = (record, action) => JSON.parse(docker(['exec', messengerContainer(record), 'node', '--input-type=module', '-e', NOTIFICATIONS_PROBE, '--', action]));
@@ -170,11 +177,16 @@ export async function seedOfflineWithWriterStopped(record) {
   const stopped = JSON.parse(docker(['inspect', '--format', '{{json .State}}', container]));
   assert.equal(stopped.Status, 'exited');
   assert.equal(stopped.ExitCode, 0, 'Messenger and Notifications stopped cleanly');
-  docker(['run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+  console.log(`Messenger stopped: started ${stopped.StartedAt}, finished ${stopped.FinishedAt}`);
+  console.log(docker(['logs', '--tail', '30', container]));
+  const volume = `${record.project}_server-storage`;
+  assert.equal(docker(['ps', '--filter', `volume=${volume}`, '--format', '{{.Names}}']).trim(), '', 'no running container mounts the Notifications state');
+  const seeded = docker(['run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
     '--user', `${record.uid ?? 1000}:${record.gid ?? 1000}`,
-    '--mount', `type=volume,source=${record.project}_server-storage,target=/storage`,
+    '--mount', `type=volume,source=${volume},target=/storage`,
     '--env', `QUALIFICATION_SEED=${OFFLINE_SEED}`, '--entrypoint', '/bin/sh', `${record.project}:runtime`,
-    '-c', 'exec 4<"/storage/state/notifications" || exit 1; flock -n 4 || { echo "Notification state is in use by another writer" >&2; exit 75; }; exec node --input-type=module -e "$QUALIFICATION_SEED"']);
+    '-c', OFFLINE_SEED_SHELL]);
+  console.log('Offline seed:', seeded.trim());
   docker(['start', container]);
   await waitHealthy(container);
 }
