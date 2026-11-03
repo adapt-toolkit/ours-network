@@ -157,6 +157,15 @@ process.stdout.write(JSON.stringify({ offline: true, staleLockCleared: staleLock
 /** Hold the writers' directory flock for the whole seed; exit 75 if any writer holds it. */
 export const OFFLINE_SEED_SHELL = 'dir="${QUALIFICATION_NOTIFICATIONS_DIR:-/storage/state/notifications}"; exec 4<"$dir" || exit 1; flock -n 4 || { echo "Notification state is in use by another writer" >&2; exit 75; }; QUALIFICATION_WRITER_FLOCK=held exec node --input-type=module -e "$QUALIFICATION_SEED"';
 
+/** Whether a container's mounts expose the Notifications state directory: the whole volume, or a subpath containing it. */
+export function exposesNotificationsState(mounts, volume) {
+  return mounts.some(mount => {
+    if (mount.Type !== 'volume' || mount.Source !== volume) return false;
+    const subpath = (mount.VolumeOptions?.Subpath ?? '').replace(/^\/+|\/+$/g, '');
+    return subpath === '' || 'state/notifications'.startsWith(subpath + '/') || subpath === 'state/notifications' || subpath.startsWith('state/notifications/');
+  });
+}
+
 const messengerContainer = record => `${record.project}-messenger-1`;
 export const notifications = (record, action) => JSON.parse(docker(['exec', messengerContainer(record), 'node', '--input-type=module', '-e', NOTIFICATIONS_PROBE, '--', action]));
 
@@ -180,7 +189,12 @@ export async function seedOfflineWithWriterStopped(record) {
   console.log(`Messenger stopped: started ${stopped.StartedAt}, finished ${stopped.FinishedAt}`);
   console.log(docker(['logs', '--tail', '30', container]));
   const volume = `${record.project}_server-storage`;
-  assert.equal(docker(['ps', '--filter', `volume=${volume}`, '--format', '{{.Names}}']).trim(), '', 'no running container mounts the Notifications state');
+  // Daemon, Cowork, Telegram and the gateway keep running on their own subpaths of the shared volume.
+  const running = docker(['ps', '--filter', `volume=${volume}`, '--format', '{{.Names}}']).split('\n').filter(Boolean);
+  for (const name of running) {
+    const mounts = JSON.parse(docker(['inspect', '--format', '{{json .HostConfig.Mounts}}', name])) ?? [];
+    assert.equal(exposesNotificationsState(mounts, volume), false, `${name} is running with the Notifications state mounted`);
+  }
   const seeded = docker(['run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
     '--user', `${record.uid ?? 1000}:${record.gid ?? 1000}`,
     '--mount', `type=volume,source=${volume},target=/storage`,

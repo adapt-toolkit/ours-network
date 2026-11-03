@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { readinessFaultShim, startCandidateRegistry, assertRetained, INSTALLER, OFFLINE_SEED, OFFLINE_SEED_SHELL } from './nightly-qualification.mjs';
+import { readinessFaultShim, startCandidateRegistry, assertRetained, INSTALLER, OFFLINE_SEED, OFFLINE_SEED_SHELL, exposesNotificationsState } from './nightly-qualification.mjs';
 
 const run = promisify(execFile);
 const selfUpdate = fileURLToPath(new URL('../packages/installer/lib/self-update.mjs', import.meta.url));
@@ -153,4 +153,15 @@ test('the offline seed refuses to run without the directory flock', async t => {
   await assert.rejects(run(process.execPath, ['--input-type=module', '-e', OFFLINE_SEED], { env: { ...process.env, QUALIFICATION_NOTIFICATIONS_DIR: dir, QUALIFICATION_STORE_MODULE: join(dir, 'store.mjs') } }),
     /requires the Notifications directory flock/);
   assert.equal(existsSync(join(dir, 'state.json.opened')), false);
+});
+
+test('only a whole-volume or Notifications subpath mount exposes the Notifications state', () => {
+  const volume = 'ours-1_server-storage';
+  const mount = subpath => ({ Type: 'volume', Source: volume, Target: '/x', ...(subpath === undefined ? {} : { VolumeOptions: { Subpath: subpath } }) });
+  for (const subpath of ['state/daemon', 'state/mcp', 'state/telegram', 'state/cowork', 'state/credentials/cowork', 'state/notifications-old'])
+    assert.equal(exposesNotificationsState([mount(subpath)], volume), false, subpath);
+  for (const subpath of [undefined, '', 'state', 'state/', 'state/notifications', '/state/notifications/', 'state/notifications/keys'])
+    assert.equal(exposesNotificationsState([mount(subpath)], volume), true, String(subpath));
+  assert.equal(exposesNotificationsState([{ ...mount(undefined), Source: 'other_server-storage' }], volume), false);
+  assert.equal(exposesNotificationsState([{ Type: 'bind', Source: volume, Target: '/storage' }], volume), false);
 });
