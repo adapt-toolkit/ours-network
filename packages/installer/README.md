@@ -199,7 +199,7 @@ profile resolver. `releases/nightly.json` binds both selections to verified
 SHA512 integrities. Fleet and the MCP harness packages are selected on the
 same SDK/CLI graph; installer publication and rollout are separate steps, see
 [GATEWAY_SETUP.md](GATEWAY_SETUP.md). Mixed or unselected nested ours
-versions remain rejected within each selected graph. The same nightly set selects Cowork `2.0.4-nightly.20261103.1776baf`, Telegram `2.0.4-nightly.1`, Messenger `2.0.4-nightly.1`, Notifications `1.0.3-nightly.1`, and the MCP/Codex/Claude Code suite `2.1.0-nightly.1`. An explicit `--sources`
+versions remain rejected within each selected graph. The same nightly set selects Cowork `2.0.4-nightly.20261103.1776baf`, Telegram `2.0.4-nightly.2`, Messenger `2.0.4-nightly.1`, Notifications `1.0.3-nightly.1`, and the MCP/Codex/Claude Code suite `2.1.0-nightly.1`. An explicit `--sources`
 override remains available for development.
 
 ## Migrate an existing global installation
