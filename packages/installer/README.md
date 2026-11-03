@@ -189,9 +189,11 @@ it. They exclude the daemon and its native database/ADAPT dependencies. Fleet
 runs beside the harnesses on the client machine and calls the daemon HTTP API.
 Client commands report an unavailable server and never start one automatically.
 
-The checked-in source policy and packed installer retain the existing server
-release set (SDK `5.2.1-nightly.1`, CLI `4.2.1-nightly.1`, daemon
-`5.2.1-nightly.1`). The isolated host CLI uses published SDK
+The nightly release manifest selects the server release set SDK
+`5.2.1-nightly.1`, CLI `4.2.1-nightly.1` and daemon `5.2.1-nightly.1`, and the
+generated nightly installer embeds that selection. The committed stable assets,
+including `assets/sources.json`, keep the stable release set. On the nightly
+channel, the isolated host CLI uses published SDK
 `5.2.1-nightly.1` and CLI `4.2.1-nightly.1`, including the shared gateway
 profile resolver. `releases/nightly.json` binds both selections to verified
 SHA512 integrities. Fleet and the MCP harness packages are selected on the
