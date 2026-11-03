@@ -1,0 +1,36 @@
+name: Nightly installer upgrade
+# Qualifies the nightly installer candidate this branch would publish: a Docker
+# installation made by the current stable installer, with seeded Notifications
+# data, is updated by the candidate, interrupted at readiness and resumed.
+# No secrets, no commits and no publication; everything it creates on the
+# ephemeral runner is removed.
+on:
+  pull_request:
+    branches: [prerelease]
+  push:
+    branches: [prerelease]
+permissions:
+  contents: read
+concurrency:
+  group: installer-nightly-upgrade-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  nightly-candidate-upgrade:
+    name: Nightly candidate Docker upgrade from stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OURS_NIGHTLY_QUALIFICATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci
+      - name: Compute the nightly installer candidate (not committed, not published)
+        run: node scripts/prepare-nightly-qualification.mjs
+      - name: Update a stable Docker installation to the candidate, fail readiness, resume
+        run: node scripts/verify-nightly-candidate-upgrade.mjs
