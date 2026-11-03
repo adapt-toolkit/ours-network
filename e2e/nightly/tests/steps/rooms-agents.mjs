@@ -127,6 +127,9 @@ Given('Fleet uses a deterministic ACP agent and Cowork on server {word} with roo
   assert.equal(owner.isRoot, true, 'Fleet owner must be the daemon root identity');
   const home = `/agent-state/${side}-${randomUUID().slice(0, 6)}`;
   this.fleetHome = home;
+  // Fleet names task members <mission key>-<Role>. Each scenario is a separate
+  // Fleet on a shared daemon, so it needs its own mission key prefix.
+  const missionPrefix = `E${randomUUID().replaceAll('-', '').slice(0, 5).toUpperCase()}`;
   const coworkConfig = `/cowork/${side}/config.json`;
   process.env.OURS_COWORK_CONFIG = coworkConfig;
   process.env.OURS_CONFIG = `${home}/profile.json`;
@@ -151,6 +154,8 @@ Given('Fleet uses a deterministic ACP agent and Cowork on server {word} with roo
     `    expected_cid: ${owner.cid}`,
     '  defaults:',
     '    attach_owner: false',
+    'tasks:',
+    `  default_prefix: "${missionPrefix}"`,
     'room_templates:',
     `  ${template}:`,
     '    version: 1',
