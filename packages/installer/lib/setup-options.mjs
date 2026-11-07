@@ -1,20 +1,23 @@
 import { hostname } from 'node:os';
 import { serverBase } from './gateway.mjs';
 import { join, resolve, isAbsolute, dirname } from 'node:path';
-import { PRODUCTS, PLUGIN_ONLY, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
+import { PRODUCTS, PLUGIN_ONLY, PLUGIN_ONLY_INTEGRATIONS, personName } from './product.mjs';
 
 const scopes = ['all', 'server', 'client'];
 const integrations = ['codex', 'claude-code', 'fleet'];
 const valueFlags = new Map(Object.entries({
   '--container-engine': 'containerEngine', '--server-url': 'serverUrl', '--scope': 'scope', '--action': 'operation', '--mode': 'mode', '--state-dir': 'stateDir',
-  '--username': 'localUsername', '--name': 'name', '--surname': 'surname', '--hostname': 'hostname',
+  '--username': 'localUsername', '--name': 'name', '--surname': 'surname', '--full-name': 'fullName', '--hostname': 'hostname',
   '--identity-name': 'identityName', '--integrations': 'integrations', '--fleet-settings': 'fleetSettingsPath', '--fleet-task-workflow': 'fleetTaskWorkflowAgents',
   '--config': 'config', '--sources': 'sources', '--migrate-from': 'migrateFrom', '--port': 'port', '--cowork-port': 'coworkPort', '--messenger-port': 'messengerPort',
 }));
-const boolFlags = new Map([['--compatible', 'compatible'], ['--dry-run', 'dryRun'], ['--migrate', 'migrate'], ['--disable-fleet-agents-setup', 'disableFleetAgentsSetup']]);
+const boolFlags = new Map([['--compatible', 'compatible'], ['--dry-run', 'dryRun'], ['--migrate', 'migrate'], ['--disable-fleet-agents-setup', 'disableFleetAgentsSetup'], ['--profile-as-given', 'profileAsGiven']]);
 const allowed = new Set([...valueFlags.values(), ...boolFlags.values(), 'interactive', 'explicitPorts', 'product']);
 const defaults = { port: 3050, coworkPort: 3052, messengerPort: 8420 };
 const paths = ['stateDir', 'config', 'sources', 'fleetSettingsPath', 'migrateFrom'];
+const humanFields = ['localUsername', 'name', 'surname', 'fullName'];
+// Supplied parts are the whole profile: nothing missing is asked for or derived. A full name implies it.
+const asGiven = options => options.fullName !== undefined || options.profileAsGiven === true;
 const nonempty = value => typeof value === 'string' && value.trim().length > 0 && !/[\x00-\x1f\x7f]/.test(value);
 
 export function recommendedMode({ platform, arch, release = '' } = {}) {
@@ -35,24 +38,33 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
   const client = options.scope !== 'server';
   if (options.migrateFrom !== undefined && (!server || options.operation !== 'install')) throw new Error('--migrate-from requires server or all scope and operation install');
   if (options.migrateFrom !== undefined && (!nonempty(options.migrateFrom) || !isAbsolute(options.migrateFrom))) throw new Error('--migrate-from requires an absolute daemon config path');
-  const suppliedHuman = ['localUsername', 'name', 'surname'].some(key => options[key] !== undefined);
+  const suppliedHuman = humanFields.some(key => options[key] !== undefined);
+  if (options.profileAsGiven !== undefined && typeof options.profileAsGiven !== 'boolean') throw new Error('profileAsGiven must be a boolean');
+  if (options.profileAsGiven && !['name', 'surname', 'fullName'].some(key => options[key] !== undefined))
+    throw new Error('--profile-as-given requires --username with at least one of --name, --surname or --full-name');
   if (suppliedHuman) {
-    for (const key of ['localUsername', 'name', 'surname']) if (!nonempty(options[key])) throw new Error(`Missing human profile option: ${key}`);
+    // Given as is, each of Full name, Name and Surname is optional and never derived from another.
+    const required = asGiven(options) ? ['localUsername'] : ['localUsername', 'name', 'surname'];
+    for (const key of required) if (!nonempty(options[key])) throw new Error(`Missing human profile option: ${key}`);
     if (!/^[a-z0-9][a-z0-9-]{0,29}$/.test(options.localUsername)) throw new Error('Local username must contain 1–30 lowercase letters, digits or hyphens');
-    for (const key of ['name', 'surname']) {
+    for (const key of ['name', 'surname', 'fullName']) {
+      if (options[key] === undefined) continue;
+      if (!nonempty(options[key])) throw new Error(`Missing human profile option: ${key}`);
       if (options[key].trim().length > 100) throw new Error(`${key} must contain at most 100 characters`);
       options[key] = options[key].trim();
     }
-    // Name and Surname together name the person's own identity, which Messenger runs as.
-    const person = `${options.name} ${options.surname}`;
+    // The full name, else Name and Surname together, names the person's own identity, which Messenger runs as.
+    const person = personName(options);
     if ([...person].length > 64 || person !== person.normalize('NFC') || /[\\/\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(person))
-      throw new Error('Name and Surname together must contain at most 64 NFC characters, including the space between them, without slashes or control characters');
+      throw new Error(options.fullName !== undefined ? 'Full name must contain at most 64 NFC characters without slashes or control characters'
+        : options.name !== undefined && options.surname !== undefined ? 'Name and Surname together must contain at most 64 NFC characters, including the space between them, without slashes or control characters'
+          : 'Name or Surname must contain at most 64 NFC characters without slashes or control characters');
     options.hostname = options.hostname?.trim() || defaultHostname();
     if (!/^[a-z0-9][a-z0-9-]{0,29}$/.test(options.hostname)) throw new Error('Hostname must contain 1–30 lowercase letters, digits or hyphens');
     const identity = `${options.localUsername}@${options.hostname}`;
     if (options.migrateFrom === undefined && options.identityName !== undefined && options.identityName !== identity) throw new Error('--identity-name conflicts with username and hostname');
     if (options.migrateFrom === undefined) options.identityName = identity;
-  } else if (options.hostname !== undefined) throw new Error('--hostname requires username, name and surname');
+  } else if (options.hostname !== undefined) throw new Error('--hostname requires username with name and surname, or with full name');
   if (options.disableFleetAgentsSetup !== undefined && typeof options.disableFleetAgentsSetup !== 'boolean') throw new Error('disableFleetAgentsSetup must be a boolean');
   if (options.disableFleetAgentsSetup && options.fleetSettingsPath) throw new Error('--disable-fleet-agents-setup conflicts with --fleet-settings');
   if (options.fleetTaskWorkflowAgents !== undefined) {
@@ -71,7 +83,7 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
       if (options.mode !== undefined && !['docker'].includes(options.mode)) throw new Error('--plugin-only runs the daemon in Docker or Podman; native packages are not supported for it');
       if (options.integrations?.some?.(name => !PLUGIN_ONLY_INTEGRATIONS.includes(name))) throw new Error('--plugin-only connects Claude Code and/or Codex; Fleet is part of the complete workspace');
       for (const [key, flag] of [['fleetSettingsPath', '--fleet-settings'], ['fleetTaskWorkflowAgents', '--fleet-task-workflow'], ['disableFleetAgentsSetup', '--disable-fleet-agents-setup'],
-        ['name', '--name'], ['surname', '--surname'], ['migrateFrom', '--migrate-from'], ['serverUrl', '--server-url']]) {
+        ['name', '--name'], ['surname', '--surname'], ['fullName', '--full-name'], ['profileAsGiven', '--profile-as-given'], ['migrateFrom', '--migrate-from'], ['serverUrl', '--server-url']]) {
         if (options[key] !== undefined && options[key] !== false) throw new Error(`${flag} belongs to the complete workspace and cannot be combined with --plugin-only`);
       }
       if (options.explicitPorts?.some?.(key => key !== 'port')) throw new Error('--plugin-only uses one port; --cowork-port and --messenger-port do not apply');
@@ -93,7 +105,7 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
     options.serverUrl = serverBase(options.serverUrl);
   }
   if (server && options.config !== undefined) throw new Error('--config is only valid for client scope');
-  if (!server) for (const key of ['mode', 'stateDir', 'identityName', 'localUsername', 'name', 'surname', 'hostname', ...Object.keys(defaults), 'compatible', 'migrate']) {
+  if (!server) for (const key of ['mode', 'stateDir', 'identityName', 'localUsername', 'name', 'surname', 'fullName', 'profileAsGiven', 'hostname', ...Object.keys(defaults), 'compatible', 'migrate']) {
     if (options[key] !== undefined) throw new Error(`${key} is only valid for server or all scope`);
   }
   if (!client && (options.integrations !== undefined || options.fleetSettingsPath !== undefined)) throw new Error('--integrations and --fleet-settings require all or client scope');
@@ -270,22 +282,26 @@ export async function collectSetupOptions(effects, presets = {}) {
       if (existing?.messengerIdentity) {
         effects.out(`Existing Human identity ${existing.messengerIdentity} and Messenger profile will be retained.`);
         // Supplied profile inputs never rename a retained root.
-        if (!['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) options.identityName ??= existing.messengerIdentity;
+        if (!humanFields.some(key => options[key] !== undefined)) options.identityName ??= existing.messengerIdentity;
       } else if (options.identityName === undefined || options.localUsername !== undefined) {
         effects.out('Choose a local username (no global uniqueness check). Name and Surname appear in Messenger; the optional host name identifies this workspace.');
         options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
-        options.name ??= await effects.askLine('Name: ', '');
-        options.surname ??= await effects.askLine('Surname: ', '');
+        if (!asGiven(options)) {
+          options.name ??= await effects.askLine('Name: ', '');
+          options.surname ??= await effects.askLine('Surname: ', '');
+        }
         options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
       }
     }
-    if (['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) {
+    if (humanFields.some(key => options[key] !== undefined)) {
       // Partial profile presets still collect missing fields on retained and
       // migration paths; these inputs never replace their authoritative root.
       effects.out('Name and Surname initialize a missing Messenger profile; an existing profile is retained.');
       options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
-      options.name ??= await effects.askLine('Name: ', '');
-      options.surname ??= await effects.askLine('Surname: ', '');
+      if (!asGiven(options)) {
+        options.name ??= await effects.askLine('Name: ', '');
+        options.surname ??= await effects.askLine('Surname: ', '');
+      }
       options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
     }
     for (const [key, fallback] of Object.entries(defaults)) options[key] ??= existing?.[key] ?? fallback;

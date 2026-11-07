@@ -12,7 +12,7 @@ import { USAGE } from './usage.mjs';
 import { validateIdentityName } from './server-onboarding.mjs';
 import { validateFleetSettings } from './fleet-settings.mjs';
 import { installerFailure } from './diagnostics.mjs';
-import { productOf, isPluginOnly, serverRole, PRODUCT_LABELS, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
+import { productOf, isPluginOnly, serverRole, PRODUCT_LABELS, PLUGIN_ONLY_INTEGRATIONS, personName } from './product.mjs';
 import { collectWelcome, customHarnessGuidance, KEEPS_YOUR_SETUP } from './welcome.mjs';
 import { runRemoval } from './removal.mjs';
 
@@ -137,8 +137,8 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
     const result = await server({ ...plan, product: plan.product === 'workspace' ? undefined : plan.product, role: 'server', operation: plan.operation, sourcePolicy: plan.sourcePolicy }, effects);
     if (result !== 0) return result;
     const record = validateInstallation(effects.readJson(join(plan.stateDir, 'installation.json')), plan.stateDir);
-    if (plan.name && plan.surname && plan.operation === 'install') {
-      await effects.serverEnsureHumanProfile(record, { name: plan.name, surname: plan.surname });
+    if (personName(plan) && plan.operation === 'install') {
+      await effects.serverEnsureHumanProfile(record, { fullName: plan.fullName ?? null, name: plan.name ?? null, surname: plan.surname ?? null });
     }
     if (plan.operation === 'update') {
       effects.out(progress(0, 1, 'Retained identities', 'Verify the Human identity after state restoration; existing names and keys are retained.'));
