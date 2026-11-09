@@ -2,7 +2,7 @@
   "release": {
     "schema": 1,
     "channel": "stable",
-    "installerVersion": "2.1.0",
+    "installerVersion": "2.1.1",
     "packages": {
       "@ours.network/sdk": {
         "version": "5.2.0",
@@ -25,24 +25,24 @@
         "integrity": "sha512-zmOT67wmqp6HlgDrBy2bdvyKiuDQ64JXU1q8rgWQKv/DCJiXVt/xpC0mqCJccrNLKoTFk5IACd1nBPHkcrocCg=="
       },
       "@ours.network/notifications": {
-        "version": "1.0.1",
-        "integrity": "sha512-4AUpWQd13m53EinmxF6Q2OO9xfkZ5+UrKwTvlnq3LaLCnPz/AfchzaHkAWDAq9ZeIMZHpsgaJ0FptS+ToFXzbg=="
+        "version": "1.0.2",
+        "integrity": "sha512-jqGvgzgyaYVqkROLZyzno6NzQyb6oszXATwmtukQ+ZrHVik86jQHGKvBDwa9ZvOVZEefmm+OhnQoLkXGcA/mwQ=="
       },
       "@ours.network/fleet": {
-        "version": "2.3.4",
-        "integrity": "sha512-XnY1fSddroAO2hHUTE712JsuNLMRo0ynfJiCdY2f28PBM/LgrL7D0xVMpmQ85CdQtEPSUzK23bO6zzEYSbq6zw=="
+        "version": "2.3.5",
+        "integrity": "sha512-0ziDFShIj44tRaYhezsc6NzcvNOHOotbFENA0HYoxKbD//KigUFOcwcV/QQ+ZDUKK+0LTmLrTnTAe7ooSyzv1A=="
       },
       "@ours.network/mcp": {
-        "version": "2.0.3",
-        "integrity": "sha512-cMfwMBhMuyo6FpFwuzgc4UMjotK0ZoDNkvGz7rgqnz495t3X6Bd7qgV39chRV8P6W8f5KDHLNEk4wgAmjYroNQ=="
+        "version": "2.0.4",
+        "integrity": "sha512-+KbZRBmTFcx4w7ps2QtbPxoyOnTBIkOENgd3qSo0lRF6qIlDwn7f6pWJBCAnw9SJqwzYtNRbaMi9X8pcqfd5mw=="
       },
       "@ours.network/codex": {
-        "version": "2.0.3",
-        "integrity": "sha512-9TLOI+RjbSU+XmRPxIGnrsXuUsW13Xpjueq6kk0vPB6k4CptaBUqoVpzYAM6H9SbZ3kA2cTg7/tPyT5D5Q5iuQ=="
+        "version": "2.0.4",
+        "integrity": "sha512-EbO/cBxjcvPHXF3EtD/diFHCPxon9uuPFjt3MTEVPXQL9h/vDFnS6pEArNBQuJdf/nMDR5dXPIuMtOXlFiE07w=="
       },
       "@ours.network/claude-code": {
-        "version": "2.0.3",
-        "integrity": "sha512-qVwWr+oPc19HiYHsauMS57GWj2aefYi4enT8C3dQM24vWQ1ZlXwMHuJZbMfGfERafIxpY9uNYyYNbL3ytNIdFg=="
+        "version": "2.0.4",
+        "integrity": "sha512-WsU8kaumTOm7zWbmrgzdwlzkqzThGGjxB08hGSKIINV+rWkZNcJYg+Qdioc+a++YsVxUG0ttuYRpuGAVl2sjxw=="
       },
       "@ours.network/daemon": {
         "version": "5.2.0",
@@ -83,23 +83,23 @@
     },
     "@ours.network/notifications": {
       "type": "npm",
-      "version": "1.0.1"
+      "version": "1.0.2"
     },
     "@ours.network/fleet": {
       "type": "npm",
-      "version": "2.3.4"
+      "version": "2.3.5"
     },
     "@ours.network/mcp": {
       "type": "npm",
-      "version": "2.0.3"
+      "version": "2.0.4"
     },
     "@ours.network/codex": {
       "type": "npm",
-      "version": "2.0.3"
+      "version": "2.0.4"
     },
     "@ours.network/claude-code": {
       "type": "npm",
-      "version": "2.0.3"
+      "version": "2.0.4"
     },
     "@ours.network/daemon": {
       "type": "npm",
