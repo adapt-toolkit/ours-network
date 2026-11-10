@@ -2,7 +2,7 @@
   "release": {
     "schema": 1,
     "channel": "stable",
-    "installerVersion": "2.1.2",
+    "installerVersion": "2.1.3",
     "packages": {
       "@ours.network/sdk": {
         "version": "5.2.0",
@@ -13,8 +13,8 @@
         "integrity": "sha512-4RpFVbn+kyf/JcYd/0jCPq4iAtu5H7wCedQv0CPFNFcCK3+2yK9ogwwq97sFZmM07CwUU0/fZk3Layu80hSd2A=="
       },
       "@ours.network/tg-connector": {
-        "version": "2.1.0",
-        "integrity": "sha512-yuhU904fc+G64+mAT1xJ5kMQPcmriF1Ko4DPdrk2o/x9sIww8aDwr5CCu/BvrQEikzQz2cByTBka4wxJT2fDLQ=="
+        "version": "2.1.1",
+        "integrity": "sha512-EiQiw13hr6aAu1Px8Y2Yt6MnbyYDxumeI9RebtHU+5LmnnY8H6tEEdvxA2bSnMDzEvRwjjuNmSP9PyYTKF1eDw=="
       },
       "@ours.network/cowork": {
         "version": "2.0.3",
@@ -71,7 +71,7 @@
     },
     "@ours.network/tg-connector": {
       "type": "npm",
-      "version": "2.1.0"
+      "version": "2.1.1"
     },
     "@ours.network/cowork": {
       "type": "npm",
