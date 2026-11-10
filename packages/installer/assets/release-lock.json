@@ -18,7 +18,7 @@
         "@ours.network/messenger-server": "2.0.3",
         "@ours.network/notifications": "1.0.2",
         "@ours.network/sdk": "5.2.0",
-        "@ours.network/tg-connector": "2.0.3"
+        "@ours.network/tg-connector": "2.1.0"
       }
     },
     "node_modules/@adapt-toolkit/sdk": {
@@ -558,9 +558,9 @@
       ]
     },
     "node_modules/@anthropic-ai/sdk": {
-      "version": "1.6.0",
-      "resolved": "https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-1.6.0.tgz",
-      "integrity": "sha512-XqiO/46n8S6So8jQ/6/uNCkHntyW6QHHs1gZ+hlwTx1fWDr929g4VmwIXfdMVk7SuBWNdQvAlwyi1G3t6SEIuQ==",
+      "version": "1.7.0",
+      "resolved": "https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-1.7.0.tgz",
+      "integrity": "sha512-Z+0c1iHQozlt4ymMHapPXEXfFnSbPEWGnSKbkavt+qeyaMQ3Sd6QNxfQj7vyhHYqiqYadC9shrXub8ISKf7xjQ==",
       "license": "Apache-2.0",
       "optional": true,
       "peer": true,
@@ -1171,9 +1171,9 @@
       }
     },
     "node_modules/@ours.network/tg-connector": {
-      "version": "2.0.3",
-      "resolved": "https://registry.npmjs.org/@ours.network/tg-connector/-/tg-connector-2.0.3.tgz",
-      "integrity": "sha512-NXto1ouf9l6k2LtRUdpakrnZnxbCymlPLqjy61LBPaVtjiUHF6lS7IJy7dIazHVBOUShbvMOXpT4H+ZCfpMsdw==",
+      "version": "2.1.0",
+      "resolved": "https://registry.npmjs.org/@ours.network/tg-connector/-/tg-connector-2.1.0.tgz",
+      "integrity": "sha512-yuhU904fc+G64+mAT1xJ5kMQPcmriF1Ko4DPdrk2o/x9sIww8aDwr5CCu/BvrQEikzQz2cByTBka4wxJT2fDLQ==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@ours.network/sdk": "5.2.0",
@@ -1875,9 +1875,9 @@
       }
     },
     "node_modules/express-rate-limit": {
-      "version": "8.7.3",
-      "resolved": "https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.7.3.tgz",
-      "integrity": "sha512-zPLqDI2f0gV2WmGnacLf9XSSqn4VldRyP5LCzOwx0BKH40mO6+2PCFkoSsRO2jePx87/Kf6NUF6P2QOTKXHbQA==",
+      "version": "8.7.4",
+      "resolved": "https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.7.4.tgz",
+      "integrity": "sha512-LKBXzX700wz3zAGNNmVnjRI5mEbYkLv7UbMI4+9Xa+JPcg2UZh6AgY/2CZh9RrJjFM5ttC/N1lD+KzyFoZITCw==",
       "license": "MIT",
       "dependencies": {
         "debug": "^4.4.3",
@@ -1919,9 +1919,9 @@
       "license": "MIT"
     },
     "node_modules/fast-json-stringify": {
-      "version": "7.3.3",
-      "resolved": "https://registry.npmjs.org/fast-json-stringify/-/fast-json-stringify-7.3.3.tgz",
-      "integrity": "sha512-lv2+Stwtk5mZgxYxc622fR/NYK+s/LCSqXPUoblOtItvmv5WUib32HWZlY0YMLGqM20y8uH3KCMxNIRiQLWowg==",
+      "version": "7.3.5",
+      "resolved": "https://registry.npmjs.org/fast-json-stringify/-/fast-json-stringify-7.3.5.tgz",
+      "integrity": "sha512-g7H3xqJmdH9aWLWh8S3CqrRZFZ321yaeNHZp3QUDl3wtXDWjPChDXCDDTwA4M/zsU42nOhE+z5KmpCzgBaaCgw==",
       "funding": [
         {
           "type": "github",
@@ -2398,9 +2398,9 @@
       }
     },
     "node_modules/jose": {
-      "version": "6.2.16",
-      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.16.tgz",
-      "integrity": "sha512-4LSJpbuBuPdGrONCdZUy0xnxtLf8eEz+EY0SMXdHQEBU7bgUHDVblU/JAjryv3wID9/LK7/YuwFwq+AQNfMscQ==",
+      "version": "6.2.17",
+      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.17.tgz",
+      "integrity": "sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==",
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/panva"
