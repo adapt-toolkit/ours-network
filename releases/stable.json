@@ -12,8 +12,8 @@
       "integrity": "sha512-4RpFVbn+kyf/JcYd/0jCPq4iAtu5H7wCedQv0CPFNFcCK3+2yK9ogwwq97sFZmM07CwUU0/fZk3Layu80hSd2A=="
     },
     "@ours.network/tg-connector": {
-      "version": "2.0.3",
-      "integrity": "sha512-NXto1ouf9l6k2LtRUdpakrnZnxbCymlPLqjy61LBPaVtjiUHF6lS7IJy7dIazHVBOUShbvMOXpT4H+ZCfpMsdw=="
+      "version": "2.1.0",
+      "integrity": "sha512-yuhU904fc+G64+mAT1xJ5kMQPcmriF1Ko4DPdrk2o/x9sIww8aDwr5CCu/BvrQEikzQz2cByTBka4wxJT2fDLQ=="
     },
     "@ours.network/cowork": {
       "version": "2.0.3",
