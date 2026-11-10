@@ -18,7 +18,7 @@
         "@ours.network/messenger-server": "2.0.3",
         "@ours.network/notifications": "1.0.2",
         "@ours.network/sdk": "5.2.0",
-        "@ours.network/tg-connector": "2.1.0"
+        "@ours.network/tg-connector": "2.1.1"
       }
     },
     "node_modules/@adapt-toolkit/sdk": {
@@ -558,9 +558,9 @@
       ]
     },
     "node_modules/@anthropic-ai/sdk": {
-      "version": "1.7.0",
-      "resolved": "https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-1.7.0.tgz",
-      "integrity": "sha512-Z+0c1iHQozlt4ymMHapPXEXfFnSbPEWGnSKbkavt+qeyaMQ3Sd6QNxfQj7vyhHYqiqYadC9shrXub8ISKf7xjQ==",
+      "version": "1.8.0",
+      "resolved": "https://registry.npmjs.org/@anthropic-ai/sdk/-/sdk-1.8.0.tgz",
+      "integrity": "sha512-yDOArk2+Qpd/djEKmZjrv7JZ+pn5iBHARJ9PAdvfhGf4H5wNqTgY/2K0/yDKdQdm8G8hrNQchMlBAHpPK7yBfg==",
       "license": "Apache-2.0",
       "optional": true,
       "peer": true,
@@ -1171,9 +1171,9 @@
       }
     },
     "node_modules/@ours.network/tg-connector": {
-      "version": "2.1.0",
-      "resolved": "https://registry.npmjs.org/@ours.network/tg-connector/-/tg-connector-2.1.0.tgz",
-      "integrity": "sha512-yuhU904fc+G64+mAT1xJ5kMQPcmriF1Ko4DPdrk2o/x9sIww8aDwr5CCu/BvrQEikzQz2cByTBka4wxJT2fDLQ==",
+      "version": "2.1.1",
+      "resolved": "https://registry.npmjs.org/@ours.network/tg-connector/-/tg-connector-2.1.1.tgz",
+      "integrity": "sha512-EiQiw13hr6aAu1Px8Y2Yt6MnbyYDxumeI9RebtHU+5LmnnY8H6tEEdvxA2bSnMDzEvRwjjuNmSP9PyYTKF1eDw==",
       "license": "FSL-1.1-Apache-2.0",
       "dependencies": {
         "@ours.network/sdk": "5.2.0",
