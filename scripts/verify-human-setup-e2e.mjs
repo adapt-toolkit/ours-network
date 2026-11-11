@@ -18,7 +18,11 @@ execFileSync('npm', ['install', '--global', '--prefix', prefix, join(root, packe
 // Same shape as a user whose npm global prefix is their own directory: the
 // installer publishes its managed CLI beside itself.
 fs.chmodSync(join(prefix, 'bin'), 0o755);
-const env = { ...process.env, npm_config_prefix: prefix, PATH: `${join(prefix, 'bin')}:${process.env.PATH}` };
+// A pull-request pack carries no published image descriptor (only release jobs add one), so
+// the packed installer must be told explicitly to build; a released package never is.
+const describedImages = spawnSync('tar', ['-tf', join(root, packed.filename), 'package/assets/images.json']).status === 0;
+if (!describedImages) console.log('Packed installer has no published images.json: building server images locally (OURS_BUILD_LOCALLY=1).');
+const env = { ...process.env, npm_config_prefix: prefix, PATH: `${join(prefix, 'bin')}:${process.env.PATH}`, ...(describedImages ? {} : { OURS_BUILD_LOCALLY: '1' }) };
 const installer = join(prefix, 'bin', 'ours-install');
 const readRecord = () => JSON.parse(fs.readFileSync(join(stateDir, 'installation.json'), 'utf8'));
 /** Ask the running Messenger what it actually stored, with its own in-container credential. */
