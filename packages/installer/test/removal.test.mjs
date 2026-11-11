@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { executeRemoval, runRemoval } from '../lib/removal.mjs';
+import { executeRemoval, runRemoval, discoverFootprint } from '../lib/removal.mjs';
 import { planRemoval, projectForRoot, tombstoneFor } from '../lib/removal-plan.mjs';
 import { changedImages } from '../lib/ownership.mjs';
 import { networkEffects, __testables } from '../lib/effects.mjs';
@@ -300,4 +300,17 @@ test('a pulled published image loses its registry digest name only when no other
   } });
   assert.equal(await runRemoval([], f.effects), 0);
   assert.deepEqual(removed.sort(), [`${project}:maintenance`, `${project}:runtime`, runtimeDigest].sort());
+});
+
+test('removal keeps an unfinished ~/.ours import untouched and still removes a completed one', async () => {
+  const root = '/synthetic/install';
+  const record = { schema: 2, mode: 'packages', root, workDir: `${root}/runtime`, sourcesPath: `${root}/sources.json`, configPath: `${root}/storage/state/daemon/config.json`, instanceId: '12345678-1234-1234-1234-123456789abc', project: 'ours-test', services: ['daemon', 'telegram', 'cowork', 'messenger'], port: 3050, coworkPort: 3052, messengerPort: 8420, uid: 1000, gid: 1000, legacyMigrationSource: '/synthetic/old/config.json' };
+  for (const [phase, retired] of [['copied', 0], [null, 0], ['complete', 1]]) {
+    const effects = { home: '/synthetic/home', uid: 1000, env: {}, stat: () => null, list: () => [], realpath: path => path, run: async () => { throw new Error('unavailable'); },
+      readText: path => path === `${root}/installation.json` ? JSON.stringify(record) : path === `${root}/legacy-migration.json` && phase ? JSON.stringify({ phase }) : null };
+    const found = await discoverFootprint(effects, { stateDirs: [root] });
+    const plan = planRemoval(found, { home: '/synthetic/home' });
+    assert.equal(plan.steps.filter(step => step.type === 'retire' && step.path === root).length, retired, `import phase ${phase}`);
+    if (!retired) assert.match(JSON.stringify(found), /old installation layout this installer no longer supports/);
+  }
 });

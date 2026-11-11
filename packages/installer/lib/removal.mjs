@@ -11,7 +11,7 @@
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { modify, applyEdits, parse as parseJsonc } from 'jsonc-parser';
-import { validateInstallation, unitNameForStateDir, UNSUPPORTED_LAYOUT } from './plan.mjs';
+import { validateInstallation, refuseOldLayout, unitNameForStateDir, UNSUPPORTED_LAYOUT } from './plan.mjs';
 import { validateContainerEngine, runContainer } from './container-engine.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { stripManagedBlock, YAML_BLOCK, MD_BLOCK } from './uninstall.mjs';
@@ -101,7 +101,7 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       continue;
     }
     let record;
-    try { record = validateInstallation(json(text), root); if (record.containerBinding || record.containerEngine) validateContainerEngine(record); }
+    try { record = refuseOldLayout(validateInstallation(json(text), root), root, path => json(effects.readText(path) ?? '')); if (record.containerBinding || record.containerEngine) validateContainerEngine(record); }
     catch (error) {
       keep('data', `Folder ${root}`, error.message === UNSUPPORTED_LAYOUT ? 'it holds an old installation layout this installer no longer supports, so nothing in it is removed automatically; remove the folder yourself if you no longer need it'
         : 'its Ours installation record is damaged, so nothing in it is removed automatically; repair or remove the folder yourself, then run the removal again', true);
