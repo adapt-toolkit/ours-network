@@ -38,14 +38,27 @@ qualify the images locally without pushing.
    private repository: its Settings → Visibility settings → Make public.
    Optional defence in depth: enable immutable tags with the patterns
    `^\d+\.\d+\.\d+(-nightly\.\d+)?-(server|daemon)$` and `^snapshot-stable-[0-9a-f]{12}-(server|daemon)$`.
-2. **Access token** — a Docker Hub access token for the `adaptframework` account (or an
-   organization access token) with **Read & Write** on those two repositories.
-3. **GitHub secret** — in `adapt-toolkit/ours-network` → Settings → Secrets and variables →
-   Actions → New repository secret: name **`DOCKERHUB_ADAPTFRAMEWORK`**, value = the token.
-   (Same name as the existing secret in `adapt-toolkit/adapt`; GitHub secrets are per
-   repository unless shared as an organization secret with access for `ours-network`.)
-4. **Username (optional)** — repository variable **`DOCKERHUB_USERNAME`**; when unset the
-   workflow logs in as `adaptframework`.
+2. **Access token**: either of these works. The login username must match the token type:
+   - **Organization access token** (if `adaptframework` is a Docker Hub organization):
+     scoped to the two repositories with **Read & Write** (push). Log in with username =
+     the organization name `adaptframework`.
+   - **Personal access token** of a Docker ID that has write access to both repositories:
+     scope **Read & Write**. Log in with username = **that Docker ID**, not the namespace
+     unless the account itself is named `adaptframework`. (The existing
+     `adapt-toolkit/adapt` workflow logs in as `adaptframework`.)
+
+   No delete or admin scope is needed. Repository visibility is set once by an admin
+   (step 1), not by CI.
+3. **GitHub secret**: in `adapt-toolkit/ours-network`, go to Settings → Secrets and variables →
+   Actions → New repository secret. Name **`DOCKERHUB_ADAPTFRAMEWORK`**, value = the token.
+   GitHub secrets are per repository unless shared as an organization secret with access for
+   `ours-network`. This secret has the same name as the one in `adapt-toolkit/adapt`.
+4. **Username**: repository variable **`DOCKERHUB_USERNAME`** = the login username from
+   step 2. When unset, the workflow logs in as `adaptframework`, which is correct only for an
+   organization token or the `adaptframework` account's own token.
+
+Publication is verified without credentials: the workflow pulls every image by digest
+with an empty Docker config before tagging, and again implicitly when users install.
 
 After the first publication, `docker pull adaptframework/ours-runtime:<version>-server`
 must work without `docker login`.
