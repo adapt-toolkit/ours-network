@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, readFileSync, cpSync, rmSync } from 'node:f
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gatewayCompose, gatewayNginx } from '../lib/gateway.mjs';
+import { gatewayCompose, gatewayNginx, GATEWAY_IMAGE } from '../lib/gateway.mjs';
 import { realEffects } from '../lib/effects.mjs';
 
 for (const prefix of ['', '/nested/ours']) test(`gateway ${prefix || '/'} routes, auth, WebSocket and DNS refresh`, {skip: process.env.OURS_TEST_DOCKER !== '1' && process.env.OURS_TEST_PODMAN !== '1', timeout:180000}, async t => {
@@ -16,7 +16,7 @@ for (const prefix of ['', '/nested/ours']) test(`gateway ${prefix || '/'} routes
   const docker = args => execFileSync(engine,engine === 'podman' && args[0] === 'compose' && process.env.OURS_PODMAN_SOCKET ? ['--remote','--url','unix://'+process.env.OURS_PODMAN_SOCKET,...args] : args,{encoding:'utf8',timeout:60000,stdio:['ignore','pipe','pipe']});
   const compose = args => docker(['compose','-p',project,'--project-directory',root,'-f',join(root,'base.yaml'),'-f',join(root,'gateway.yaml'),...args]);
   t.after(()=>{try {docker(['rm','-f',project+'-old-ip']);} catch {} });
-  t.after(()=>{try {compose(['down','--timeout','3','--remove-orphans']);} finally {try {docker(['image','rm',`${project}:gateway`]);} finally {rmSync(root,{recursive:true,force:true});}}});
+  t.after(()=>{try {compose(['down','--timeout','3','--remove-orphans']);} finally {rmSync(root,{recursive:true,force:true});}});
   const fixture = `const http=require('http'); for(const port of [3050,3051,3052,8420,49677]) http.createServer((q,s)=>{if((q.url==='/identities'||q.url==='/management/rpc')&&q.headers['x-ours-api-token']!=='test-token'){s.writeHead(401);return s.end();}s.setHeader('content-type','application/json');const response=q.url==='/selection'?{instanceId:'${record.instanceId}'}:q.url==='/identities'?{identities:[]}:q.url==='/management/rpc'?{version:1,id:'installer-readiness',result:[]}:{path:q.url,port,token:q.headers['x-ours-api-token']};s.end(JSON.stringify(response));}).on('upgrade',(q,s)=>{if(q.url!=='/ws')return s.destroy();const accept=require('crypto').createHash('sha1').update(q.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');s.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: '+accept+'\\r\\n\\r\\n');s.end();}).listen(port,'0.0.0.0');`;
   writeFileSync(join(root,'server.cjs'),fixture);
   writeFileSync(join(root,'daemon-token'),'test-token',{mode:0o600});
@@ -24,15 +24,18 @@ for (const prefix of ['', '/nested/ours']) test(`gateway ${prefix || '/'} routes
   writeFileSync(join(root,'base.yaml'),`services:\n  daemon:\n    image: node:24\n    command: [node, /fixture/server.cjs]\n    volumes: ["${root}:/fixture:ro,z", "${root}/daemon-token:/var/lib/ours/daemon-token:ro,z"]\n    ports: ["3050"]\n    networks:\n      ours:\n        aliases: [cowork, messenger, telegram]\n  telegram:\n    image: node:24\n  cowork:\n    image: node:24\n    ports: ["3052"]\n  messenger:\n    image: node:24\n    ports: ["8420"]\nnetworks:\n  ours:\n    ipam:\n      config:\n        - subnet: 10.254.${prefix ? 78 : 77}.0/24\n`);
   writeFileSync(join(root,'gateway.yaml'),gatewayCompose(record));
   writeFileSync(join(root,'nginx.conf'),gatewayNginx(record));
-  cpSync(new URL('../assets/Dockerfile.gateway',import.meta.url),join(root,'Dockerfile.gateway'));
-  cpSync(new URL('../assets/gateway-entrypoint.sh',import.meta.url),join(root,'gateway-entrypoint.sh'));
   const config = JSON.parse(compose(['config','--format','json']));
   assert.equal(config.services.daemon.ports,undefined);
   assert.equal(config.services.cowork.ports,undefined);
   assert.equal(config.services.messenger.ports,undefined);
   assert.equal(config.services.gateway.ports.length,1);
-  if (engine === 'podman') docker(['build', '-f', join(root,'Dockerfile.gateway'), '-t', `${project}:gateway`, root]);
-  try { compose(['up','-d',engine === 'podman' ? '--no-build' : '--build','--wait','daemon','gateway']); }
+  // Upstream nginx with the rendered template and bootstrap: nothing is built locally.
+  assert.equal(config.services.gateway.build,undefined);
+  assert.equal(config.services.gateway.image,GATEWAY_IMAGE);
+  // `compose config` keeps $$ escaped for reuse; containers receive single $ (routing checks below).
+  assert.equal(config.services.gateway.environment.OURS_GATEWAY_TEMPLATE.replaceAll('$$','$'),gatewayNginx(record));
+  assert.equal(config.services.gateway.entrypoint.at(-1).replaceAll('$$','$'),readFileSync(new URL('../assets/gateway-entrypoint.sh',import.meta.url),'utf8'));
+  try { compose(['up','-d','--no-build','--wait','daemon','gateway']); }
   catch (error) { throw new Error(compose(['logs','--no-color','gateway']), {cause:error}); }
   const clientScript = `const assert=require('assert/strict');(async()=>{const r=await fetch('http://gateway:8080${prefix}/cowork/rpc',{method:'POST',headers:{Host:'localhost:3052'},body:'{}'});assert.equal(r.status,403);const d=await fetch('http://gateway:8080${prefix}/.well-known/ours').then(r=>r.json());assert.equal(d.instanceId,'${record.instanceId}');for(const [prefix,port] of [['daemon',3050],['cowork',3052],['messenger',8420]]){const data=await fetch('http://gateway:8080${prefix}/'+prefix+'/hello?x=1').then(r=>r.json());assert.equal(data.path,'/hello?x=1');assert.equal(data.port,port);}assert.equal((await fetch('http://gateway:8080${prefix}/tg-connector/status')).status,401);const tg=await fetch('http://gateway:8080${prefix}/tg-connector/status',{headers:{'x-ours-api-token':'test-token'}}).then(r=>r.json());assert.equal(tg.port,3051);assert.equal(tg.path,'/status');assert.equal((await fetch('http://gateway:8080${prefix}/notifications/api/v1/summary')).status,401);const notes=await fetch('http://gateway:8080${prefix}/notifications/api/v1/summary',{headers:{'x-ours-api-token':'test-token'}}).then(r=>r.json());assert.equal(notes.port,49677);assert.equal(notes.path,'/api/v1/summary');assert.equal(notes.token,'test-token');await new Promise((resolve,reject)=>{const ws=new WebSocket('ws://gateway:8080${prefix}/daemon/ws');ws.onopen=()=>{ws.close();resolve()};ws.onerror=reject;});process.exit(0);})().catch(e=>{console.error(e);process.exit(1)});`;
   const client = () => docker(['run','--rm','--network',`${project}_ours`,'node:24','-e',clientScript]);

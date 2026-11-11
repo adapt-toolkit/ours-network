@@ -27,8 +27,10 @@ test('the gateway route is authenticated and carries no notification secret', ()
 
 test('notifications live in the Messenger container: no new service, host port or secret in Compose', async () => {
   const { readFileSync } = await import('node:fs');
-  const overlay = gatewayCompose(without);
+  // The routing template is data for nginx; services, ports and secrets live outside it.
+  const overlay = gatewayCompose(without).replace(/\n      OURS_GATEWAY_TEMPLATE: ".*"\n/, '\n');
   assert.doesNotMatch(overlay, /notifications/i);
+  assert.doesNotMatch(gatewayCompose(without), /OURS_NOTIFICATIONS_PRODUCER_TOKEN|daemon-token|49677:/);
   const base = readFileSync(new URL('../assets/docker-compose.yaml', import.meta.url), 'utf8');
   assert.doesNotMatch(base, /\n  notifications:/);
   const messenger = base.match(/\n  messenger:\n[\s\S]*?(?=\n  [a-z-]+:\n)/)?.[0];

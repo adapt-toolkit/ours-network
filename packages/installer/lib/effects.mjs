@@ -598,7 +598,6 @@ export function networkEffects(effects) {
   const baseEnv = (record) => ({
     OURS_DAEMON_ID: record.instanceId,
     OURS_IMAGE: `${record.project}:runtime`,
-    OURS_GATEWAY_IMAGE: `${record.project}:gateway`,
     OURS_MAINTENANCE_IMAGE: `${record.project}:maintenance`,
     OURS_UID: String(record.uid ?? 1000), OURS_GID: String(record.gid ?? 1000),
     OURS_HOST_PORT: String(record.port ?? 3050),
@@ -848,9 +847,6 @@ export function networkEffects(effects) {
     async prepareGateway(record) {
       atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
       atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
-      atomicWriteConfig(join(record.workDir, 'gateway-entrypoint.sh'), readFileSync(join(INSTALLER_ASSETS, 'gateway-entrypoint.sh'), 'utf8'));
-      atomicWriteConfig(join(record.workDir, 'Dockerfile.gateway'), readFileSync(join(INSTALLER_ASSETS, 'Dockerfile.gateway'), 'utf8'));
-      await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
     },
     async removeGatewayContainer(record) { await compose(record, ['rm', '-f', 'gateway']); },
     async verifyGateway(record) {
@@ -900,7 +896,6 @@ export function networkEffects(effects) {
         if (record.gateway) {
           atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
           atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
-          for (const file of ['Dockerfile.gateway', 'gateway-entrypoint.sh']) atomicWriteConfig(join(record.workDir, file), readFileSync(join(INSTALLER_ASSETS, file), 'utf8'));
         }
         // The installer owns these dependencies in both installation modes.
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -912,7 +907,6 @@ export function networkEffects(effects) {
         if (rebuildRecovery) rmSync(join(record.workDir, '.recovery-rebuild'));
         if (record.gateway) {
           await effects.qualifyGatewayRuntime(record);
-          await compose(record, ['build', 'gateway'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
         }
         if (runtimeOnly) return;
         await effects.prepareServerVolumes(record);
@@ -1108,7 +1102,7 @@ export function networkEffects(effects) {
       if (record.mode === 'docker') {
         const proven = effects.ownedImages(record);
         const before = await effects.imageIds(record);
-        for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
+        for (const target of ['runtime', 'maintenance']) {
           const retained = `${candidate.project}:previous-${target}`;
           const found = await container(record, ['image', 'inspect', retained], { allowCodes: [1] });
           if (found.code !== 0) {
@@ -1121,7 +1115,7 @@ export function networkEffects(effects) {
         }
         // The candidate project name is a random per-build name kept in the private
         // record; its images were built by this update.
-        Object.assign(built, Object.fromEntries(Object.entries(await effects.imageIds(candidate, ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]))
+        Object.assign(built, Object.fromEntries(Object.entries(await effects.imageIds(candidate, ['runtime', 'maintenance']))
           .map(([tag, id]) => [`${record.project}:${tag.slice(candidate.project.length + 1)}`, id])));
       }
       if (!existsSync(previous)) {
@@ -1136,7 +1130,7 @@ export function networkEffects(effects) {
         renameSync(candidate.workDir, record.workDir);
       } else privateDirectory(record.workDir);
       if (record.mode === 'docker') {
-        for (const target of ['runtime', 'maintenance', ...(record.gateway ? ['gateway'] : [])]) {
+        for (const target of ['runtime', 'maintenance']) {
           await container(candidate, ['tag', `${candidate.project}:${target}`, `${record.project}:${target}`]);
         }
       }
