@@ -37,6 +37,7 @@ import { classifyStateDir } from './detect.mjs';
 import { isPluginOnly, serverRole, pluginOnlyCompose, PLUGIN_ONLY_COMPOSE } from './product.mjs';
 import { OWNERS_FILE, OWNED_IMAGES_FILE, addOwner, ownedImagesRecord, changedImages } from './ownership.mjs';
 import { IMAGE_TARGETS } from './removal-plan.mjs';
+import { readPackagedImages, selectServerImages, pullServerImages, rememberGeneration, pruneGenerations, policyBytes, policyHash } from './image-acquisition.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
 import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
 
@@ -844,6 +845,25 @@ export function networkEffects(effects) {
       if (!retainConfig) writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
     },
     async qualifyDockerRuntime(record) { return qualifyDockerRuntime(record, effects); },
+    /** Name this project's runtime and maintenance images: published digests, else an explicit local build. */
+    async acquireServerImages(record, { rebuild = false } = {}) {
+      const present = async target => (await container(record, ['image', 'inspect', `${record.project}:${target}`], { allowCodes: [1] })).code === 0;
+      if (!rebuild && await present('runtime') && await present('maintenance')) return;
+      const role = serverRole(record), policy = effects.packagedSourcePolicy();
+      const packaged = readPackagedImages(releaseBinding(policy));
+      const plan = selectServerImages({ root: record.root, sourcesPath: record.sourcesPath, role, packaged, buildLocally: env.OURS_BUILD_LOCALLY === '1',
+        releasedHash: packaged ? policyHash(policyBytes(await resolveSourcePolicy(policy, role))) : undefined });
+      if (plan.kind === 'pull') {
+        await pullServerImages(effects, record, plan.entry);
+        // Retained before its sources.json is switched in, so repair finds the same generation.
+        if (plan.remember) rememberGeneration(record.root, plan.hash, plan.entry);
+        return;
+      }
+      effects.out?.(`Building the server images locally: ${plan.reason}.`);
+      const build = { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } };
+      if (rebuild || !await present('runtime')) await compose(record, ['build', 'daemon'], build);
+      if (!await present('maintenance')) await compose(record, ['build', 'state-operation'], build);
+    },
     async prepareGateway(record) {
       atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
       atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
@@ -900,8 +920,7 @@ export function networkEffects(effects) {
         // The installer owns these dependencies in both installation modes.
         const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
         writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
-        const image = await container(record, ['image', 'inspect', `${record.project}:runtime`], { allowCodes: [1] });
-        if (image.code !== 0 || rebuildPrivateScripts || rebuildRecovery) await compose(record, ['build', 'daemon'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
+        await effects.acquireServerImages(record, { rebuild: rebuildPrivateScripts || rebuildRecovery });
         await effects.qualifyDockerRuntime(record);
         if (rebuildPrivateScripts) rmSync(join(record.workDir, '.script-permissions-rebuild'));
         if (rebuildRecovery) rmSync(join(record.workDir, '.recovery-rebuild'));
@@ -963,7 +982,6 @@ export function networkEffects(effects) {
         writePrivateNew(candidate.sourcesPath, sources);
         await effects.prepareInstallation(candidate, { runtimeOnly: true });
         if (candidate.mode === 'docker') {
-          await compose(candidate, ['build', 'state-operation']);
           // The candidate's project name is new for this build: every image under it was
           // built now. Record them with the installation so removal can prove them.
           await effects.recordOwnedImages(record, await effects.imageIds(candidate));
@@ -1134,7 +1152,10 @@ export function networkEffects(effects) {
           await container(candidate, ['tag', `${candidate.project}:${target}`, `${record.project}:${target}`]);
         }
       }
+      const previousPolicy = policyHash(readFileSync(record.sourcesPath));
       atomicWriteConfig(record.sourcesPath, readFileSync(candidate.sourcesPath));
+      // The new generation was retained before this switch; keep it and the one it replaces.
+      if (record.mode === 'docker') pruneGenerations(record.root, [policyHash(readFileSync(record.sourcesPath)), previousPolicy]);
       if (record.mode === 'docker') await effects.recordOwnedImages(record, built);
     },
     /** Current image IDs of this project's tags (only those that exist). */

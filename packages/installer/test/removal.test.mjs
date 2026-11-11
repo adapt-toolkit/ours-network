@@ -277,3 +277,27 @@ test('images of an unfinished update are removed when recorded, and reported whe
   assert.ok(images[`${candidate}:maintenance`], 'never removed without proof');
   assert.ok(files[`${home}/.ours-removal.json`]);
 });
+
+test('a pulled published image loses its registry digest name only when no other name uses it', async () => {
+  const root = '/home/u/.ours-install', project = projectForRoot(root);
+  const id = 'sha256:' + 'a'.repeat(64), shared = 'sha256:' + 'b'.repeat(64);
+  const runtimeDigest = 'adaptframework/ours-runtime@sha256:' + 'c'.repeat(64), maintenanceDigest = 'adaptframework/ours-maintenance@sha256:' + 'd'.repeat(64);
+  const journal = { schema: 1, startedAt: 'x', clientInstanceIds: [], generations: [], fleet: false, legacy: false, installer: false,
+    installations: [{ root, instanceId: A, project, mode: 'docker', images: { [`${project}:runtime`]: id, [`${project}:maintenance`]: shared } }] };
+  const files = { [`${home}/.ours-removal.json`]: { type: 'file', mode: 0o600, text: JSON.stringify(journal) } };
+  const images = {
+    [`${project}:runtime`]: { Id: id, RepoTags: [`${project}:runtime`], RepoDigests: [runtimeDigest] },
+    // Another installation still names the same published maintenance image.
+    [`${project}:maintenance`]: { Id: shared, RepoTags: [`${project}:maintenance`, 'ours-other:maintenance'], RepoDigests: [maintenanceDigest] },
+  };
+  const removed = [];
+  const f = fakeEffects(files, { askLine: async () => 'remove ours', run: async (command, args) => {
+    if (command === 'npm') return { stdout: '/x\n' };
+    if (command !== 'docker') throw new Error(`${command} unavailable`);
+    if (args[0] === 'image' && args[1] === 'inspect') return images[args.at(-1)] ? { code: 0, stdout: JSON.stringify([images[args.at(-1)]]) } : { code: 1, stdout: '' };
+    if (args[0] === 'image' && args[1] === 'rm') { removed.push(args[2]); delete images[args[2]]; return { code: 0, stdout: '' }; }
+    return { code: 0, stdout: '' };
+  } });
+  assert.equal(await runRemoval([], f.effects), 0);
+  assert.deepEqual(removed.sort(), [`${project}:maintenance`, `${project}:runtime`, runtimeDigest].sort());
+});

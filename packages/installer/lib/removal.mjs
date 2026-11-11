@@ -534,7 +534,16 @@ async function executeStep(step, effects, context) {
         const [image] = JSON.parse(found.stdout);
         if (image.Id !== id) { problems.push(`${tag} changed since it was checked and was left in place`); continue; }
         // Remove only this name. An image ID still named or used elsewhere stays.
-        try { await runContainer(effects, step.installation, ['image', 'rm', tag]); }
+        try {
+          await runContainer(effects, step.installation, ['image', 'rm', tag]);
+          // A published image this installer pulled keeps only its registry digest name;
+          // drop that too once no other name uses it. A still-used image stays in place.
+          if (!(image.RepoTags ?? []).some(other => other !== tag && !/^(?:docker\.io\/)?adaptframework\/ours-(?:runtime|maintenance)@/.test(other))) {
+            for (const digest of (image.RepoDigests ?? []).filter(name => /^(?:docker\.io\/)?adaptframework\/ours-(?:runtime|maintenance)@sha256:[0-9a-f]{64}$/.test(name))) {
+              try { await runContainer(effects, step.installation, ['image', 'rm', digest]); } catch { /* still used elsewhere */ }
+            }
+          }
+        }
         catch {
           let users = '';
           try { users = (await runContainer(effects, step.installation, ['ps', '-a', '--filter', `ancestor=${id}`, '--format', '{{.Names}}'])).stdout.split(/\s+/).filter(Boolean).join(', '); } catch { /* named generically below */ }
