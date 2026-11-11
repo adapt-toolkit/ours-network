@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { imageTags, planImages, readPlan, stageImages, bakeIndexes, resolveDigests, imagesManifest, existingTags, RELEASE_TAG, SNAPSHOT_TAG } from './release-images.mjs';
+import { imageTags, planImages, readPlan, stageImages, bakeIndexes, resolveDigests, imagesManifest, existingTags, checkLabels, RELEASE_TAG, SNAPSHOT_TAG } from './release-images.mjs';
 import { policyHash, IMAGE_REPOSITORIES } from '../packages/installer/lib/image-acquisition.mjs';
 import { resolveSourcePolicy } from '../packages/installer/lib/plan.mjs';
 
@@ -103,4 +103,30 @@ test('workflow: images are qualified before tags, and npm publication needs the 
 test('the published package whitelist excludes test/, which marks a published installer', () => {
   const { files } = JSON.parse(readFileSync(new URL('../packages/installer/package.json', import.meta.url)));
   assert.ok(files.length && !files.some(entry => entry === 'test' || entry.startsWith('test/')));
+});
+
+test('reused or pulled images must carry exactly this plan\'s publication labels', async t => {
+  const plan = await planImages({ commit, kind: 'release' });
+  const out = mkdtempSync(join(tmpdir(), 'ours-labels-'));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const bake = JSON.parse(readFileSync(stageImages(plan, out, { push: true }), 'utf8'));
+  const own = bake.target['runtime-server'].labels;
+  checkLabels(own, plan, 'server', 'runtime-server');
+  for (const [key, value] of [['org.opencontainers.image.revision', 'f'.repeat(40)], ['network.ours.role', 'daemon'], ['network.ours.policy-sha256', '0'.repeat(64)], ['network.ours.installer-version', '0.0.1']])
+    assert.throws(() => checkLabels({ ...own, [key]: value }, plan, 'server', 'runtime-server'), new RegExp(key.replaceAll('.', '\\.')));
+  assert.throws(() => checkLabels(bake.target['runtime-daemon'].labels, plan, 'server', 'runtime-server'));
+});
+
+test('a failed nightly followed by a different commit with the same version cannot reuse the old images', async () => {
+  const earlier = await planImages({ commit, kind: 'release' });
+  const later = await planImages({ commit: 'f'.repeat(40), kind: 'release' });
+  assert.deepEqual(later.tags, earlier.tags, 'same version, same immutable tags');
+  // Complete tags from the earlier attempt are found and offered for reuse…
+  assert.ok(existingTags(later, () => d('a')));
+  // …but qualification compares their labels with the later plan and refuses them.
+  const out = mkdtempSync(join(tmpdir(), 'ours-reuse-'));
+  try {
+    const stale = JSON.parse(readFileSync(stageImages(earlier, out, { push: true }), 'utf8')).target['runtime-server'].labels;
+    assert.throws(() => checkLabels(stale, later, 'server', 'runtime-server'), /org\.opencontainers\.image\.revision.*publish a new version/);
+  } finally { rmSync(out, { recursive: true, force: true }); }
 });

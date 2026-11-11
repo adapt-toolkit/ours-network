@@ -141,8 +141,19 @@ export async function qualifyImages(manifest, plan, { work = mkdtempSync(join(tm
     const entry = { role, channel: manifest.channel, installerVersion: manifest.installerVersion, commit: manifest.commit, platform: manifest.platform, ...manifest.variants[role] };
     delete entry.policySha256;
     await pullServerImages(effects, record, entry);
+    // Reused tags must be this plan's content: refuse anything built for another commit,
+    // version, channel, role or policy instead of describing it as this release.
+    for (const target of IMAGE_TARGETS) {
+      const [value] = JSON.parse((await effects.run('docker', ['image', 'inspect', `${record.project}:${target}`])).stdout);
+      checkLabels(value?.Config?.Labels, plan, role, `${target}-${role}`);
+    }
     await qualifyDockerRuntime(record, effects);
   }
+}
+
+export function checkLabels(found, plan, role, name) {
+  const mismatched = Object.entries(labels(plan, role)).filter(([key, value]) => found?.[key] !== value).map(([key]) => key);
+  if (mismatched.length) throw new Error(`Image ${name} was not built for this plan (${mismatched.join(', ')}); publish a new version`);
 }
 
 async function main([command, ...argv]) {
@@ -177,6 +188,7 @@ async function main([command, ...argv]) {
       const work = mkdtempSync(join(tmpdir(), 'ours-qualify-')), sourcesPath = join(work, 'sources.json');
       writeFileSync(sourcesPath, plan.policies[role], { mode: 0o600 });
       const effects = engine({}), record = { mode: 'docker', containerEngine: 'docker', project: `ours-ci-${role}`, root: work, sourcesPath, uid: 1000, gid: 1000 };
+      for (const target of IMAGE_TARGETS) checkLabels(JSON.parse((await effects.run('docker', ['image', 'inspect', `ours-ci-${role}:${target}`])).stdout)[0]?.Config?.Labels, plan, role, `${target}-${role}`);
       await qualifyDockerRuntime(record, effects);
       await verifyImagePair(effects, record, IMAGE_TARGETS.map(target => `ours-ci-${role}:${target}`));
       rmSync(work, { recursive: true, force: true });

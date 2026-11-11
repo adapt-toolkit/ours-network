@@ -29,6 +29,21 @@ jobs:
         env:
           OURS_TEST_DOCKER: "1"
         run: node --test packages/installer/test/gateway-docker.test.mjs
+      - name: Verify the gateway stops cleanly while holding a stream
+        env:
+          OURS_TEST_DOCKER: "1"
+        run: node --test packages/installer/test/gateway-stop.test.mjs
+      - name: Verify gateway routes on the minimum supported Compose (2.35.0)
+        env:
+          OURS_TEST_DOCKER: "1"
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/compose-2.35"
+          mkdir -p "$DOCKER_CONFIG/cli-plugins"
+          curl -fsSL -o "$DOCKER_CONFIG/cli-plugins/docker-compose" https://github.com/docker/compose/releases/download/v2.35.0/docker-compose-linux-x86_64
+          echo "dba1915cf2f282527f5df0cd7a94b9503047ed200317801853abe8f22c8cd493  $DOCKER_CONFIG/cli-plugins/docker-compose" | sha256sum -c
+          chmod +x "$DOCKER_CONFIG/cli-plugins/docker-compose"
+          docker compose version | grep -F 'v2.35.0'
+          node --test packages/installer/test/gateway-docker.test.mjs
       - name: Verify Notifications recovery under the read-only state-operation contract
         env:
           OURS_TEST_DOCKER: "1"

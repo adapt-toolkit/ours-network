@@ -39,13 +39,18 @@ qualify the images locally without pushing.
    Optional defence in depth: enable immutable tags with the patterns
    `^\d+\.\d+\.\d+(-nightly\.\d+)?-(server|daemon)$` and `^snapshot-stable-[0-9a-f]{12}-(server|daemon)$`.
 2. **Access token**: either of these works. The login username must match the token type:
-   - **Organization access token** (if `adaptframework` is a Docker Hub organization):
-     scoped to the two repositories with **Read & Write** (push). Log in with username =
-     the organization name `adaptframework`.
-   - **Personal access token** of a Docker ID that has write access to both repositories:
-     scope **Read & Write**. Log in with username = **that Docker ID**, not the namespace
-     unless the account itself is named `adaptframework`. (The existing
+   - **Organization access token**: requires `adaptframework` to be a Docker Hub organization
+     on a plan that offers organization access tokens. Restrict its resources to the two
+     repositories with permission **Image Push** (`scope-image-push`, which includes pull).
+     Log in with username = the organization name `adaptframework`.
+   - **Personal access token**: owned by a Docker ID that has push access to both
+     repositories. Access permissions **Read & Write**; a personal token is account-wide,
+     not repository-scoped. Log in with username = **that Docker ID**. This is not the
+     namespace unless the account itself is named `adaptframework`. (The existing
      `adapt-toolkit/adapt` workflow logs in as `adaptframework`.)
+
+   References: https://docs.docker.com/security/access-tokens/personal-access-tokens/,
+   https://docs.docker.com/security/access-tokens/organization-access-tokens/
 
    No delete or admin scope is needed. Repository visibility is set once by an admin
    (step 1), not by CI.
