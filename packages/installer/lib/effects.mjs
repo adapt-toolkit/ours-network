@@ -37,6 +37,7 @@ import { classifyStateDir } from './detect.mjs';
 import { isPluginOnly, serverRole, pluginOnlyCompose, PLUGIN_ONLY_COMPOSE } from './product.mjs';
 import { OWNERS_FILE, OWNED_IMAGES_FILE, addOwner, ownedImagesRecord, changedImages } from './ownership.mjs';
 import { IMAGE_TARGETS } from './removal-plan.mjs';
+import { copyDockerAssets, writeMaintenancePackage } from './docker-context.mjs';
 import { readPackagedImages, selectServerImages, pullServerImages, rememberGeneration, pruneGenerations, policyBytes, policyHash } from './image-acquisition.mjs';
 import { BASE_RECORDS, CONTEXT, readBuildRecords, equalBuildRecords, initializeBuildMarker } from '../assets/scripts/maintenance/build-context.mjs';
 import { hostCliPolicy, releaseBinding, verifyReleaseGraph, verifyRuntimeRelease } from '../assets/scripts/maintenance/release-graph.mjs';
@@ -837,7 +838,7 @@ export function networkEffects(effects) {
       const role = serverRole(record), policy = effects.packagedSourcePolicy();
       const packaged = readPackagedImages(releaseBinding(policy));
       const plan = selectServerImages({ root: record.root, sourcesPath: record.sourcesPath, role, packaged, buildLocally: env.OURS_BUILD_LOCALLY === '1',
-        releasedHash: packaged ? policyHash(policyBytes(await resolveSourcePolicy(policy, role))) : undefined });
+        releasedHash: releaseBinding(policy) ? policyHash(policyBytes(await resolveSourcePolicy(policy, role))) : undefined });
       if (plan.kind === 'pull') {
         await pullServerImages(effects, record, plan.entry);
         // Retained before its sources.json is switched in, so repair finds the same generation.
@@ -879,15 +880,9 @@ export function networkEffects(effects) {
     },
     async prepareInstallation(record, { runtimeOnly = false } = {}) {
       if (!runtimeOnly) await reportBootReadiness(effects, record);
-      let copied = false;
-      if (!existsSync(record.workDir)) {
-        cpSync(INSTALLER_ASSETS, record.workDir, { recursive: true, errorOnExist: true, force: false });
-        chmodSync(record.workDir, 0o700);
-        copied = true;
-      }
+      if (!existsSync(record.workDir)) copyDockerAssets(record.workDir);
       const retained = readFileSync(record.sourcesPath);
       const materialized = join(record.workDir, 'sources.json');
-      if (copied) rmSync(materialized);
       if (!existsSync(materialized)) writePrivateNew(materialized, retained);
       else if (!readFileSync(materialized).equals(retained)) throw new Error('Materialized sources differ from retained selection');
       if (record.mode === 'docker') {
@@ -902,9 +897,7 @@ export function networkEffects(effects) {
           atomicWriteConfig(join(record.workDir, 'docker-compose.gateway.yaml'), gatewayCompose(record));
           atomicWriteConfig(join(record.workDir, 'nginx.conf'), gatewayNginx(record));
         }
-        // The installer owns these dependencies in both installation modes.
-        const { dependencies } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-        writeFileSync(join(record.workDir, 'scripts/maintenance/package.json'), JSON.stringify({ private: true, type: 'module', dependencies }, null, 2) + '\n', { mode: 0o600 });
+        writeMaintenancePackage(record.workDir);
         await effects.acquireServerImages(record, { rebuild: rebuildPrivateScripts || rebuildRecovery });
         await effects.qualifyDockerRuntime(record);
         if (rebuildPrivateScripts) rmSync(join(record.workDir, '.script-permissions-rebuild'));

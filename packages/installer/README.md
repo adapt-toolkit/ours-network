@@ -241,15 +241,25 @@ Assets resolve from the installed package, independently of the working director
 Package mode requires a patched Node.js release, npm and a working systemd user manager on
 Linux/WSL or a launchd GUI user domain on macOS. Source builds also require Git,
 Python 3, a C/C++ toolchain, make, and the selected repositories' own prerequisites.
-Docker mode requires a working Docker engine and Compose 2.35+; its build image
-contains the source-build prerequisites. No bind or Docker socket mounts are used.
+Docker mode requires a working Docker engine and Compose 2.35+. A published installer
+downloads prebuilt images instead of building them: `adaptframework/ours-runtime` and
+`adaptframework/ours-maintenance` (linux/amd64; a `server` variant for the full workspace
+and a `daemon` variant for plugin-only), pulled by the exact digests packed in
+`assets/images.json` and checked against the installation's selected packages. The
+gateway runs the digest-pinned upstream nginx image with its generated configuration
+carried in Compose, so nothing is built for it. Images are built locally only for an
+explicit custom/Git selection, an installation created by an earlier installer (until
+`ours-install update`), a development checkout, or when `OURS_BUILD_LOCALLY=1` is set;
+a download failure is reported (for Docker Hub's anonymous pull limit, run
+`docker login`) rather than silently switching to a build. The build image contains
+the source-build prerequisites. No bind or Docker socket mounts are used.
 Docker is recommended for macOS and Windows. Install and start Docker Desktop
 on those hosts; on Linux, install Docker Engine and the Compose plugin. If Docker
 is unavailable, the installer explains how to install/start it or use
 `server install --mode packages --state-dir <new-empty-directory>` instead.
 Native Windows installations require WSL with a working systemd user manager.
 The installer never switches an existing installation's mode automatically.
-Server installation shows each stage before it starts, streams Docker builds and
+Server installation shows each stage before it starts, streams image downloads or builds and
 native package acquisition, and reports completion only after service readiness.
 If a Docker service fails, the error includes its last 50 log lines (bounded in
 size) and a command to inspect the logs. A failed daemon prevents consumers from

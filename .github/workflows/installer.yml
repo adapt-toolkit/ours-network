@@ -1,5 +1,7 @@
 name: Installer
-# Required secrets: NPM_TOKEN, VERSION_BUMP_APP_ID, VERSION_BUMP_APP_PRIVATE_KEY.
+# Required secrets: NPM_TOKEN, VERSION_BUMP_APP_ID, VERSION_BUMP_APP_PRIVATE_KEY,
+# DOCKERHUB_ADAPTFRAMEWORK (Docker Hub access token, Read & Write on adaptframework/ours-runtime and
+# adaptframework/ours-maintenance). Optional variable DOCKERHUB_USERNAME (default: adaptframework).
 on:
   pull_request:
     branches: [main, prerelease]
@@ -61,6 +63,27 @@ jobs:
           for (const file of ['install.mjs', 'uninstall.mjs', 'lib/effects.mjs', 'assets/Dockerfile']) assert(read(file).length > 0);
           console.log(`Verified installer archive ${packed.name}@${packed.version}`);
           JS
+  images-pr:
+    # Pull requests build both roles' images from the materialized contexts and qualify them
+    # locally; nothing is pushed and no registry credential is used.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/prepare-installer.mjs
+      - run: node scripts/release-images.mjs plan --commit "${{ github.event.pull_request.head.sha }}" --kind release --out "$RUNNER_TEMP/image-plan.json"
+      - run: echo "BAKE=$(node scripts/release-images.mjs stage --plan "$RUNNER_TEMP/image-plan.json" --out "$RUNNER_TEMP/image-contexts")" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+      - run: cd "$(dirname "$BAKE")" && docker buildx bake --file docker-bake.json --progress plain
+      - run: node scripts/release-images.mjs qualify-local --plan "$RUNNER_TEMP/image-plan.json"
+
   version-bump:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -93,9 +116,96 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
         run: node scripts/bump-installer-version.mjs stable --commit
 
+  nightly-version:
+    # The ephemeral nightly version is computed ONCE; images and npm use the same files.
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/prerelease'
+    runs-on: ubuntu-latest
+    name: Resolve nightly version
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Compute ephemeral nightly installer version
+        run: node scripts/bump-installer-version.mjs nightly
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: |
+            packages/installer/package.json
+            package-lock.json
+            releases/nightly.json
+          if-no-files-found: error
+
+  images:
+    # main: release images for a version bump, otherwise an immutable commit snapshot.
+    # prerelease: release images for the ephemeral nightly version.
+    needs: [test, version-bump, nightly-version]
+    if: >-
+      always() && github.event_name == 'push' && needs.test.result == 'success' &&
+      ((github.ref == 'refs/heads/main' && needs.version-bump.result == 'success') ||
+       (github.ref == 'refs/heads/prerelease' && needs.nightly-version.result == 'success'))
+    runs-on: ubuntu-latest
+    name: Build, qualify and tag images
+    timeout-minutes: 60
+    env:
+      RELEASE_SHA: ${{ github.ref == 'refs/heads/main' && needs.version-bump.outputs.new-sha || github.sha }}
+      IMAGE_KIND: ${{ (github.ref == 'refs/heads/prerelease' || needs.version-bump.outputs.bumped == 'true') && 'release' || 'snapshot' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - if: github.ref == 'refs/heads/prerelease'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: .
+      - run: npm ci
+      - run: node scripts/prepare-installer.mjs
+      - run: node scripts/release-images.mjs plan --commit "$RELEASE_SHA" --kind "$IMAGE_KIND" --out image-plan.json
+      - name: Require the Docker Hub publication credential
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_ADAPTFRAMEWORK }}
+        run: |
+          if [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::missing DOCKERHUB_ADAPTFRAMEWORK: add a Docker Hub access token (Read & Write on adaptframework/ours-runtime and adaptframework/ours-maintenance) as a repository secret. No image or installer is published."
+            exit 1
+          fi
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || 'adaptframework' }}
+          password: ${{ secrets.DOCKERHUB_ADAPTFRAMEWORK }}
+      - name: Reuse a complete published pair from an earlier attempt, if any
+        id: existing
+        run: echo "mode=$(node scripts/release-images.mjs existing --plan image-plan.json --out image-reuse.json)" >> "$GITHUB_OUTPUT"
+      - name: Build both roles from materialized contexts and push by digest
+        if: steps.existing.outputs.mode == 'build'
+        run: |
+          bake="$(node scripts/release-images.mjs stage --plan image-plan.json --out "$RUNNER_TEMP/image-contexts" --push)"
+          (cd "$(dirname "$bake")" && docker buildx bake --file docker-bake.json --metadata-file "$GITHUB_WORKSPACE/image-metadata.json" --progress plain)
+      - run: node scripts/release-images.mjs describe --plan image-plan.json --metadata image-metadata.json --reuse image-reuse.json --out images.json
+      - name: Qualify anonymously (fresh Docker config, pull by digest, pair and runtime checks)
+        run: node scripts/release-images.mjs qualify --plan image-plan.json --images images.json
+      - name: Write immutable tags
+        run: node scripts/release-images.mjs tag --plan image-plan.json --images images.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-images
+          path: |
+            image-plan.json
+            images.json
+          if-no-files-found: error
+
   npm-publish:
-    needs: [test, version-bump]
-    if: needs.version-bump.outputs.bumped == 'true'
+    needs: [test, version-bump, images]
+    if: needs.version-bump.outputs.bumped == 'true' && needs.images.result == 'success'
     runs-on: ubuntu-latest
     name: Publish stable installer
     timeout-minutes: 15
@@ -110,8 +220,15 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: node scripts/verify-release.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-images
+          path: ${{ runner.temp }}/release-images
+      - run: cp "$RUNNER_TEMP/release-images/images.json" packages/installer/assets/images.json
       - name: Pack immutable product manifest
         run: npm pack --workspace @ours.network/install --pack-destination "$RUNNER_TEMP"
+      - name: Verify the packed image descriptor is the qualified one
+        run: node scripts/release-images.mjs verify-pack --plan "$RUNNER_TEMP/release-images/image-plan.json" --images "$RUNNER_TEMP/release-images/images.json" --archive "$(ls "$RUNNER_TEMP"/ours.network-install-*.tgz)"
       - name: Publish guarded stable installer
         run: |
           bash .github/workflows/scripts/publish-guard.sh stable packages/installer/package.json latest
@@ -120,8 +237,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   nightly-publish:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/prerelease'
+    needs: [test, nightly-version, images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/prerelease' && needs.images.result == 'success'
     runs-on: ubuntu-latest
     name: Publish nightly installer
     timeout-minutes: 15
@@ -132,13 +249,21 @@ jobs:
           node-version: '22.23.4'
           cache: npm
           registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: .
       - run: npm ci
-      - name: Compute ephemeral nightly installer version
-        id: bump
-        run: node scripts/bump-installer-version.mjs nightly
       - run: node scripts/verify-release.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-images
+          path: ${{ runner.temp }}/release-images
+      - run: cp "$RUNNER_TEMP/release-images/images.json" packages/installer/assets/images.json
       - name: Pack immutable product manifest
         run: npm pack --workspace @ours.network/install --pack-destination "$RUNNER_TEMP"
+      - name: Verify the packed image descriptor is the qualified one
+        run: node scripts/release-images.mjs verify-pack --plan "$RUNNER_TEMP/release-images/image-plan.json" --images "$RUNNER_TEMP/release-images/images.json" --archive "$(ls "$RUNNER_TEMP"/ours.network-install-*.tgz)"
       - name: Publish guarded nightly installer
         run: |
           bash .github/workflows/scripts/publish-guard.sh nightly packages/installer/package.json nightly

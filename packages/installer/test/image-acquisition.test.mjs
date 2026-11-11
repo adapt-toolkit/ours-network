@@ -48,7 +48,10 @@ test('selection: retained generation, then packaged release, else explicit build
   assert.throws(() => selectServerImages({ root, sourcesPath, role: 'server', packaged: manifest(), releasedHash: hash }), /published image descriptor does not match/);
   // Custom or earlier selection with a published installer, and a development installer: explicit build.
   assert.match(selectServerImages({ root, sourcesPath, role: 'server', packaged: manifest(), releasedHash: h('f') }).reason, /differ from this installer release/);
-  assert.match(selectServerImages({ root, sourcesPath, role: 'server', packaged: null }).reason, /development checkout/);
+  assert.match(selectServerImages({ root, sourcesPath, role: 'server', packaged: null, releasedHash: hash, published: false }).reason, /development checkout/);
+  // A published package that lost its descriptor refuses its own release selection.
+  assert.throws(() => selectServerImages({ root, sourcesPath, role: 'server', packaged: null, releasedHash: hash, published: true }), /lacks its published image descriptor/);
+  assert.equal(selectServerImages({ root, sourcesPath, role: 'server', packaged: null, releasedHash: h('f'), published: true }).kind, 'build');
   assert.equal(selectServerImages({ root, sourcesPath, role: 'server', packaged, releasedHash: hash, buildLocally: true }).kind, 'build');
   // A plugin-only selection never takes the workspace variant.
   assert.equal(selectServerImages({ root, sourcesPath, role: 'daemon', packaged: manifest(), releasedHash: h('f') }).kind, 'build');
@@ -89,7 +92,7 @@ test('an interrupted switch always leaves a generation for the retained selectio
   const before = policyBytes({ packages: { v: 1 } }), after = policyBytes({ packages: { v: 2 } });
   writeFileSync(sourcesPath, before);
   rememberGeneration(root, policyHash(before), generationEntry(manifest({ installerVersion: '2.2.0' }), 'server'));
-  const resolve = () => selectServerImages({ root, sourcesPath, role: 'server', packaged: null });
+  const resolve = () => selectServerImages({ root, sourcesPath, role: 'server', packaged: null, published: false });
   rememberGeneration(root, policyHash(after), generationEntry(manifest({ installerVersion: '2.2.1' }), 'server'));
   assert.equal(resolve().entry.installerVersion, '2.2.0');
   writeFileSync(sourcesPath, after);

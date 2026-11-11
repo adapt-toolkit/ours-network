@@ -14,6 +14,8 @@ export const IMAGE_PLATFORM = 'linux/amd64';
 /** Generated at release packing; development checkouts have none and build locally. */
 export const PACKAGED_IMAGES = fileURLToPath(new URL('../assets/images.json', import.meta.url));
 export const IMAGES_FILE = 'images.json';
+/** npm packages ship only the `files` whitelist: a published installer has no test/ directory. */
+export const PUBLISHED_INSTALLER = !existsSync(fileURLToPath(new URL('../test/', import.meta.url)));
 const DIGEST = /^sha256:[0-9a-f]{64}$/, HASH = /^[0-9a-f]{64}$/;
 
 export const policyHash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -107,7 +109,7 @@ export function pruneGenerations(root, keep) {
  * its own retained generation, else the packaged release, else an explicit local build.
  * A released selection whose published descriptor is missing or mismatched is an error.
  */
-export function selectServerImages({ root, sourcesPath, role, packaged, releasedHash, buildLocally = false }) {
+export function selectServerImages({ root, sourcesPath, role, packaged, releasedHash, published = PUBLISHED_INSTALLER, buildLocally = false }) {
   if (!IMAGE_ROLES.includes(role)) throw new Error(`Unsupported image role: ${role}`);
   if (buildLocally) return { kind: 'build', reason: 'local build requested with OURS_BUILD_LOCALLY=1' };
   const hash = policyHash(readFileSync(sourcesPath));
@@ -117,7 +119,8 @@ export function selectServerImages({ root, sourcesPath, role, packaged, released
     return { kind: 'pull', hash, entry: retained };
   }
   if (packaged?.variants[role].policySha256 === hash) return { kind: 'pull', hash, entry: generationEntry(packaged, role), remember: true };
-  if (packaged && releasedHash === hash) throw new Error('The published image descriptor does not match this release selection; reinstall the installer package');
+  if ((packaged || published) && releasedHash === hash) throw new Error(packaged ? 'The published image descriptor does not match this release selection; reinstall the installer package'
+    : 'This installer package lacks its published image descriptor; reinstall the installer package');
   return { kind: 'build', reason: packaged ? 'the selected packages differ from this installer release (custom sources or an earlier installation)' : 'this installer has no published images (development checkout)' };
 }
 
