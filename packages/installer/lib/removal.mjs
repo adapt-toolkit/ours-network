@@ -11,7 +11,7 @@
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { modify, applyEdits, parse as parseJsonc } from 'jsonc-parser';
-import { validateInstallation, unitNameForStateDir } from './plan.mjs';
+import { validateInstallation, unitNameForStateDir, UNSUPPORTED_LAYOUT } from './plan.mjs';
 import { validateContainerEngine, runContainer } from './container-engine.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { stripManagedBlock, YAML_BLOCK, MD_BLOCK } from './uninstall.mjs';
@@ -102,7 +102,11 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
     }
     let record;
     try { record = validateInstallation(json(text), root); if (record.containerBinding || record.containerEngine) validateContainerEngine(record); }
-    catch { keep('data', `Folder ${root}`, 'its Ours installation record is damaged, so nothing in it is removed automatically; repair or remove the folder yourself, then run the removal again', true); continue; }
+    catch (error) {
+      keep('data', `Folder ${root}`, error.message === UNSUPPORTED_LAYOUT ? 'it holds an old installation layout this installer no longer supports, so nothing in it is removed automatically; remove the folder yourself if you no longer need it'
+        : 'its Ours installation record is damaged, so nothing in it is removed automatically; repair or remove the folder yourself, then run the removal again', true);
+      continue;
+    }
     if (retained && retained.instanceId !== record.instanceId) { keep('data', `Folder ${root}`, 'it now holds a different Ours installation than the unfinished removal recorded'); continue; }
     const item = { ...journalInstallation(record), ...(retained?.candidateProjects?.length ? { candidateProjects: [...new Set([...retained.candidateProjects, ...journalInstallation(record).candidateProjects])] } : {}), ...(retained?.images ? { images: retained.images } : {}), record, tombstone: tombstone(root, 'root', record.instanceId) };
     item.ownedImages = json(effects.readText(join(root, 'owned-images.json')) ?? '')?.images ?? null;

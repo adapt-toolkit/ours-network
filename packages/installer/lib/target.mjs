@@ -1,4 +1,5 @@
 import { serverBase } from './gateway.mjs';
+import { MIGRATE_FROM_UNSUPPORTED } from './plan.mjs';
 // ours-install v3 — argument handling and daemon detection.
 //
 // Pure argument handling and daemon-target selection. The orchestrator
@@ -491,6 +492,7 @@ export function parseNetworkArgs(argv) {
   const seen = new Set();
   for (let i = optionsStart; i < argv.length; i++) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(argv[i]);
+    if (match?.[1] === 'migrate-from') throw new InstallUsageError(MIGRATE_FROM_UNSUPPORTED);
     if (!match || !allowed.includes(match[1]) || seen.has(match[1])) throw new InstallUsageError(`Unexpected or repeated option: ${argv[i]}`);
     const [, name, inline] = match;
     seen.add(name);

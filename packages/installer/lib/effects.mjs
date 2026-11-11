@@ -607,9 +607,7 @@ export function networkEffects(effects) {
     OURS_MESSENGER_IDENTITY: record.messengerIdentity ?? '',
   });
   const composeArgs = (record, args) => [
-    'compose', '--project-directory', record.workDir, '--file', join(record.workDir,
-      record.schema === 1 && existsSync(join(record.workDir, 'docker-compose.legacy.yaml'))
-        ? 'docker-compose.legacy.yaml' : 'docker-compose.yaml'),
+    'compose', '--project-directory', record.workDir, '--file', join(record.workDir, 'docker-compose.yaml'),
     ...(record.gateway ? ['--file', join(record.workDir, 'docker-compose.gateway.yaml')] : []),
     ...(existsSync(join(record.workDir, 'compose.recovery.json')) ? ['--file', join(record.workDir, 'compose.recovery.json')] : []),
     ...(engineName(record) === 'podman' ? ['--file', join(record.workDir, 'compose.podman.json')] : []),
@@ -822,27 +820,14 @@ export function networkEffects(effects) {
         }
       }
     },
-    async prepareLegacyDockerImport(record) {
-      if (record.mode === 'docker') await compose(record, ['build', 'legacy-import'], { stream: true, env: { BUILDKIT_PROGRESS: 'plain' } });
-    },
-    async importLegacyDockerState(record) {
-      if (record.mode !== 'docker') return;
-      const source = join(record.root, 'storage', 'state');
-      if (source.includes(':')) throw new Error('Docker migration requires an installation path without colon characters');
-      await compose(record, ['run', '--rm', '--no-deps', '-T', '--volume', `${source}:/legacy-import:ro`,
-        '--env', `OURS_LEGACY_TARGET_ROOT=${record.root}`, 'legacy-import']);
-    },
-    async initializeSelection(record, manifest, { retainConfig = false } = {}) {
+    async initializeSelection(record, manifest) {
       if (typeof manifest === 'string') manifest = JSON.parse(readFileSync(manifest, 'utf8'));
       selectSourcePackages(manifest, serverRole(record));
       const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
       ensurePrivateDirectory(record.root);
-      if (record.schema === 2) {
-        for (const path of [join(record.root, 'storage'), installationPaths(record).state, installationPaths(record).daemon]) ensurePrivateDirectory(path);
-      }
-      if (!retainConfig || !existsSync(record.sourcesPath)) writePrivateNew(record.sourcesPath, bytes);
-      else if (!readFileSync(record.sourcesPath).equals(bytes)) throw new Error('Migration source selection changed');
-      if (!retainConfig) writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
+      for (const path of [join(record.root, 'storage'), installationPaths(record).state, installationPaths(record).daemon]) ensurePrivateDirectory(path);
+      writePrivateNew(record.sourcesPath, bytes);
+      writePrivateNew(record.configPath, JSON.stringify({ stateDir: record.mode === 'docker' ? '/var/lib/ours' : installationPaths(record).daemon, port: record.port, apiVisibility: 'owner' }, null, 2) + '\n');
     },
     async qualifyDockerRuntime(record) { return qualifyDockerRuntime(record, effects); },
     /** Name this project's runtime and maintenance images: published digests, else an explicit local build. */
@@ -963,8 +948,8 @@ export function networkEffects(effects) {
     },
     async prepareServerBuild(record, args) {
       validateInstallation(record, record.root);
-      if (record.schema !== 2 || record.layoutConversion || !['update', 'rebuild'].includes(args.operation)) {
-        throw new Error('Select a converted installation for update or rebuild');
+      if (!['update', 'rebuild'].includes(args.operation)) {
+        throw new Error('Select an installation for update or rebuild');
       }
       const sources = args.operation === 'update'
         ? (args.resolvedSources
@@ -1179,11 +1164,9 @@ export function networkEffects(effects) {
       if (next) atomicWriteConfig(path, next);
     },
     async validateServerBuildState(record) {
-      if (record.mode === 'docker') {
-        return effects.runDockerConversion(record, { target: `${record.project}_server-storage` }, 'validate');
-      }
-      const { validateConvertedPackageState } = await import('./layout-conversion.mjs');
-      validateConvertedPackageState(record);
+      const { validateDockerState, validatePackageState } = await import('./state-validation.mjs');
+      if (record.mode === 'docker') return validateDockerState(record, effects);
+      validatePackageState(record);
     },
     async discardServerBuild(candidate) {
       if (candidate.mode === 'docker') {
@@ -1255,7 +1238,6 @@ export function networkEffects(effects) {
       }
     },
     async serverMaintenance(record, args) {
-      if (record.schema !== 2 || record.layoutConversion) throw new Error('Finish managed layout conversion before maintenance');
       if (!['server', 'daemon', 'telegram', 'cowork', 'messenger'].includes(args.domain) || !['backup', 'restore', 'reset'].includes(args.operation) || (args.domain === 'server' && args.operation === 'reset')) {
         throw new Error('Addressed shared-state maintenance is not yet available');
       }
@@ -1283,130 +1265,11 @@ export function networkEffects(effects) {
       }
       await effects.serverLifecycle(record, 'start', running);
     },
-    async selectConversionVolumes(record, { allowMissingSources = false } = {}) {
-      if (record.schema !== 1 || record.mode !== 'docker') {
-        throw new Error('Select the recorded legacy Docker source');
-      }
-      const result = await compose(record, ['config', '--format', 'json']);
-      const configuration = JSON.parse(result.stdout);
-      const sources = {};
-      const inspectOwned = async (name, key, optional = false) => {
-        if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
-          throw new Error('Invalid conversion volume name');
-        }
-        const result = await container(record, ['volume', 'inspect', '--format', '{{json .}}', name], {
-          ...(optional ? { allowCodes: [1] } : {}),
-        });
-        if (result.code !== 0) {
-          if (optional) {
-            const inventory = await container(record, ['volume', 'ls', '--format', '{{.Name}}']);
-            if (inventory.code === 0 && !inventory.stdout.split(/\s+/).includes(name)) return false;
-          }
-          throw new Error(`Source volume is missing or unavailable: ${name}`);
-        }
-        const volume = JSON.parse(result.stdout);
-        if (volume.Name !== name || volume.Labels?.['com.docker.compose.project'] !== record.project
-          || volume.Labels?.['com.docker.compose.volume'] !== key) {
-          throw new Error(`Conversion volume ownership differs: ${name}`);
-        }
-        if (volume.Driver !== 'local' || Object.keys(volume.Options ?? {}).length) {
-          throw new Error(`External or custom volume storage requires explicit ownership resolution: ${name}`);
-        }
-        return true;
-      };
-      for (const service of SERVER_SERVICES) {
-        const mounts = configuration.services?.[service]?.volumes ?? [];
-        const selected = [{ key: `${service}-state`, alias: service,
-          target: service === 'daemon' ? '/var/lib/ours' : `/var/lib/ours-${service}`, subpath: 'data' }];
-        if (service !== 'daemon') selected.push({
-          key: `${service}-credential`, alias: `${service}-credential`, target: `/credentials/${service}`,
-        });
-        for (const selection of selected) {
-          const mount = mounts.find(mount => mount.target === selection.target);
-          const declared = configuration.volumes?.[selection.key];
-          if (mount?.type !== 'volume' || mount.source !== selection.key
-            || mount.volume?.subpath !== selection.subpath || !declared || declared.external) {
-            throw new Error(`Unexpected legacy source mount for ${selection.alias}`);
-          }
-          if ((declared.driver && declared.driver !== 'local') || Object.keys(declared.driver_opts ?? {}).length) {
-            throw new Error(`External or custom volume storage requires explicit ownership resolution: ${selection.key}`);
-          }
-          if (!await inspectOwned(declared.name, selection.key, allowMissingSources)) continue;
-          if (Object.values(sources).includes(declared.name)) throw new Error('Conversion source volumes alias each other');
-          sources[selection.alias] = declared.name;
-        }
-      }
-      const target = `${record.project}_server-storage`;
-      if (Object.values(sources).includes(target)) throw new Error('Conversion destination aliases a source volume');
-      const targetExists = await inspectOwned(target, 'server-storage', true);
-      if (targetExists && !record.layoutConversion) throw new Error('Unreserved conversion destination already exists');
-      return { sources, target, targetExists };
-    },
-    async prepareDockerConversionRuntime(record) {
-      const { prepareDockerConversionRuntime } = await import('./docker-conversion-runtime.mjs');
-      await prepareDockerConversionRuntime(record, effects, INSTALLER_ASSETS);
-    },
-    async runDockerConversion(record, volumes, operation, label) {
-      const { runDockerConversion } = await import('./docker-conversion-runtime.mjs');
-      return runDockerConversion(record, volumes, operation, label, effects);
-    },
-    async convertDockerInstallation(record, operation) {
-      const { convertDockerInstallation } = await import('./docker-layout-installation.mjs');
-      return convertDockerInstallation(record, operation, effects);
-    },
     async confirmDockerWritersStopped(record) {
       await requireCleanContainerExit(record, record.services);
     },
-    async prepareLegacyPackageSource(record) {
-      await ownerCommand(record, 'cowork', 'prepare-backup');
-    },
-    async retainConvertedPackageAuthority(record, daemon) {
-      await effects.run(bin(record, existsSync(bin(record, 'ours-daemon')) ? 'ours-daemon' : 'ours'), [
-        'config', 'access-retain', '--config', record.configPath,
-        '--target-state-dir', daemon, '--json',
-      ], { env: localEnv(record), sensitive: true });
-    },
-    async convertPackageInstallation(record, operation) {
-      const { convertPackageInstallation } = await import('./layout-conversion.mjs');
-      return convertPackageInstallation(record, operation, effects);
-    },
-    async stopPendingConversion(record) {
-      validateInstallation(record, record.root);
-      if (!record.layoutConversion) throw new Error('Select a pending layout conversion');
-      const source = record.layoutConversion.sourceRecord;
-      const selections = record.schema === 1 ? [source] : [record, source];
-      for (const selection of selections) {
-        if (record.mode === 'docker') {
-          await effects.serverLifecycle(selection, 'stop', SERVER_SERVICES);
-        } else {
-          // Cleanup can already have removed former state. Never recreate it.
-          const paths = installationPaths(selection);
-          const retired = record.schema === 2 && selection === source;
-          const selected = selection.services.filter(service => {
-            if (!existsSync(paths[service])) return false;
-            // Published conversion already retired old registrations. Partial
-            // cleanup may leave directories without usable owner configuration.
-            if (!retired || service === 'messenger') return true;
-            return existsSync(service === 'daemon' ? selection.configPath : join(paths[service], 'config.json'));
-          });
-          await nativeLifecycle(selection, 'stop', selected, { effects, localEnv, ownerCommand, bin, stopSelections: selections });
-        }
-      }
-    },
-    async retireLegacyServices(record) {
-      if (record.schema !== 1 || !['packages', 'docker'].includes(record.mode)) {
-        throw new Error('Select a legacy managed installation for service retirement');
-      }
-      if (record.mode === 'docker') {
-        await effects.serverLifecycle(record, 'stop');
-        await requireCleanContainerExit(record, record.services);
-        await compose(record, ['rm', '-f', ...record.services]);
-        return;
-      }
-      await nativeLifecycle(record, 'retire', record.services, { effects, localEnv, ownerCommand, bin });
-    },
     async serverUninstall(record) {
-      if (record.schema !== 2 || record.layoutConversion || record.buildTransition) throw new Error('Complete retained installation transitions before uninstall');
+      if (record.buildTransition) throw new Error('Complete retained installation transitions before uninstall');
       if (record.mode === 'docker') {
         await effects.serverLifecycle(record, 'stop');
         await requireCleanContainerExit(record, record.services);
@@ -1674,7 +1537,7 @@ export function networkEffects(effects) {
   };
 }
 
-async function nativeLifecycle(record, operation, selected, { effects, localEnv, ownerCommand, bin, stopSelections }) {
+async function nativeLifecycle(record, operation, selected, { effects, localEnv, ownerCommand, bin }) {
   const linux = effects.platform.platform === 'linux';
   const daemonState = installationPaths(record).daemon;
   const daemonService = linux ? unitNameForStateDir(daemonState) : launchdLabelForStateDir(daemonState);
@@ -1696,8 +1559,7 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
     if (service === 'daemon') continue;
     if (existsSync(plan.path)) {
       const text = readFileSync(plan.path, 'utf8');
-      const allowedStates = stopSelections?.map(selection => installationPaths(selection)[service]) ?? [plan.state];
-      if (service === 'messenger' ? !text.includes(messenger.marker) : !allowedStates.includes(consumerServiceState(text, service, effects.platform.platform))) throw new Error(`Refusing unrelated existing ${service} service: ${plan.path}`);
+      if (service === 'messenger' ? !text.includes(messenger.marker) : consumerServiceState(text, service, effects.platform.platform) !== plan.state) throw new Error(`Refusing unrelated existing ${service} service: ${plan.path}`);
     }
   }
   const manager = async (service, op) => {
@@ -1756,7 +1618,7 @@ async function nativeLifecycle(record, operation, selected, { effects, localEnv,
         if (observed.code === 0) throw new Error('Selected daemon service is still loaded or active; authority operation refused');
       }
     }
-    if ((await nativeLifecycle(record, 'status', selected, { effects, localEnv, ownerCommand, bin, stopSelections })).length) throw new Error('Selected writers did not stop');
+    if ((await nativeLifecycle(record, 'status', selected, { effects, localEnv, ownerCommand, bin })).length) throw new Error('Selected writers did not stop');
     if (operation === 'retire') {
       // Daemon registration removal belongs to its existing uninstall-service command.
       // Consumer definitions were checked against this installation before any stop.

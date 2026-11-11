@@ -1,7 +1,6 @@
 import { assertSecureNodeVersion } from './security-versions.mjs';
 import { validateGatewayClientProfile } from './target.mjs';
 import { enableGateway } from './gateway-transition.mjs';
-import { executeLegacyMigration } from './legacy-migration.mjs';
 // ours-install v3 — the orchestrator.
 //
 // This is the part that cannot be pure: it walks the flow, renders the screens
@@ -30,7 +29,7 @@ import { executeLegacyMigration } from './legacy-migration.mjs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { parseNetworkArgs, validateHostProfile, parseInstallArgs, resolveTarget, resolveProfileSelection, profileEnv, InstallUsageError } from './target.mjs';
 import { NOTIFICATIONS_PRODUCER_FILE } from './server-onboarding.mjs';
-import { clientPackageNames, selectSourcePackages, validateInstallation, SERVER_SERVICES, planDaemonConfig, planServiceInstall, serviceInstallCommand } from './plan.mjs';
+import { clientPackageNames, selectSourcePackages, validateInstallation, refuseOldLayout, MIGRATE_FROM_UNSUPPORTED, SERVER_SERVICES, planDaemonConfig, planServiceInstall, serviceInstallCommand } from './plan.mjs';
 import {
   COMPONENTS,
   planComponentSelection, planMcpAttachment, planTgAttachment, planCoworkAttachment,
@@ -1557,9 +1556,9 @@ export async function runInstall(argv, effects) {
 
 export async function runServerCommand(args, effects) {
   if (args.operation === 'status') return executeServerCommand(args, effects);
-  return effects.withInstallationLock(args.stateDir, () => args.migrateFrom
-    ? executeLegacyMigration(args, effects, executeServerCommand)
-    : executeServerCommand(args, effects));
+  if (args.migrateFrom !== undefined) throw new InstallUsageError(MIGRATE_FROM_UNSUPPORTED);
+  refuseOldLayout(effects.readJson(join(args.stateDir, 'installation.json')), args.stateDir, effects.readJson);
+  return effects.withInstallationLock(args.stateDir, () => executeServerCommand(args, effects));
 }
 
 async function executeServerCommand(args, effects) {
@@ -1567,7 +1566,7 @@ async function executeServerCommand(args, effects) {
   let record = effects.readJson(recordPath);
   const existing = record !== null;
   if (existing) {
-    record = validateInstallation(record, args.stateDir);
+    record = validateInstallation(refuseOldLayout(record, args.stateDir, effects.readJson), args.stateDir);
     if (args.containerEngine && args.containerEngine !== (record.containerEngine ?? 'docker')) throw new Error('Conflicting container engine; explicit migration is required');
     if (args.mode && args.mode !== record.mode) throw new Error('Conflicting runtime mode; retained installation was not changed');
     if (args.product && args.product !== productOf(record)) throw new Error(`This installation is ${PRODUCT_LABELS[productOf(record)].toLowerCase()}; it is kept as it is. Use a separate empty directory for the other kind of installation.`);
@@ -1585,13 +1584,10 @@ async function executeServerCommand(args, effects) {
     if (existing && record.gateway.serverUrl !== args.serverUrl) throw new Error('Conflicting gateway server URL');
     record.gateway = { ...record.gateway, serverUrl: args.serverUrl };
   }
-  if (record.layoutConversion && !['install', 'start', 'stop', 'status'].includes(args.operation)) {
-    throw new Error('Layout conversion is incomplete; resume with server install or server start before changing state or authority');
-  }
   if (record.buildTransition && !['stop', 'status', record.buildTransition.operation].includes(args.operation)) {
     throw new Error(`Server build activation is incomplete; repeat server ${record.buildTransition.operation} before other mutations`);
   }
-  const showInstallProgress = args.operation === 'install' && !(existing && (record.schema === 1 || record.layoutConversion));
+  const showInstallProgress = args.operation === 'install';
   const installStageCount = (existing ? 7 : 9) + (args.identityName ? 2 : 0)
     + (args.identityName && args.name && args.surname && (!existing || [undefined, null, args.identityName, `${args.name} ${args.surname}`].includes(record.messengerIdentity)) ? 1 : 0);
   let completedInstallStages = 0;
@@ -1618,19 +1614,7 @@ async function executeServerCommand(args, effects) {
   await installStage('Prerequisite checks', record.mode === 'docker' ? 'Check Docker Engine and Docker Compose.' : 'Check native tools and the user service manager.', () => effects.serverPreflight(record, args.operation, {
     existing, sourcePath: args.sources ?? record.sourcesPath, sourceManifest: args.resolvedSources, identityName: args.identityName, explicitPorts: args.explicitPorts,
   }));
-  if (existing && (record.schema === 1 || record.layoutConversion)
-    && ['install', 'start', 'restart', 'update', 'rebuild'].includes(args.operation)) {
-    record = record.mode === 'docker'
-      ? await effects.convertDockerInstallation(record, args.operation)
-      : await effects.convertPackageInstallation(record, args.operation);
-    if (['install', 'start', 'restart'].includes(args.operation)) {
-      effects.out(ok(`Server ${args.operation} completed after layout conversion for ${record.root}`));
-      return EXIT_OK;
-    }
-  }
-  if (args.operation === 'stop' && record.layoutConversion) {
-    await effects.stopPendingConversion(record);
-  } else if (args.operation === 'install') {
+  if (args.operation === 'install') {
     if (!existing) {
       await installStage('Installation setup', 'Save the selected packages and installation settings.', async () => {
         await effects.initializeSelection(record, args.resolvedSources);
@@ -1695,9 +1679,6 @@ async function executeServerCommand(args, effects) {
     if (args.operation === 'status') effects.out(JSON.stringify({
       mode: record.mode, instanceId: record.instanceId, schema: record.schema, running,
       ...(record.buildTransition ? { buildTransition: record.buildTransition.phase } : {}),
-      ...(record.layoutConversion ? {
-        layoutConversion: record.schema === 1 ? 'preparation-pending' : 'activation-pending',
-      } : {}),
     }));
     if (args.operation === 'status') return EXIT_OK;
   }

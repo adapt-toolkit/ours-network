@@ -24,6 +24,7 @@ import { tgConfigPath, coworkConfigPath } from './components.mjs';
 import { configJournal, reportRollback } from './journal.mjs';
 import { UNINSTALL_USAGE } from './usage.mjs';
 import { ok, info, warn, heading } from './ui.mjs';
+import { UNSUPPORTED_LAYOUT } from './plan.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_REFUSED = 2;
@@ -86,6 +87,7 @@ export async function runUninstall(argv, effects) {
   }
 
   const managed = effects.readJson(join(dir, 'installation.json'));
+  if (managed?.schema === 1 || managed?.layoutConversion !== undefined) { effects.out(warn(`ours: ${UNSUPPORTED_LAYOUT}`)); return EXIT_REFUSED; }
   if (managed?.schema === 2 && ['docker', 'packages'].includes(managed.mode)) {
     if (contract.engaged || args.config || effects.env.OURS_CONFIG) {
       effects.out(warn('Managed server uninstall does not support legacy component/profile selections. Nothing was changed; use an explicit server uninstall with those selectors cleared.'));

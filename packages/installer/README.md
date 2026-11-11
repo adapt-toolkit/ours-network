@@ -200,43 +200,16 @@ same SDK/CLI graph; installer publication and rollout are separate steps, see
 versions remain rejected within each selected graph. The same nightly set selects Cowork `1.3.4-nightly.20261019.b0d73c0`, Telegram `1.0.1-nightly.16`, Messenger `1.0.31-nightly.25`, Notifications `0.3.1-nightly.7`, and the MCP/Codex/Claude Code suite `1.2.0-nightly.18`. An explicit `--sources`
 override remains available for development.
 
-## Migrate an existing global installation
+## Old installation layouts
 
-The wizard detects the old `~/.ours/config.json` and offers to keep its identities,
-messages, keys and settings in the new installation. It follows the configured
-state directory, including a custom location. An equivalent unattended preset is:
-
-```sh
-ours-install all --mode docker --state-dir "$HOME/ours-docker" \
-  --migrate-from "$HOME/.ours/config.json" --compatible --integrations codex
-```
-
-Run the old daemon before the first migration so the installer can record and
-verify its identities. The new runtime is downloaded/built first. Then the old
-boot service and daemon stop, and the complete daemon state is copied while its
-writer lock is held. Docker migration imports that copy into its named storage
-volume. Existing Human/role names and CIDs must match before applications start;
-migration never creates a replacement Human.
-
-The original state/configuration remain unchanged. A private `legacy-backup`
-directory stores the original config/service definition, and
-`legacy-client/profile.json` is a prepared connection profile for the new server.
-Selected integrations are configured by the usual client setup. The global `ours` command is switched to a launcher for the managed installation
-only after verifying ownership of its existing npm entry; foreign or read-only
-commands are refused before migration. Ordinary `ours identity list` is checked
-after cutover. Lifecycle commands manage the new installation, and selection
-overrides cannot accidentally return to the old daemon. The old configuration is
-not reinterpreted as a client profile. Do not start the old state alongside the
-migrated daemon. Reinstalling the global CLI with npm can replace the launcher;
-repeat the same migration command to verify and repair that routing.
-
-Repeat the same command after an interruption. Once the destination has started,
-retries repair it in place instead of replacing it with an older source snapshot.
-The source is kept stopped after an activation failure to avoid diverging identity
-sessions. Migration requires local Linux/macOS (or WSL) with `node:sqlite` support,
-a verifiable old CLI/service, and a separate target directory. External PostgreSQL
-history or unsupported external MCP/token-delivery paths are refused before
-shutdown. Unrelated application data outside the daemon tree is not copied.
+Migration from old installation layouts is no longer supported: neither an
+unmanaged `~/.ours` daemon (`~/.ours/config.json`) nor a managed schema-1
+installation is imported or converted. Setup never offers to bring such data
+over; a leftover `~/.ours` is ignored and a fresh installation is created in its
+own folder. `--migrate-from` is refused as unsupported, and a selected folder
+holding a schema-1 or partially converted/imported record is refused before
+anything is written. Existing data is never changed or deleted; install fresh
+into a new folder.
 
 ## Selected network installations (2.0)
 
@@ -304,8 +277,8 @@ Fresh Docker preparation leaves daemon state containing only its selected config
 Only after owning `access-init` succeeds are daemon provenance and MCP profile
 files materialized, so fresh setup never needs an inferred migration.
 Initial setup calls owning CLI `access-init`, then `access-issue --replace` for
-managed credential destinations. Explicit legacy migration adds `--migrate` to
-`server install`; migration is never inferred. Global replacement stops consumers
+managed credential destinations. Explicit daemon credential migration adds
+`--migrate` to `server install`; it is never inferred. Global replacement stops consumers
 and the daemon, calls `access-replace` once, repairs managed credential delivery,
 and restarts only previously running services. If delivery/startup fails after
 replacement, the new master remains authoritative and setup is reported incomplete.
@@ -643,10 +616,7 @@ ours-install server install --mode docker --container-engine podman \
 and standalone Compose provider, plus the UID/GID mapping fingerprint. Records without `containerEngine` continue to
 use Docker. Package/client installs reject the engine option. Existing records
 cannot change engines through a flag or ambient connection change; automatic
-Docker-to-Podman data migration is not provided. Legacy local-daemon migration
-(`--migrate-from`) to Podman is also unsupported and is refused before source
-shutdown or managed CLI publication, including migration retries. Use a fresh
-Podman installation, or migrate the legacy daemon with Docker/packages.
+Docker-to-Podman data migration is not provided; use a fresh Podman installation.
 
 Podman uses its native build command, with the same resolved Compose build
 context, target, architecture, arguments and secret references, followed by
@@ -844,7 +814,7 @@ restart policy overlay also covers retained Compose files. Reconciliation update
 only this project's recorded long-running containers and does not start or
 recreate a deliberately stopped container. `server start` can reconcile policies
 but does not retrofit health supervision into an old image: run install/update.
-Backup, migration and update still stop writers before maintenance, and a failed
+Backup, restore and update still stop writers before maintenance, and a failed
 maintenance operation keeps them stopped. `server uninstall` (also `ours-uninstall --state-dir PATH` for a managed
 schema-2 installation) stops and removes managed services, retaining volumes,
 identity and credentials. It refuses unfinished transitions and data purge.

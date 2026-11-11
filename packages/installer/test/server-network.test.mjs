@@ -133,7 +133,7 @@ test('update and rebuild prepare isolated runtimes without replacing the active 
 });
 
 test('replacement stops writers before replacing and reports changed authority when delivery fails', async () => {
-  const record = { schema: 1, mode: 'docker', root: '/srv/ours', configPath: '/srv/ours/config.json', sourcesPath: '/srv/ours/sources.json', workDir: '/srv/ours/runtime', project: 'ours-fixture', instanceId: '12345678-1234-1234-1234-123456789abc', services: ['daemon', 'telegram', 'cowork', 'messenger'] };
+  const record = { schema: 2, mode: 'docker', root: '/srv/ours', configPath: '/srv/ours/storage/state/daemon/config.json', sourcesPath: '/srv/ours/sources.json', workDir: '/srv/ours/runtime', project: 'ours-fixture', instanceId: '12345678-1234-1234-1234-123456789abc', services: ['daemon', 'telegram', 'cowork', 'messenger'] };
   const effects = fx({ json: { '/srv/ours/installation.json': record } });
   const events = [];
   effects.serverPreflight = async () => {};
@@ -449,17 +449,17 @@ test('real native start reactivates a retained daemon definition through its own
   for (const fixture of [
     {
       platform: 'linux',
-      definition: root => join(root, '.config/systemd/user/ours-data.service'),
-      managerStart: ['systemctl', '--user', 'start', 'ours-data.service'],
+      definition: root => join(root, '.config/systemd/user/ours-daemon.service'),
+      managerStart: ['systemctl', '--user', 'start', 'ours-daemon.service'],
     },
     {
       platform: 'darwin',
-      definition: root => join(root, 'Library/LaunchAgents/solutions.adaptframework.ours.data.plist'),
-      managerStart: ['launchctl', 'kickstart', `gui/${process.getuid()}/solutions.adaptframework.ours.data`],
+      definition: root => join(root, 'Library/LaunchAgents/solutions.adaptframework.ours.daemon.plist'),
+      managerStart: ['launchctl', 'kickstart', `gui/${process.getuid()}/solutions.adaptframework.ours.daemon`],
     },
   ]) for (const splitRuntime of [false, true]) {
     const root = mkdtempSync(join(tmpdir(), `ours-native-${fixture.platform}-`));
-    const record = { root, workDir: join(root, 'runtime'), configPath: join(root, 'config.json'), mode: 'packages', project: 'ours-fixture', services: ['daemon'] };
+    const record = { schema: 2, root, workDir: join(root, 'runtime'), configPath: join(root, 'storage/state/daemon/config.json'), mode: 'packages', project: 'ours-fixture', services: ['daemon'] };
     try {
       if (splitRuntime) { const binDir = join(record.workDir, 'node_modules/.bin'); mkdirSync(binDir, { recursive: true }); writeFileSync(join(binDir, 'ours-daemon'), 'fixture'); }
       const definition = fixture.definition(root);
@@ -743,40 +743,38 @@ test('shared layout is accepted only with its own config selection', () => {
   assert.throws(() => plan.validateInstallation({ ...record, schema: 3 }, record.root));
 });
 
-test('shared layout sends owner commands to component paths and retains legacy selection', async () => {
+test('shared layout sends owner commands to component paths', async () => {
   const { realEffects } = await import('../lib/effects.mjs');
-  for (const schema of [1, 2]) {
-    const calls = [];
-    const effects = realEffects({ env: {}, home: '/tmp' });
-    effects.platform = { platform: 'linux' };
-    effects.run = async (command, args, options) => { calls.push({ command, args, env: options?.env }); return { code: 3, stdout: '' }; };
-    const root = '/tmp/ours-layout-fixture';
-    const record = { schema, root, mode: 'packages', workDir: `${root}/runtime`, project: 'ours-fixture', services: ['daemon'], configPath: schema === 2 ? `${root}/storage/state/daemon/config.json` : `${root}/config.json` };
-    await effects.serverLifecycle(record, 'status');
-    assert.equal(calls[0].args[calls[0].args.indexOf('--state-dir') + 1], schema === 2 ? `${root}/storage/state/daemon` : `${root}/data`);
-    calls.length = 0;
-    await effects.serverAccess(record, 'access-issue');
-    assert.deepEqual(calls.map(c => c.args[c.args.indexOf('--output') + 1]), schema === 2 ? [
-      `${root}/storage/state/daemon/daemon-token`,
-      `${root}/storage/state/credentials/telegram/daemon-token`,
-      `${root}/storage/state/credentials/cowork/daemon-token`,
-      `${root}/storage/state/credentials/messenger/daemon-token`,
-    ] : [`${root}/data/daemon-token`, `${root}/credentials/telegram-token`, `${root}/credentials/cowork-token`, `${root}/credentials/messenger-token`]);
-  }
+  const calls = [];
+  const effects = realEffects({ env: {}, home: '/tmp' });
+  effects.platform = { platform: 'linux' };
+  effects.run = async (command, args, options) => { calls.push({ command, args, env: options?.env }); return { code: 3, stdout: '' }; };
+  const root = '/tmp/ours-layout-fixture';
+  const record = { schema: 2, root, mode: 'packages', workDir: `${root}/runtime`, project: 'ours-fixture', services: ['daemon'], configPath: `${root}/storage/state/daemon/config.json` };
+  await effects.serverLifecycle(record, 'status');
+  assert.equal(calls[0].args[calls[0].args.indexOf('--state-dir') + 1], `${root}/storage/state/daemon`);
+  calls.length = 0;
+  await effects.serverAccess(record, 'access-issue');
+  assert.deepEqual(calls.map(c => c.args[c.args.indexOf('--output') + 1]), [
+    `${root}/storage/state/daemon/daemon-token`,
+    `${root}/storage/state/credentials/telegram/daemon-token`,
+    `${root}/storage/state/credentials/cowork/daemon-token`,
+    `${root}/storage/state/credentials/messenger/daemon-token`,
+  ]);
 });
 
-test('conversion retry validates its original selection and cleanup boundary', () => {
-  const sourceRecord = { schema: 1, mode: 'packages', root: '/srv/ours', configPath: '/srv/ours/config.json', sourcesPath: '/srv/ours/sources.json', workDir: '/srv/ours/runtime', project: 'ours-fixture', instanceId: '12345678-1234-1234-1234-123456789abc', services: ['daemon', 'cowork'] };
-  const marker = { version: 1, sourceRecord, backupPath: '/srv/ours/storage/backups/before-layout-2.tar', runningServices: ['daemon'] };
-  const converted = { ...sourceRecord, schema: 2, configPath: '/srv/ours/storage/state/daemon/config.json', layoutConversion: marker };
-  assert.equal(plan.validateInstallation(converted, sourceRecord.root), converted);
-  assert.equal(plan.validateInstallation({ ...sourceRecord, layoutConversion: marker }, sourceRecord.root).schema, 1);
-  for (const change of [
-    { version: 2 }, { backupPath: '/srv/other/state.tar' }, { runningServices: ['messenger'] },
-    { sourceRecord: { ...sourceRecord, project: 'ours-other' } },
-    { sourceRecord: { ...sourceRecord, instanceId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } },
-    { sourceRecord: { ...sourceRecord, layoutConversion: marker } },
-  ]) assert.throws(() => plan.validateInstallation({ ...converted, layoutConversion: { ...marker, ...change } }, sourceRecord.root));
+test('schema-1 and pending layout-conversion selections are refused as unsupported old layouts', () => {
+  const oldRecord = { schema: 1, mode: 'packages', root: '/srv/ours', configPath: '/srv/ours/config.json', sourcesPath: '/srv/ours/sources.json', workDir: '/srv/ours/runtime', project: 'ours-fixture', instanceId: '12345678-1234-1234-1234-123456789abc', services: ['daemon', 'cowork'] };
+  const marker = { version: 1, sourceRecord: oldRecord, backupPath: '/srv/ours/storage/backups/before-layout-2.tar', runningServices: ['daemon'] };
+  const pending = { ...oldRecord, schema: 2, configPath: '/srv/ours/storage/state/daemon/config.json', layoutConversion: marker };
+  for (const record of [oldRecord, pending, { ...oldRecord, layoutConversion: marker }]) {
+    assert.throws(() => plan.validateInstallation(record, record.root), { message: plan.UNSUPPORTED_LAYOUT });
+  }
+  const current = { ...pending }; delete current.layoutConversion;
+  assert.equal(plan.validateInstallation(current, current.root), current);
+  const imported = { ...current, legacyMigrationSource: '/home/me/.ours/config.json' };
+  assert.equal(plan.refuseOldLayout(imported, imported.root, () => ({ phase: 'complete' })), imported, 'a completed import is an ordinary schema-2 installation');
+  for (const journal of [null, { phase: 'copied' }]) assert.throws(() => plan.refuseOldLayout(imported, imported.root, () => journal), { message: plan.UNSUPPORTED_LAYOUT });
 });
 
 test('package preparation keeps MCP and consumer state outside daemon scanning', async () => {
