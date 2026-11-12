@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { gatewayNginx } from '../lib/gateway.mjs';
+import { gatewayNginx, GATEWAY_IMAGE } from '../lib/gateway.mjs';
 
 test('real services and Fleet work through nginx and an authenticated browser entry', { skip: process.env.OURS_TEST_GATEWAY_SERVICES !== '1', timeout: 180000 }, async t => {
   const roots = Object.fromEntries(['COWORK', 'FLEET', 'MESSENGER', 'TELEGRAM'].map(name => {
@@ -82,7 +82,7 @@ test('real services and Fleet work through nginx and an authenticated browser en
   const password = 'fixture-password';
   const hash = execFileSync('openssl', ['passwd', '-apr1', password], { encoding: 'utf8' }).trim();
   writeFileSync(join(state, 'htpasswd'), 'fixture:' + hash + '\n', { mode: 0o644 });
-  const nginxImage = readFileSync(new URL('../assets/Dockerfile.gateway', import.meta.url), 'utf8').split('\n')[0].slice(5);
+  const nginxImage = GATEWAY_IMAGE;
   docker(['run', '-d', '--name', container, '--network', 'host', '--read-only', '--tmpfs', '/tmp', '-v', `${state}:/fixture:ro`, '-v', `${join(state, 'htpasswd')}:/etc/nginx/gateway-passwd:ro`, '--entrypoint', 'nginx', nginxImage, '-c', '/fixture/nginx.conf', '-g', 'daemon off;']); nginxStarted = true;
   await waitFor(async () => (await fetch(base + '/.well-known/ours')).ok, 'gateway discovery');
   const profilePath = join(state, 'profile.json');

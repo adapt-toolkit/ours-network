@@ -14,16 +14,14 @@ Backup and restore support the full server or an addressed daemon, Telegram,
 Cowork or Messenger domain. Daemon archives include MCP preferences. Daemon
 restore/reset replaces both trees together and preserves other component data
 and current credentials. Addressed reset requires `--confirm`; full-server reset
-is not supported. Managed legacy installations convert to the shared layout
-through the installer before ordinary startup; plain script calls are not a
-substitute for that coordinated conversion.
+is not supported. Old (schema-1) installation layouts are not converted.
 
 | File | Responsibility |
 |---|---|
 | `state-operation.mjs` | Validates the selected state, stages replacements and invokes owning package commands to retain current authority |
 | `state-archive.mjs` | Creates, validates and extracts format-1 archives, preserving private permissions and timestamps |
 | `state-native.mjs` | Provides the existing OS file-lock and atomic directory operations through Koffi |
-| `docker-layout-conversion.mjs` | Stages, validates and publishes the managed legacy Docker state layout under installer coordination |
+| `docker-layout-conversion.mjs` | Validates stopped Docker server state offline after an update (the name is the entrypoint retained images already ship) |
 
 Archives are stored in `storage/backups`, outside `storage/state` but on the same
 storage volume. Removing that volume removes its backups too. Restore creates a

@@ -11,7 +11,7 @@
 // installer underneath.
 
 import { join } from 'node:path';
-import { validateInstallation } from './plan.mjs';
+import { validateInstallation, refuseOldLayout, UNSUPPORTED_LAYOUT } from './plan.mjs';
 import { productOf, isPluginOnly, PLUGIN_ONLY, PRODUCT_LABELS, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
 import { validateSetupOptions, defaultHostname } from './setup-options.mjs';
 import { validateIdentityName } from './server-onboarding.mjs';
@@ -45,17 +45,15 @@ export function findInstallations(effects, extra = []) {
     const value = effects.readJson(join(root, 'installation.json'));
     if (!value) continue;
     try {
-      const record = validateInstallation(value, root);
-      const journal = record.legacyMigrationSource ? effects.readJson(join(root, 'legacy-migration.json')) : null;
-      found.push({ root, record, product: productOf(record),
-        pending: record.buildTransition ? record.buildTransition.operation : record.layoutConversion ? 'install'
-          : record.legacyMigrationSource && journal?.phase !== 'complete' ? 'install' : null });
-    } catch { found.push({ root, invalid: true }); }
+      const record = validateInstallation(refuseOldLayout(value, root, effects.readJson), root);
+      found.push({ root, record, product: productOf(record), pending: record.buildTransition ? record.buildTransition.operation : null });
+    } catch (error) { found.push({ root, invalid: true, ...(error.message === UNSUPPORTED_LAYOUT ? { old: true } : {}) }); }
   }
   return found;
 }
 
 function describe(item) {
+  if (item.old) return `An old Ours installation layout that is no longer supported (left unchanged): ${item.root}`;
   if (item.invalid) return `An Ours folder that could not be read: ${item.root}`;
   const engine = item.record.mode === 'packages' ? 'directly on this computer' : item.record.containerEngine === 'podman' ? 'in Podman' : 'in Docker';
   return `${PRODUCT_LABELS[item.product]} — folder ${item.root}, running ${engine}`;

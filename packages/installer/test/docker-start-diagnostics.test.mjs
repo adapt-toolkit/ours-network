@@ -104,6 +104,7 @@ for (const supported of [false,true]) test(`gateway preparation gates exact Cowo
   const probe=calls.find(c=>c.args.includes('capabilities'));
   assert.ok(probe.args.includes(`${record.project}:runtime`));
   assert.ok(probe.args.includes('none'));
-  assert.equal(calls.some(c=>c.args.includes('build')&&c.args.at(-1)==='gateway'),supported);
+  // The gateway runs upstream nginx: it is never built, whether or not the artifact qualifies.
+  assert.equal(calls.some(c=>c.args.includes('build')&&c.args.at(-1)==='gateway'),false);
   assert.equal(calls.some(c=>c.args.includes('up')),false);
 });

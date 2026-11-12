@@ -80,14 +80,12 @@ test('installer stop cleanly exits an existing gateway holding a stream', { skip
   const retained = { schema: 2, mode: 'docker', containerEngine: 'docker', project, root, workDir: root, instanceId: record.instanceId, port: 0, coworkPort: 3052, gateway: { serverUrl: 'http://localhost' }, services: ['daemon', 'gateway'] };
   const compose = args => docker(['compose', '-p', project, '--project-directory', root, '-f', join(root, 'docker-compose.yaml'), '-f', join(root, 'docker-compose.gateway.yaml'), ...args]);
   const streams = [];
-  t.after(() => { for (const s of streams) s.kill(); try { compose(['down', '--timeout', '3', '--remove-orphans']); } finally { try { docker(['image', 'rm', `${project}:gateway`]); } finally { rmSync(root, { recursive: true, force: true }); } } });
+  t.after(() => { for (const s of streams) s.kill(); try { compose(['down', '--timeout', '3', '--remove-orphans']); } finally { rmSync(root, { recursive: true, force: true }); } });
   writeFileSync(join(root, 'server.cjs'), `require('http').createServer((q,s)=>{s.writeHead(200,{'content-type':'text/event-stream'});s.write(':\\n\\n');}).listen(3050,'0.0.0.0');process.on('SIGTERM',()=>process.exit(0));`);
   writeFileSync(join(root, 'docker-compose.yaml'), `services:\n  daemon:\n    image: node:24\n    init: true\n    command: [node, /fixture/server.cjs]\n    volumes: ["${root}:/fixture:ro"]\n    networks:\n      ours:\n        aliases: [cowork, messenger, telegram]\n  cowork:\n    image: node:24\n  telegram:\n    image: node:24\n  messenger:\n    image: node:24\nnetworks:\n  ours: {}\n`);
   writeFileSync(join(root, 'docker-compose.gateway.yaml'), gatewayCompose(retained).replace('    stop_signal: SIGTERM\n', ''));
   writeFileSync(join(root, 'nginx.conf'), gatewayNginx(retained));
-  cpSync(new URL('../assets/Dockerfile.gateway', import.meta.url), join(root, 'Dockerfile.gateway'));
-  cpSync(new URL('../assets/gateway-entrypoint.sh', import.meta.url), join(root, 'gateway-entrypoint.sh'));
-  const up = () => compose(['up', '-d', '--build', '--wait', 'daemon', 'gateway']);
+  const up = () => compose(['up', '-d', '--no-build', '--wait', 'daemon', 'gateway']);
   const gatewayExit = () => JSON.parse(docker(['inspect', '--format', '{{json .State}}', compose(['ps', '-aq', 'gateway']).trim()]));
   const holdStream = async () => {
     const port = compose(['port', 'gateway', '8080']).trim().split(':').at(-1);

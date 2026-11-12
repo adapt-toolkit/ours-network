@@ -583,3 +583,13 @@ test('every platform removes the boot service through the shared CLI', async () 
   assert.ok(e.recorder.ran.some((c) => c.join(' ').startsWith('ours-daemon uninstall-service ')), 'attempted, not skipped');
   assert.doesNotMatch(said(e), /nothing of ours to remove here/);
 });
+
+test('uninstall refuses a schema-1, pending-conversion or unfinished-import managed record and changes nothing, even with --purge', async () => {
+  const root = '/home/me/old-managed';
+  for (const record of [{ schema: 1, mode: 'packages', root }, { schema: 2, mode: 'docker', root, layoutConversion: { version: 1 } }, { schema: 2, mode: 'docker', root, legacyMigrationSource: '/home/me/.ours/config.json' }]) {
+    const e = fx({ json: { [join(root, 'installation.json')]: record, [join(root, 'legacy-migration.json')]: { phase: 'copied' } } });
+    assert.equal(await runUninstall(['--state-dir', root, '--purge'], e), EXIT_REFUSED);
+    assert.match(said(e), /Unsupported old installation layout \(schema 1 \/ legacy ~\/\.ours\).*Existing data was not changed/);
+    assert.deepEqual([e.recorder.ran, e.recorder.wrote, e.recorder.removed, e.recorder.wroteText], [[], [], [], []]);
+  }
+});

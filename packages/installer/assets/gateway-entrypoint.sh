@@ -30,7 +30,9 @@ if [ -z "$resolvers" ]; then echo 'Gateway: no valid runtime DNS nameserver' >&2
 umask 077
 config=$(mktemp /tmp/ours-nginx.XXXXXX)
 trap 'rm -f "$config"' EXIT HUP INT TERM
-sed "s/@@OURS_RESOLVERS@@/$resolvers/g" "${OURS_NGINX_TEMPLATE:-/etc/nginx/ours.conf.template}" > "$config"
+# Compose passes the generated template in the environment; a file remains for fixtures.
+if [ -n "${OURS_GATEWAY_TEMPLATE:-}" ]; then printf '%s' "$OURS_GATEWAY_TEMPLATE"; else cat "${OURS_NGINX_TEMPLATE:-/etc/nginx/ours.conf.template}"; fi \
+  | sed "s/@@OURS_RESOLVERS@@/$resolvers/g" > "$config"
 nginx -t -c "$config"
 # nginx opens the config before the shell exits; exec leaves this file in tmpfs.
 trap - EXIT HUP INT TERM

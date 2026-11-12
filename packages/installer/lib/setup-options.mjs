@@ -1,7 +1,9 @@
 import { hostname } from 'node:os';
 import { serverBase } from './gateway.mjs';
-import { join, resolve, isAbsolute, dirname } from 'node:path';
+import { join, resolve } from 'node:path';
 import { PRODUCTS, PLUGIN_ONLY, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
+import { MIGRATE_FROM_UNSUPPORTED, refuseOldLayout } from './plan.mjs';
+import { InstallUsageError } from './target.mjs';
 
 const scopes = ['all', 'server', 'client'];
 const integrations = ['codex', 'claude-code', 'fleet'];
@@ -9,12 +11,12 @@ const valueFlags = new Map(Object.entries({
   '--container-engine': 'containerEngine', '--server-url': 'serverUrl', '--scope': 'scope', '--action': 'operation', '--mode': 'mode', '--state-dir': 'stateDir',
   '--username': 'localUsername', '--name': 'name', '--surname': 'surname', '--hostname': 'hostname',
   '--identity-name': 'identityName', '--integrations': 'integrations', '--fleet-settings': 'fleetSettingsPath', '--fleet-task-workflow': 'fleetTaskWorkflowAgents',
-  '--config': 'config', '--sources': 'sources', '--migrate-from': 'migrateFrom', '--port': 'port', '--cowork-port': 'coworkPort', '--messenger-port': 'messengerPort',
+  '--config': 'config', '--sources': 'sources', '--port': 'port', '--cowork-port': 'coworkPort', '--messenger-port': 'messengerPort',
 }));
 const boolFlags = new Map([['--compatible', 'compatible'], ['--dry-run', 'dryRun'], ['--migrate', 'migrate'], ['--disable-fleet-agents-setup', 'disableFleetAgentsSetup']]);
 const allowed = new Set([...valueFlags.values(), ...boolFlags.values(), 'interactive', 'explicitPorts', 'product']);
 const defaults = { port: 3050, coworkPort: 3052, messengerPort: 8420 };
-const paths = ['stateDir', 'config', 'sources', 'fleetSettingsPath', 'migrateFrom'];
+const paths = ['stateDir', 'config', 'sources', 'fleetSettingsPath'];
 const nonempty = value => typeof value === 'string' && value.trim().length > 0 && !/[\x00-\x1f\x7f]/.test(value);
 
 export function recommendedMode({ platform, arch, release = '' } = {}) {
@@ -27,14 +29,13 @@ export function recommendedMode({ platform, arch, release = '' } = {}) {
 
 export function validateSetupOptions(input, { interactive = input?.interactive === true } = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Setup options must be an object');
+  if (input.migrateFrom !== undefined) throw new InstallUsageError(MIGRATE_FROM_UNSUPPORTED);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unknown setup option: ${key}`);
   const options = { ...input, scope: input.scope ?? 'all', operation: input.operation ?? 'install', interactive };
   if (!scopes.includes(options.scope)) throw new Error('Scope must be all, server, or client');
   if (!['install', 'update'].includes(options.operation)) throw new Error('Operation must be install or update');
   const server = options.scope !== 'client';
   const client = options.scope !== 'server';
-  if (options.migrateFrom !== undefined && (!server || options.operation !== 'install')) throw new Error('--migrate-from requires server or all scope and operation install');
-  if (options.migrateFrom !== undefined && (!nonempty(options.migrateFrom) || !isAbsolute(options.migrateFrom))) throw new Error('--migrate-from requires an absolute daemon config path');
   const suppliedHuman = ['localUsername', 'name', 'surname'].some(key => options[key] !== undefined);
   if (suppliedHuman) {
     for (const key of ['localUsername', 'name', 'surname']) if (!nonempty(options[key])) throw new Error(`Missing human profile option: ${key}`);
@@ -50,8 +51,8 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
     options.hostname = options.hostname?.trim() || defaultHostname();
     if (!/^[a-z0-9][a-z0-9-]{0,29}$/.test(options.hostname)) throw new Error('Hostname must contain 1–30 lowercase letters, digits or hyphens');
     const identity = `${options.localUsername}@${options.hostname}`;
-    if (options.migrateFrom === undefined && options.identityName !== undefined && options.identityName !== identity) throw new Error('--identity-name conflicts with username and hostname');
-    if (options.migrateFrom === undefined) options.identityName = identity;
+    if (options.identityName !== undefined && options.identityName !== identity) throw new Error('--identity-name conflicts with username and hostname');
+    options.identityName = identity;
   } else if (options.hostname !== undefined) throw new Error('--hostname requires username, name and surname');
   if (options.disableFleetAgentsSetup !== undefined && typeof options.disableFleetAgentsSetup !== 'boolean') throw new Error('disableFleetAgentsSetup must be a boolean');
   if (options.disableFleetAgentsSetup && options.fleetSettingsPath) throw new Error('--disable-fleet-agents-setup conflicts with --fleet-settings');
@@ -71,7 +72,7 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
       if (options.mode !== undefined && !['docker'].includes(options.mode)) throw new Error('--plugin-only runs the daemon in Docker or Podman; native packages are not supported for it');
       if (options.integrations?.some?.(name => !PLUGIN_ONLY_INTEGRATIONS.includes(name))) throw new Error('--plugin-only connects Claude Code and/or Codex; Fleet is part of the complete workspace');
       for (const [key, flag] of [['fleetSettingsPath', '--fleet-settings'], ['fleetTaskWorkflowAgents', '--fleet-task-workflow'], ['disableFleetAgentsSetup', '--disable-fleet-agents-setup'],
-        ['name', '--name'], ['surname', '--surname'], ['migrateFrom', '--migrate-from'], ['serverUrl', '--server-url']]) {
+        ['name', '--name'], ['surname', '--surname'], ['serverUrl', '--server-url']]) {
         if (options[key] !== undefined && options[key] !== false) throw new Error(`${flag} belongs to the complete workspace and cannot be combined with --plugin-only`);
       }
       if (options.explicitPorts?.some?.(key => key !== 'port')) throw new Error('--plugin-only uses one port; --cowork-port and --messenger-port do not apply');
@@ -79,10 +80,10 @@ export function validateSetupOptions(input, { interactive = input?.interactive =
     }
   }
   const missing = [];
-  if (server) for (const [key, flag] of [['mode', '--mode'], ['stateDir', '--state-dir'], ...(options.migrateFrom === undefined ? [['identityName', '--identity-name']] : [])]) if (!nonempty(options[key])) missing.push(flag);
+  if (server) for (const [key, flag] of [['mode', '--mode'], ['stateDir', '--state-dir'], ['identityName', '--identity-name']]) if (!nonempty(options[key])) missing.push(flag);
   if (client && options.integrations === undefined) missing.push('--integrations (use none to skip)');
   if (!server && !nonempty(options.config)) missing.push('--config');
-  if (server && (options.operation === 'update' || options.migrateFrom !== undefined) && options.compatible !== true) missing.push('--compatible');
+  if (server && options.operation === 'update' && options.compatible !== true) missing.push('--compatible');
   if (Array.isArray(options.integrations) && options.integrations.includes('fleet') && !interactive && !options.disableFleetAgentsSetup && !nonempty(options.fleetSettingsPath)) missing.push('--fleet-settings');
   if (missing.length) throw new Error(`Missing required setup options: ${missing.join(', ')}`);
   if (options.mode === 'native') options.mode = 'packages';
@@ -128,10 +129,7 @@ function expandPaths(options, home) {
     if (value === '~' || value.startsWith('~/')) {
       if (!nonempty(home)) throw new Error('Home directory is required to expand ~/ paths');
       output[key] = resolve(home, value === '~' ? '' : value.slice(2));
-    } else {
-      if (key === 'migrateFrom' && !isAbsolute(value)) throw new Error('--migrate-from requires an absolute daemon config path');
-      output[key] = resolve(value);
-    }
+    } else output[key] = resolve(value);
   }
   return output;
 }
@@ -158,6 +156,7 @@ export function parseSetupArgs(argv, { home, validate = true } = {}) {
       if (equal >= 0) throw new Error(`${flag} takes no value`);
       put(boolFlags.get(flag), true); continue;
     }
+    if (flag === '--migrate-from') throw new InstallUsageError(MIGRATE_FROM_UNSUPPORTED);
     if (!valueFlags.has(flag)) throw new Error(`Unknown setup flag: ${flag}`);
     const value = equal < 0 ? argv[++i] : arg.slice(equal + 1);
     if (!nonempty(value) || value.startsWith('--')) throw new Error(`${flag} requires a value`);
@@ -191,7 +190,6 @@ export async function collectSetupOptions(effects, presets = {}) {
   options.scope ??= await effects.select('What would you like to set up?', scopeChoices, 'all');
   if (!scopes.includes(options.scope)) throw new Error('Scope must be all, server, or client');
   let existing;
-  let pendingMigration;
   if (options.scope !== 'client') {
     const recommendedRoot = join(effects.home, '.ours-install');
     effects.out(`Stores the server programs and data, including identities and messages. The recommended folder is ${recommendedRoot}; choose another only if you want to manage its location yourself.`);
@@ -201,61 +199,21 @@ export async function collectSetupOptions(effects, presets = {}) {
     ], 'recommended');
     options.stateDir ??= location === 'recommended' ? recommendedRoot : await effects.askLine('Folder for server programs and data: ', recommendedRoot);
     options.stateDir = expandPaths({ stateDir: options.stateDir }, effects.home).stateDir;
-    existing = effects.readJson(join(options.stateDir, 'installation.json'));
-    const migrationJournal = existing?.legacyMigrationSource ? effects.readJson(join(options.stateDir, 'legacy-migration.json')) : null;
-    pendingMigration = existing?.legacyMigrationSource && migrationJournal?.phase !== 'complete' ? existing.legacyMigrationSource : null;
+    existing = refuseOldLayout(effects.readJson(join(options.stateDir, 'installation.json')), options.stateDir, effects.readJson);
   }
-  effects.out(pendingMigration
-    ? 'An earlier migration is unfinished. Resume it in this same folder to retain the copied data and repair the installation.'
-    : existing
+  effects.out(existing
     ? 'This folder already contains an installation. Update selects this installer’s release while retaining state; repair reinstalls the retained package selection.'
     : options.scope === 'client' ? 'Install connects your selected apps. Update refreshes their packages while keeping the server connection.'
       : 'Install creates a managed installation in the selected folder. Update requires an installation already recorded there.');
   options.operation ??= !existing && options.scope !== 'client' ? 'install' : await effects.select('What should happen?', [
-    { value: 'install', label: pendingMigration ? 'Resume the unfinished migration' : existing ? 'Repair this installation' : 'Install and configure' },
+    { value: 'install', label: existing ? 'Repair this installation' : 'Install and configure' },
     { value: 'update', label: 'Update an existing installation' },
-  ], existing && !pendingMigration ? 'update' : 'install');
-  if (options.scope !== 'client' && options.operation === 'install') {
-    const defaultConfig = join(effects.home, '.ours', 'config.json');
-    const legacy = !existing ? effects.readJson(defaultConfig) : null;
-    const legacyState = nonempty(legacy?.stateDir) ? legacy.stateDir
-      : legacy && legacy.stateDir === undefined && nonempty(effects.readJson(join(effects.home, '.ours', 'root.json'))?.name)
-        ? join(effects.home, '.ours') : null;
-    if (options.migrateFrom) { /* Explicit selection is validated below. */ }
-    else if (pendingMigration) options.migrateFrom = pendingMigration;
-    else if (legacyState) {
-      effects.out(`Found an existing ours installation at ${legacyState}. Upgrade it to keep its identities, messages and settings. The old server will stop; its original state is kept as a recovery copy.`);
-      if (await effects.ask('Upgrade this existing ours installation and keep its data?', true)) options.migrateFrom = defaultConfig;
-      else {
-        effects.out('A separate installation creates a different server. It does not move or share the identities and messages in the existing installation.');
-        if (!await effects.ask('Create a separate fresh installation and keep the existing daemon unchanged?', false)) throw new Error('Setup cancelled; existing daemon was not changed');
-      }
-    } else {
-      effects.out('Start fresh if you have no existing ours data to bring over. If your old installation is stored elsewhere, select its configuration file to retain its data.');
-      const migration = await effects.select('Should existing ours data be brought over?', [
-        { value: 'fresh', label: 'Start a fresh installation' },
-        { value: 'migrate', label: 'Bring data from another existing installation' },
-      ], 'fresh');
-      if (migration === 'migrate') options.migrateFrom = expandPaths({ migrateFrom: await effects.askLine('Existing daemon configuration file: ', '') }, effects.home).migrateFrom;
-    }
-    if (options.migrateFrom) {
-      if (existing && pendingMigration !== options.migrateFrom) throw new Error('--migrate-from requires a new managed installation root; the selected root already has installation.json');
-      const sourceConfig = effects.readJson(options.migrateFrom);
-      const sourceState = sourceConfig?.stateDir ?? dirname(options.migrateFrom);
-      const root = effects.readJson(join(sourceState, 'root.json'));
-      if (!nonempty(root?.name)) throw new Error('Cannot read the existing Human identity name; choose the configuration file for a complete existing installation');
-      options.identityName = root.name;
-      effects.out(`Your existing Human identity, ${root.name}, will be retained; no replacement identity will be created. Migration keeps the original state, but compatibility with an older release cannot be guaranteed automatically.`);
-      options.compatible ??= await effects.ask('Proceed with this release and keep the original state as a recovery copy?', false);
-      if (!options.compatible) throw new Error('Migration requires explicit compatibility confirmation (--compatible)');
-    }
-  }
+  ], existing ? 'update' : 'install');
   if (options.scope !== 'client') {
     const recommendation = recommendedMode({ ...effects.platform, arch: effects.platform?.arch ?? process.arch });
     // Native runs the server only: local clients need the container gateway. A retained
     // native installation keeps its mode, so a full setup of it cannot finish.
-    // (An unfinished migration is resumed in its recorded mode and is validated with the plan.)
-    if (options.scope === 'all' && existing?.mode === 'packages' && !options.migrateFrom)
+    if (options.scope === 'all' && existing?.mode === 'packages')
       throw new Error('This installation runs natively, which supports the server only. Choose the server-only setup to maintain it (ours-install server); local clients need an installation that runs in Docker or Podman. Nothing was changed.');
     const nativeOffered = options.scope === 'server' || existing?.mode === 'packages';
     effects.out(nativeOffered
@@ -266,22 +224,20 @@ export async function collectSetupOptions(effects, presets = {}) {
     ], existing?.mode === 'docker' && existing?.containerEngine === 'podman' ? 'podman' : existing?.mode ?? recommendation.mode);
     options.mode = runtime === 'podman' ? 'docker' : runtime;
     if (runtime === 'podman') options.containerEngine = 'podman';
-    if (!options.migrateFrom) {
-      if (existing?.messengerIdentity) {
-        effects.out(`Existing Human identity ${existing.messengerIdentity} and Messenger profile will be retained.`);
-        // Supplied profile inputs never rename a retained root.
-        if (!['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) options.identityName ??= existing.messengerIdentity;
-      } else if (options.identityName === undefined || options.localUsername !== undefined) {
-        effects.out('Choose a local username (no global uniqueness check). Name and Surname appear in Messenger; the optional host name identifies this workspace.');
-        options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
-        options.name ??= await effects.askLine('Name: ', '');
-        options.surname ??= await effects.askLine('Surname: ', '');
-        options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
-      }
+    if (existing?.messengerIdentity) {
+      effects.out(`Existing Human identity ${existing.messengerIdentity} and Messenger profile will be retained.`);
+      // Supplied profile inputs never rename a retained root.
+      if (!['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) options.identityName ??= existing.messengerIdentity;
+    } else if (options.identityName === undefined || options.localUsername !== undefined) {
+      effects.out('Choose a local username (no global uniqueness check). Name and Surname appear in Messenger; the optional host name identifies this workspace.');
+      options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
+      options.name ??= await effects.askLine('Name: ', '');
+      options.surname ??= await effects.askLine('Surname: ', '');
+      options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
     }
     if (['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) {
-      // Partial profile presets still collect missing fields on retained and
-      // migration paths; these inputs never replace their authoritative root.
+      // Partial profile presets still collect missing fields on the retained
+      // path; these inputs never replace its authoritative root.
       effects.out('Name and Surname initialize a missing Messenger profile; an existing profile is retained.');
       options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
       options.name ??= await effects.askLine('Name: ', '');
@@ -336,7 +292,7 @@ export async function collectSetupOptions(effects, presets = {}) {
   }
   const validated = validateSetupOptions(expandPaths(options, effects.home), { interactive: true });
   const scopeLabel = scopeChoices.find(choice => choice.value === validated.scope).label;
-  effects.out(`Setup: ${scopeLabel}; ${validated.operation}${validated.mode ? ` using ${validated.mode === 'packages' ? 'native packages' : 'Docker'} in ${validated.stateDir}` : ` from ${validated.config}`}; integrations: ${validated.integrations?.join(', ') || 'none'}${validated.migrateFrom ? `; migrate from: ${validated.migrateFrom}` : ''}.`);
+  effects.out(`Setup: ${scopeLabel}; ${validated.operation}${validated.mode ? ` using ${validated.mode === 'packages' ? 'native packages' : 'Docker'} in ${validated.stateDir}` : ` from ${validated.config}`}; integrations: ${validated.integrations?.join(', ') || 'none'}.`);
   effects.out('Continue to apply these choices. Cancelling now leaves programs, services and data unchanged.');
   if (!await effects.ask('Continue with this setup?', false)) throw new Error('Setup cancelled; nothing was changed');
   return validated;

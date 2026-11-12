@@ -24,7 +24,6 @@ COPY --chmod=644 scripts/runtime/check-client.mjs /opt/ours/docker/check-client.
 COPY --chmod=644 scripts/runtime/check-start.mjs /opt/ours/docker/check-start.mjs
 COPY --chmod=644 scripts/runtime/client-setup.mjs scripts/runtime/notification-config.mjs /opt/ours/docker/
 COPY --chmod=644 scripts/runtime/diagnostics.mjs /opt/ours/docker/diagnostics.mjs
-COPY --chmod=644 scripts/runtime/legacy-import.mjs /opt/ours/docker/legacy-import.mjs
 COPY --chmod=644 scripts/runtime/entrypoint.sh /opt/ours/docker/entrypoint.sh
 COPY --chmod=644 scripts/runtime/healthcheck.mjs /opt/ours/docker/healthcheck.mjs
 COPY --chmod=644 scripts/runtime/start-telegram.sh scripts/runtime/health-telegram.sh scripts/runtime/start-cowork.sh scripts/runtime/health-cowork.sh scripts/runtime/start-messenger.sh scripts/runtime/health-messenger.mjs scripts/runtime/notifications-gateway.mjs scripts/runtime/supervise.mjs scripts/runtime/recover.mjs scripts/runtime/dependency-ready.mjs /opt/ours/docker/

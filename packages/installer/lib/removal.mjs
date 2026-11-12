@@ -11,7 +11,7 @@
 
 import { basename, dirname, join, resolve } from 'node:path';
 import { modify, applyEdits, parse as parseJsonc } from 'jsonc-parser';
-import { validateInstallation, unitNameForStateDir } from './plan.mjs';
+import { validateInstallation, refuseOldLayout, unitNameForStateDir, UNSUPPORTED_LAYOUT } from './plan.mjs';
 import { validateContainerEngine, runContainer } from './container-engine.mjs';
 import { classifyStateDir } from './detect.mjs';
 import { stripManagedBlock, YAML_BLOCK, MD_BLOCK } from './uninstall.mjs';
@@ -101,8 +101,12 @@ export async function discoverFootprint(effects, { stateDirs = [], journal = nul
       continue;
     }
     let record;
-    try { record = validateInstallation(json(text), root); if (record.containerBinding || record.containerEngine) validateContainerEngine(record); }
-    catch { keep('data', `Folder ${root}`, 'its Ours installation record is damaged, so nothing in it is removed automatically; repair or remove the folder yourself, then run the removal again', true); continue; }
+    try { record = refuseOldLayout(validateInstallation(json(text), root), root, path => json(effects.readText(path) ?? '')); if (record.containerBinding || record.containerEngine) validateContainerEngine(record); }
+    catch (error) {
+      keep('data', `Folder ${root}`, error.message === UNSUPPORTED_LAYOUT ? 'it holds an old installation layout this installer no longer supports, so nothing in it is removed automatically; remove the folder yourself if you no longer need it'
+        : 'its Ours installation record is damaged, so nothing in it is removed automatically; repair or remove the folder yourself, then run the removal again', true);
+      continue;
+    }
     if (retained && retained.instanceId !== record.instanceId) { keep('data', `Folder ${root}`, 'it now holds a different Ours installation than the unfinished removal recorded'); continue; }
     const item = { ...journalInstallation(record), ...(retained?.candidateProjects?.length ? { candidateProjects: [...new Set([...retained.candidateProjects, ...journalInstallation(record).candidateProjects])] } : {}), ...(retained?.images ? { images: retained.images } : {}), record, tombstone: tombstone(root, 'root', record.instanceId) };
     item.ownedImages = json(effects.readText(join(root, 'owned-images.json')) ?? '')?.images ?? null;
@@ -534,7 +538,16 @@ async function executeStep(step, effects, context) {
         const [image] = JSON.parse(found.stdout);
         if (image.Id !== id) { problems.push(`${tag} changed since it was checked and was left in place`); continue; }
         // Remove only this name. An image ID still named or used elsewhere stays.
-        try { await runContainer(effects, step.installation, ['image', 'rm', tag]); }
+        try {
+          await runContainer(effects, step.installation, ['image', 'rm', tag]);
+          // A published image this installer pulled keeps only its registry digest name;
+          // drop that too once no other name uses it. A still-used image stays in place.
+          if (!(image.RepoTags ?? []).some(other => other !== tag && !/^(?:docker\.io\/)?adaptframework\/ours-(?:runtime|maintenance)@/.test(other))) {
+            for (const digest of (image.RepoDigests ?? []).filter(name => /^(?:docker\.io\/)?adaptframework\/ours-(?:runtime|maintenance)@sha256:[0-9a-f]{64}$/.test(name))) {
+              try { await runContainer(effects, step.installation, ['image', 'rm', digest]); } catch { /* still used elsewhere */ }
+            }
+          }
+        }
         catch {
           let users = '';
           try { users = (await runContainer(effects, step.installation, ['ps', '-a', '--filter', `ancestor=${id}`, '--format', '{{.Names}}'])).stdout.split(/\s+/).filter(Boolean).join(', '); } catch { /* named generically below */ }

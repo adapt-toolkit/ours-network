@@ -349,25 +349,31 @@ export async function resolveSourcePolicy(manifest, role, clients = [], resolveN
   return exact;
 }
 
-/** Installer-owned physical layout; package defaults remain unchanged. */
+/** Installer-owned physical layout (schema 2); package defaults remain unchanged. */
 export function installationPaths(record) {
-  const root = record.root;
-  const shared = record.schema === 2;
-  const state = shared ? join(root, 'storage', 'state') : root;
-  const daemon = join(state, shared ? 'daemon' : 'data');
-  const credentials = Object.fromEntries(['telegram', 'cowork', 'messenger'].map(service => [
-    service, shared ? join(state, 'credentials', service, 'daemon-token') : join(root, 'credentials', `${service}-token`),
-  ]));
+  const state = join(record.root, 'storage', 'state');
+  const daemon = join(state, 'daemon');
+  const credentials = Object.fromEntries(['telegram', 'cowork', 'messenger'].map(service => [service, join(state, 'credentials', service, 'daemon-token')]));
   return {
     state, daemon, mcp: join(state, 'mcp'), telegram: join(state, 'telegram'),
     cowork: join(state, 'cowork'), messenger: join(state, 'messenger'), credentials,
-    config: shared ? join(daemon, 'config.json') : join(root, 'config.json'),
+    config: join(daemon, 'config.json'),
   };
 }
 
+export const UNSUPPORTED_LAYOUT = 'Unsupported old installation layout (schema 1 / legacy ~/.ours). Migration from old layouts is no longer supported; install fresh into a new folder. Existing data was not changed.';
+export const MIGRATE_FROM_UNSUPPORTED = '--migrate-from is no longer supported: migration from old installation layouts (schema 1 / legacy ~/.ours) was removed. Install fresh into a new folder; existing data was not changed.';
+/** Schema-1 selections, pending layout conversions and unfinished ~/.ours imports are refused before any write. */
+export function refuseOldLayout(record, root, readJson) {
+  if (record && (record.schema === 1 || record.layoutConversion !== undefined
+    || (record.legacyMigrationSource !== undefined && readJson(join(root, 'legacy-migration.json'))?.phase !== 'complete'))) throw new Error(UNSUPPORTED_LAYOUT);
+  return record;
+}
+
 export function validateInstallation(record, root) {
+  if (record?.schema === 1 || record?.layoutConversion !== undefined) throw new Error(UNSUPPORTED_LAYOUT);
   if (record) validateContainerEngine(record);
-  if (!record || ![1, 2].includes(record.schema) || !['docker', 'packages'].includes(record.mode)
+  if (!record || record.schema !== 2 || !['docker', 'packages'].includes(record.mode)
     || record.root !== root || record.configPath !== installationPaths(record).config
     || record.sourcesPath !== join(root, 'sources.json') || record.workDir !== join(root, 'runtime')
     || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(record.instanceId ?? '')
@@ -377,41 +383,18 @@ export function validateInstallation(record, root) {
     throw new Error('Invalid or conflicting installation selection');
   }
   if (record.product !== undefined && (!PRODUCTS.includes(record.product) || record.product === 'workspace'
-    || record.schema !== 2 || record.mode !== 'docker' || record.gateway !== undefined
+    || record.mode !== 'docker' || record.gateway !== undefined
     || JSON.stringify(record.services) !== JSON.stringify(['daemon']))) {
     throw new Error('Invalid plugin-only installation selection');
   }
-  if (record.gateway !== undefined && (record.schema !== 2 || record.mode !== 'docker' || record.gateway?.version !== 1
+  if (record.gateway !== undefined && (record.mode !== 'docker' || record.gateway?.version !== 1
     || Object.keys(record.gateway).some(key => !['version', 'serverUrl'].includes(key)) || record.services.at(-1) !== 'gateway')) {
     throw new Error('Invalid gateway installation selection');
   }
   if (record.gateway) gatewayAddress(record);
-  if (record.layoutConversion !== undefined) {
-    // DEPRECATED (introduced in 2.0): legacy managed-layout conversion only.
-    // Removal target: 3.0, after supported installs convert and upgrade inputs
-    // no longer need this reader. Retain backups and supported archive import.
-    const conversion = record.layoutConversion;
-    const source = conversion?.sourceRecord;
-    if (conversion?.version !== 1 || source?.schema !== 1 || source.layoutConversion !== undefined
-      || typeof conversion.backupPath !== 'string'
-      || dirname(conversion.backupPath) !== join(root, 'storage', 'backups')
-      || resolve(conversion.backupPath) !== conversion.backupPath
-      || !Array.isArray(conversion.runningServices)
-      || new Set(conversion.runningServices).size !== conversion.runningServices.length) {
-      throw new Error('Invalid layout conversion record');
-    }
-    validateInstallation(source, root);
-    if (JSON.stringify(source.containerBinding) !== JSON.stringify(record.containerBinding)) throw new Error('Conflicting conversion backend');
-    if (['mode', 'containerEngine', 'instanceId', 'project', 'sourcesPath', 'workDir'].some(key => source[key] !== record[key])
-      || JSON.stringify(source.services) !== JSON.stringify(record.services)
-      || conversion.runningServices.some(service => !source.services.includes(service))) {
-      throw new Error('Conflicting layout conversion source');
-    }
-  }
   if (record.buildTransition !== undefined) {
     const transition = record.buildTransition, candidate = transition?.candidate;
-    if (record.schema !== 2 || record.layoutConversion || !candidate
-      || candidate.buildTransition !== undefined || candidate.layoutConversion !== undefined
+    if (!candidate || candidate.buildTransition !== undefined
       || dirname(candidate.root ?? '') !== root || !/^\.build-[A-Za-z0-9]{6}$/.test(basename(candidate.root ?? ''))
       || !/^ours-build[0-9a-f]{32}$/.test(candidate.project ?? '')
       || !['update', 'rebuild'].includes(transition.operation)

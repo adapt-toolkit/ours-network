@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseSetupArgs, collectSetupOptions, validateSetupOptions, recommendedMode, defaultHostname } from '../lib/setup-options.mjs';
+import { parseNetworkArgs, InstallUsageError } from '../lib/target.mjs';
+import { MIGRATE_FROM_UNSUPPORTED, UNSUPPORTED_LAYOUT } from '../lib/plan.mjs';
 
 const server = ['--mode', 'native', '--state-dir', '/private/ours', '--identity-name', 'Taylor'];
 const parse = argv => parseSetupArgs(argv, { home: '/home/fixture' });
@@ -64,14 +66,14 @@ test('platform recommendations select the integrated Docker gateway', () => {
 });
 
 function interactiveFixture({ existing = null, lines = {}, selections = {}, chosenIntegrations, answers = {}, legacy = null, journal = null } = {}) {
-  const questions = [], output = [], events = [];
+  const questions = [], output = [], events = [], reads = [];
   const effects = {
     interactive: true, home: '/home/fixture', platform: { platform: 'linux', arch: 'x64', release: '6.8' },
     username: () => 'Taylor',
-    readJson: path => path.endsWith('/installation.json') ? existing
+    readJson: path => (reads.push(path), path.endsWith('/installation.json') ? existing
       : path.endsWith('/legacy-migration.json') ? journal
       : path.endsWith('/root.json') ? { name: 'Retained Human' }
-      : path.endsWith('/config.json') ? legacy : null,
+      : path.endsWith('/config.json') ? legacy : null),
     detectHarnesses: async () => [{ name: 'codex', status: 'ok' }, { name: 'claude-code', status: 'absent' }],
     out: text => { output.push(text); events.push(['out', text]); },
     select: async (question, choices, fallback) => {
@@ -93,7 +95,7 @@ function interactiveFixture({ existing = null, lines = {}, selections = {}, chos
       return Object.hasOwn(answers, question) ? answers[question] : question === 'Continue with this setup?' ? true : fallback;
     },
   };
-  return { effects, questions, output };
+  return { effects, questions, output, reads };
 }
 
 test('recommended wizard flow uses menus and multiselect, collects local username, human profile and optional host name', async () => {
@@ -151,65 +153,41 @@ test('client CLI accepts dry-run without prompting', () => {
   assert.equal(parse(['client', '--config=/private/profile', '--integrations=none', '--dry-run']).dryRun, true);
 });
 
-for (const scope of ['all', 'server']) {
-  test(`${scope} CLI migration obtains Human name from source rather than requiring a new name`, () => {
-    const args = [scope, 'install', '--mode=packages', '--state-dir=/private/new', ...(scope === 'all' ? ['--integrations=none'] : []), '--migrate-from=~/.ours/config.json', '--compatible'];
-    const options = parse(args);
-    assert.equal(options.migrateFrom, '/home/fixture/.ours/config.json'); assert.equal(options.compatible, true);
-    assert.equal(options.identityName, undefined); assert.equal(options.migrate, undefined);
-    assert.equal(parse([...args, '--migrate']).migrate, true);
-  });
-}
-
-test('migration rejects missing compatibility, client/update scope, duplicates, and relative paths', () => {
-  assert.throws(() => parse(['server', ...server, '--migrate-from=/private/old/config.json']), /--compatible/);
-  assert.throws(() => parse(['client', '--config=/private/profile', '--integrations=none', '--migrate-from=/private/old/config.json', '--compatible']), /requires server or all/);
-  assert.throws(() => parse(['server', 'update', ...server, '--migrate-from=/private/old/config.json', '--compatible']), /operation install/);
-  assert.throws(() => parse(['server', ...server, '--migrate-from=old/config.json', '--compatible']), /absolute/);
-  assert.throws(() => parse(['server', ...server, '--migrate-from=/private/old/config.json', '--migrate-from=/private/another/config.json', '--compatible']), /Duplicate/);
+test('--migrate-from is refused by name as unsupported in every entry point', () => {
+  const refused = error => error instanceof InstallUsageError && error.message === MIGRATE_FROM_UNSUPPORTED;
+  for (const args of [['all', '--integrations=none', ...server, '--migrate-from=/home/fixture/.ours/config.json', '--compatible'],
+    ['server', ...server, '--migrate-from', '/private/old/config.json'], ['client', '--config=/private/profile', '--integrations=none', '--migrate-from=/private/old/config.json']]) {
+    assert.throws(() => parse(args), refused);
+    assert.throws(() => parseSetupArgs(args, { home: '/home/fixture', validate: false }), refused);
+  }
+  assert.throws(() => validateSetupOptions({ scope: 'server', mode: 'docker', stateDir: '/private/ours', identityName: 'Taylor', migrateFrom: '/private/old/config.json' }), refused);
+  assert.throws(() => parseNetworkArgs(['server', 'install', '--state-dir', '/srv/ours', '--mode', 'docker', '--migrate-from=/private/old/config.json']), refused);
+  assert.match(MIGRATE_FROM_UNSUPPORTED, /^--migrate-from is no longer supported.*install fresh into a new folder; existing data was not changed\.$/i);
+  assert.equal(parse(['server', ...server, '--migrate']).migrate, true, 'daemon credential migration stays available');
 });
 
-const migrationConsent = 'Proceed with this release and keep the original state as a recovery copy?';
-test('detected migration retains the stored Human name and explains data preservation instead of requesting a replacement', async () => {
-  const f = interactiveFixture({ legacy: { stateDir: '/private/custom-daemon' }, answers: { [migrationConsent]: true } });
-  const options = await collectSetupOptions(f.effects);
-  assert.equal(options.migrateFrom, '/home/fixture/.ours/config.json'); assert.equal(options.identityName, 'Retained Human');
-  assert(!f.questions.some(row => row[0] === 'What name should others see? '));
-  assert(f.output.some(line => line.includes('/private/custom-daemon') && line.includes('identities, messages and settings')));
-  assert(f.output.some(line => line.includes('compatibility') && line.includes('cannot be guaranteed')));
+test('a leftover ~/.ours is neither offered for migration nor read; setup proceeds as a fresh install', async () => {
+  for (const legacy of [{ stateDir: '/private/old' }, {}]) {
+    const f = interactiveFixture({ legacy });
+    const options = await collectSetupOptions(f.effects);
+    assert.equal(options.operation, 'install'); assert.equal(options.migrateFrom, undefined);
+    assert.equal(options.identityName, `taylor@${defaultHostname()}`);
+    assert(!f.reads.some(path => path.startsWith('/home/fixture/.ours/')), 'old files are not read');
+    assert(!f.questions.some(row => /existing ours|brought over|migrat/i.test(row[0])));
+    assert(!f.output.some(line => /migrat/i.test(line)));
+  }
 });
 
-test('migration confirmation stays explicit and declining migration cannot silently create a fresh server', async () => {
-  await assert.rejects(collectSetupOptions(interactiveFixture({ legacy: { stateDir: '/private/old' } }).effects), /explicit compatibility/);
-  const answers = { 'Upgrade this existing ours installation and keep its data?': false };
-  await assert.rejects(collectSetupOptions(interactiveFixture({ legacy: { stateDir: '/private/old' }, answers }).effects), /cancelled/);
-  const separate = interactiveFixture({ legacy: { stateDir: '/private/old' }, answers: { ...answers, 'Create a separate fresh installation and keep the existing daemon unchanged?': true } });
-  assert.equal((await collectSetupOptions(separate.effects)).migrateFrom, undefined);
+test('a selected folder with an old layout or unfinished import is refused before any question about it', async () => {
+  for (const [existing, journal] of [[{ schema: 1, mode: 'packages' }, null], [{ schema: 2, mode: 'docker', layoutConversion: {} }, null],
+    [{ schema: 2, mode: 'docker', legacyMigrationSource: '/private/old/config.json' }, { phase: 'copied' }]]) {
+    const f = interactiveFixture({ existing, journal });
+    await assert.rejects(collectSetupOptions(f.effects), { message: UNSUPPORTED_LAYOUT });
+    assert(!f.questions.some(row => row[0] === 'What should happen?'));
+  }
+  const completed = interactiveFixture({ existing: { schema: 2, mode: 'docker', legacyMigrationSource: '/private/old/config.json' }, journal: { phase: 'complete' }, answers: { 'Proceed with this update and keep a recovery backup?': true } });
+  assert.equal((await collectSetupOptions(completed.effects)).operation, 'update', 'a completed import is an ordinary installation');
 });
-
-test('nondefault migration source is entered only after selecting migration', async () => {
-  const f = interactiveFixture({ selections: { 'What would you like to set up?': 'server', 'Should existing ours data be brought over?': 'migrate' }, lines: { 'Existing daemon configuration file: ': '~/other/config.json' }, answers: { [migrationConsent]: true } });
-  assert.equal((await collectSetupOptions(f.effects)).migrateFrom, '/home/fixture/other/config.json');
-});
-
-test('existing managed target refuses unrelated migration but offers a pending transaction resume', async () => {
-  const ordinary = interactiveFixture({ existing: { mode: 'packages' }, selections: { 'What should happen?': 'install', 'Should existing ours data be brought over?': 'migrate' }, lines: { 'Existing daemon configuration file: ': '/private/old/config.json' } });
-  await assert.rejects(collectSetupOptions(ordinary.effects), /new managed installation root/);
-  const pending = interactiveFixture({ existing: { mode: 'packages', legacyMigrationSource: '/private/old/config.json' }, journal: { phase: 'copied' }, answers: { [migrationConsent]: true } });
-  const options = await collectSetupOptions(pending.effects);
-  assert.equal(options.operation, 'install'); assert.equal(options.migrateFrom, '/private/old/config.json');
-  assert(pending.questions.find(row => row[0] === 'What should happen?')[3].some(choice => choice.label === 'Resume the unfinished migration'));
-});
-
-test('default legacy config without stateDir offers migration and retains its Human identity', async () => {
-  const f = interactiveFixture({ legacy: {}, answers: { [migrationConsent]: true } });
-  const options = await collectSetupOptions(f.effects);
-  assert.equal(options.migrateFrom, '/home/fixture/.ours/config.json');
-  assert.equal(options.identityName, 'Retained Human');
-  assert(f.output.some(line => line.includes('Found an existing ours installation at /home/fixture/.ours.')));
-  assert(!f.questions.some(row => row[0] === 'What name should others see? '));
-});
-
 
 test('permanent partial command presets survive remaining prompts and skip Fleet model questions',async()=>{
  const f=interactiveFixture();
@@ -254,16 +232,16 @@ test('partial username collects missing profile inputs on a retained installatio
  assert(f.questions.some(row=>row[0]==='Name: '));assert(f.questions.some(row=>row[0]==='Surname: '));
 });
 
-for(const pending of [false,true])test(`permanent profile presets retain different ${pending?'pending':'detected'} migration root`,async()=>{
- const f=interactiveFixture({legacy:pending?null:{stateDir:'/private/old'},existing:pending?{mode:'docker',legacyMigrationSource:'/private/old/config.json'}:null,journal:pending?{phase:'copied'}:null,answers:{[migrationConsent]:true}});
+test('permanent profile presets name a fresh installation beside a leftover ~/.ours',async()=>{
+ const f=interactiveFixture({legacy:{stateDir:'/private/old'}});
  const options=await collectSetupOptions(f.effects,{localUsername:'alex',name:'Alex',surname:'Taylor',disableFleetAgentsSetup:true});
- assert.equal(options.identityName,'Retained Human');assert(options.migrateFrom);assert.equal(options.name,'Alex');
+ assert.equal(options.identityName,`alex@${defaultHostname()}`);assert.equal(options.migrateFrom,undefined);assert.equal(options.name,'Alex');
 });
 
 
-for(const key of ['name','surname'])for(const migration of [false,true])test(`${key}-only presets collect remaining human fields on ${migration?'migration':'retained'} path`,async()=>{
- const f=interactiveFixture({existing:migration?null:{mode:'docker',messengerIdentity:'Existing Root'},legacy:migration?{stateDir:'/private/old'}:null,answers:{[migrationConsent]:true,'Proceed with this update and keep a recovery backup?':true}});
+for(const key of ['name','surname'])for(const fresh of [false,true])test(`${key}-only presets collect remaining human fields on ${fresh?'fresh':'retained'} path`,async()=>{
+ const f=interactiveFixture({existing:fresh?null:{mode:'docker',messengerIdentity:'Existing Root'},legacy:fresh?{stateDir:'/private/old'}:null,answers:{'Proceed with this update and keep a recovery backup?':true}});
  const options=await collectSetupOptions(f.effects,{[key]:'Supplied',disableFleetAgentsSetup:true});
  assert.equal(options[key],'Supplied');assert.equal(options.localUsername,'Taylor'.toLowerCase());assert(options.name);assert(options.surname);
- if(migration)assert.equal(options.identityName,'Retained Human');
+ if(fresh)assert.equal(options.identityName,`taylor@${defaultHostname()}`);
 });

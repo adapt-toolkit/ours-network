@@ -1,10 +1,9 @@
 import { validateGatewayClientProfile } from './target.mjs';
 import { gatewayAddress } from './gateway.mjs';
-import { inspectLegacyMigration } from './legacy-migration.mjs';
 import { join } from 'node:path';
 import { parseSetupArgs, collectSetupOptions, validateSetupOptions } from './setup-options.mjs';
 import { parseNetworkArgs, validateHostProfile, InstallUsageError } from './target.mjs';
-import { clientPackageNames, validateInstallation } from './plan.mjs';
+import { clientPackageNames, validateInstallation, refuseOldLayout } from './plan.mjs';
 import { runServerCommand, runClientCommand } from './orchestrate.mjs';
 import { banner, heading, info, ok, warn, progress } from './ui.mjs';
 import { isCancel } from './prompt.mjs';
@@ -44,23 +43,14 @@ export async function prepareSetupPlan(options, effects) {
       if (effects.env?.[name]?.trim()) throw new InstallUsageError(`${name} conflicts with the selected client profile. Clear this override before full-stack/client setup; nothing was changed.`);
     }
   }
-  if (options.scope !== 'client' && !options.migrateFrom) validateIdentityName(options.identityName);
+  if (options.scope !== 'client') validateIdentityName(options.identityName);
   if (options.fleetSettingsPath) validateFleetSettings(readObject(effects, options.fleetSettingsPath, 'Fleet settings'));
   const policy = options.sources ? readObject(effects, options.sources, 'Source policy') : effects.packagedSourcePolicy();
   plan.sourcePolicy = policy;
-  if (options.migrateFrom) {
-    for (const name of ['OURS_API_TOKEN', 'OURS_API_VISIBILITY', 'OURS_STATE_DIR', 'OURS_PORT', 'OURS_DAEMON_ID', 'OURS_DATABASE_PROVIDER', 'OURS_DATABASE_URL']) {
-      if (effects.env?.[name]?.trim()) throw new InstallUsageError(`${name} conflicts with legacy migration. Clear it before setup; nothing was changed.`);
-    }
-    plan.legacyPlan = await (effects.inspectLegacyMigration ?? inspectLegacyMigration)(options, effects);
-    plan.sourcePolicy = plan.legacyPlan.journal.sourcePolicy ?? policy;
-    plan.identityName = plan.legacyPlan.source?.rootName ?? plan.legacyPlan.journal.identities.find(row => row.kind === 'root')?.name;
-    validateIdentityName(plan.identityName);
-  }
   if (options.scope !== 'client') {
     const value = effects.readJson(join(options.stateDir, 'installation.json'));
     if (value) {
-      plan.existing = validateInstallation(value, options.stateDir);
+      plan.existing = validateInstallation(refuseOldLayout(value, options.stateDir, effects.readJson), options.stateDir);
       // The kind of installation is retained exactly; it is never widened or narrowed implicitly.
       if (options.product !== undefined && options.product !== productOf(plan.existing))
         throw new InstallUsageError(`This folder contains ${PRODUCT_LABELS[productOf(plan.existing)].toLowerCase()}. It is kept as it is; nothing was changed. Use a separate empty folder for the other kind of installation, or remove this one first.`);
@@ -71,7 +61,7 @@ export async function prepareSetupPlan(options, effects) {
         if (options.explicitPorts?.includes(key) && options[key] !== plan.existing[key]) throw new InstallUsageError(`${key} conflicts with the retained installation`);
         plan[key] = plan.existing[key];
       }
-      if (options.operation === 'install' && !options.migrateFrom) {
+      if (options.operation === 'install') {
         const retained = readObject(effects, plan.existing.sourcesPath, 'Retained source policy');
         plan.sourcePolicy = options.scope === 'server' ? retained : completeReleasePolicy(retained, options.sources ? policy : null);
       }

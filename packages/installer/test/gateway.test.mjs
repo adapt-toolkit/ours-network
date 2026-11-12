@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateHostProfile } from '../lib/target.mjs';
-import { gatewayDiscovery, validateGatewayDiscovery, gatewayCompose, gatewayNginx } from '../lib/gateway.mjs';
+import { readFileSync } from 'node:fs';
+import { gatewayDiscovery, validateGatewayDiscovery, gatewayCompose, gatewayNginx, GATEWAY_IMAGE } from '../lib/gateway.mjs';
 const record={instanceId:'11111111-2222-3333-4444-555555555555',project:'ours-test',port:3050,coworkPort:3052};
 test('gateway profile derives one daemon prefix and rejects cross-server discovery',()=>{
   const discovery=gatewayDiscovery(record);
@@ -35,4 +36,19 @@ test('new Docker selections include gateway while existing and native selections
   const legacy={...docker,services:docker.services.filter(s=>s!=='gateway')};delete legacy.gateway;
   assert.doesNotThrow(()=>validateInstallation(legacy,legacy.root));
   assert.throws(()=>validateInstallation({...native,gateway:{version:1}},native.root));
+});
+
+test('gateway runs upstream nginx with its template and bootstrap carried byte-exact in Compose', () => {
+  const record = { project: 'ours-g2', instanceId: '12345678-1234-1234-1234-123456789abc', port: 3050, coworkPort: 3052, gateway: { version: 1, serverUrl: 'https://ours.example/base' } };
+  const compose = gatewayCompose(record);
+  assert.doesNotMatch(compose, /\n\s+build:/);
+  assert.match(compose, new RegExp(`\\n    image: "${GATEWAY_IMAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\n`));
+  // Compose turns $$ into $; JSON strings are YAML double-quoted scalars.
+  const rendered = line => JSON.parse(line.replaceAll('$$', '$'));
+  const template = /\n      OURS_GATEWAY_TEMPLATE: (".*")\n/.exec(compose)[1];
+  assert.equal(rendered(template), gatewayNginx(record));
+  assert.doesNotMatch(template.replaceAll('$$', ''), /\$/);
+  const entrypoint = JSON.parse(/\n    entrypoint: (\[.*\])\n/.exec(compose)[1].replaceAll('$$', '$'));
+  assert.deepEqual(entrypoint, ['/bin/sh', '-ec', readFileSync(new URL('../assets/gateway-entrypoint.sh', import.meta.url), 'utf8')]);
+  assert.match(compose, /\n    user: "101:101"\n    read_only: true\n/);
 });

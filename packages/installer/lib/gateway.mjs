@@ -1,3 +1,9 @@
+import { readFileSync } from 'node:fs';
+/** Upstream gateway image; generated config is passed in Compose, so nothing is built locally. */
+export const GATEWAY_IMAGE='nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236';
+const GATEWAY_ENTRYPOINT=readFileSync(new URL('../assets/gateway-entrypoint.sh',import.meta.url),'utf8');
+// JSON strings are YAML double-quoted scalars; $$ keeps Compose from interpolating.
+const composeString=value=>JSON.stringify(value).replaceAll('$','$$$$');
 /** One public URL; fixed same-origin service paths are never supplied by a peer. */
 export const GATEWAY_SERVICES = Object.freeze({daemon:'/daemon',cowork:'/cowork',telegram:'/tg-connector',messenger:'/messenger'});
 /** Notifications run inside the Messenger container when its runtime ships the service. */
@@ -44,10 +50,10 @@ export function gatewayCompose(record) {
       OURS_MESSENGER_PUBLIC_ORIGIN: ${JSON.stringify(origin)}
       OURS_MESSENGER_BASE_PATH: ${JSON.stringify(prefix + "/messenger/")}
   gateway:
-    image: "\${OURS_GATEWAY_IMAGE:-${record.project}:gateway}"
-    build:
-      context: .
-      dockerfile: Dockerfile.gateway
+    image: "${GATEWAY_IMAGE}"
+    entrypoint: ["/bin/sh", "-ec", ${composeString(GATEWAY_ENTRYPOINT)}]
+    environment:
+      OURS_GATEWAY_TEMPLATE: ${composeString(gatewayNginx(record))}
     user: "101:101"
     read_only: true
     cap_drop: [ALL]

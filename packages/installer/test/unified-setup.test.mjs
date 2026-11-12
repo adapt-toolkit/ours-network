@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { defaultHostname } from '../lib/setup-options.mjs';
 import { runSetup, prepareSetupPlan, executeSetupPlan, completeReleasePolicy } from '../lib/setup.mjs';
 import { runServerCommand } from '../lib/orchestrate.mjs';
+import { UNSUPPORTED_LAYOUT } from '../lib/plan.mjs';
 
 const root = '/private/install';
 const record = { schema: 2, mode: 'packages', root, workDir: `${root}/runtime`, sourcesPath: `${root}/sources.json`, configPath: `${root}/storage/state/daemon/config.json`, instanceId: '12345678-1234-1234-1234-123456789abc', project: 'ours-test', services: ['daemon', 'telegram', 'cowork', 'messenger'], port: 3050, coworkPort: 3052, messengerPort: 8420, uid: 1000, gid: 1000 };
@@ -210,16 +211,48 @@ test('client environment conflicts fail before server changes or package resolut
   }
 });
 
-test('migration uses the retained Human name and rejects environment overrides before source operations', async () => {
-  const migration = { ...options, scope: 'server', integrations: undefined, migrateFrom: '/private/old/config.json', compatible: true, identityName: undefined };
-  for (const name of ['OURS_API_TOKEN', 'OURS_API_VISIBILITY', 'OURS_STATE_DIR', 'OURS_PORT', 'OURS_DAEMON_ID', 'OURS_DATABASE_PROVIDER', 'OURS_DATABASE_URL']) {
-    const { effects, events } = fixture(); effects.env[name] = 'conflict';
-    effects.inspectLegacyMigration = () => assert.fail('must refuse before source operations');
-    await assert.rejects(prepareSetupPlan(migration, effects), new RegExp(name));
-    assert.deepEqual(events, []);
+const legacyHome = new Map([['/private/.ours/config.json', { stateDir: '/private/.ours', port: 3050 }], ['/private/.ours/root.json', { v: 1, name: 'Old Human' }]]);
+const observe = setup => {
+  const reads = [], writes = [];
+  const { readJson, writeJson } = setup.effects;
+  setup.effects.readJson = path => (reads.push(path), legacyHome.get(path) ?? readJson(path));
+  setup.effects.writeJson = (path, text) => (writes.push(path), writeJson(path, text));
+  return { reads, writes };
+};
+
+test('a fresh schema-2 install beside a leftover ~/.ours succeeds without reading or changing the old files', async () => {
+  for (const runtime of [['--mode', 'docker'], ['--mode', 'native']]) {
+    const setup = fixture(), seen = observe(setup);
+    assert.equal(await runSetup(['server', ...runtime, '--state-dir', root, '--identity-name', 'Test Human'], setup.effects), 0, setup.lines.join('\n'));
+    assert.ok(setup.events.includes('initialize') && setup.events.some(e => Array.isArray(e) && e[0] === 'identity' && e[1] === 'Test Human'));
+    assert.equal(setup.files.get(`${root}/installation.json`).schema, 2);
+    assert.ok(!seen.reads.some(path => path.startsWith('/private/.ours/')), 'old files are not read');
+    assert.deepEqual(seen.writes, [`${root}/installation.json`, `${root}/installation.json`]);
   }
-  const { effects } = fixture();
-  effects.inspectLegacyMigration = async () => ({ source: { rootName: 'Retained Human' }, journal: { sourcePolicy: policy } });
-  const plan = await prepareSetupPlan(migration, effects);
-  assert.equal(plan.identityName, 'Retained Human');
+});
+
+test('--migrate-from fails as an unsupported usage error before any read, lock or write', async () => {
+  const setup = fixture(), seen = observe(setup);
+  assert.equal(await runSetup(['server', '--mode', 'docker', '--state-dir', root, '--identity-name', 'Test Human', '--migrate-from', '/private/.ours/config.json', '--compatible'], setup.effects), 2);
+  assert.match(setup.lines.join('\n'), /--migrate-from is no longer supported: migration from old installation layouts \(schema 1 \/ legacy ~\/\.ours\) was removed/);
+  assert.deepEqual([setup.events, seen.reads, seen.writes], [[], [], []]);
+  await assert.rejects(runServerCommand({ role: 'server', operation: 'install', stateDir: root, mode: 'docker', migrateFrom: '/private/.ours/config.json' }, setup.effects), /--migrate-from is no longer supported/);
+  assert.deepEqual(setup.events, []);
+});
+
+test('a schema-1 or unfinished-import selection is refused before any lock, state or identity write and left unchanged', async () => {
+  const old = { schema: 1, mode: 'packages', root, workDir: `${root}/runtime`, sourcesPath: `${root}/sources.json`, configPath: `${root}/config.json`, instanceId: record.instanceId, project: 'ours-test', services: ['daemon'] };
+  for (const [selection, journal] of [[old, null], [{ ...record, layoutConversion: { version: 1, sourceRecord: old } }, null], [{ ...record, legacyMigrationSource: '/private/.ours/config.json' }, { phase: 'stopped' }]]) {
+    for (const argv of [['server', '--mode', selection.mode === 'packages' ? 'native' : 'docker', '--state-dir', root, '--identity-name', 'Test Human'],
+      ['server', 'update', '--mode', selection.mode === 'packages' ? 'native' : 'docker', '--state-dir', root, '--identity-name', 'Test Human', '--compatible'],
+      ['server', 'start', '--state-dir', root], ['server', 'status', '--state-dir', root], ['server', 'backup', 'server', 'before', '--state-dir', root]]) {
+      const setup = fixture(), seen = observe(setup);
+      setup.files.set(`${root}/installation.json`, selection);
+      if (journal) setup.files.set(`${root}/legacy-migration.json`, journal);
+      assert.equal(await runSetup(argv, setup.effects), 2, argv.join(' '));
+      assert.ok(setup.lines.join('\n').includes(UNSUPPORTED_LAYOUT), argv.join(' '));
+      assert.deepEqual([setup.events, seen.writes], [[], []], argv.join(' '));
+      assert.equal(setup.files.get(`${root}/installation.json`), selection);
+    }
+  }
 });

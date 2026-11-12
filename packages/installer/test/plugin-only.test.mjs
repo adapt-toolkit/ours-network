@@ -16,7 +16,7 @@ test('--plugin-only selects Docker by default and only Claude Code or Codex', ()
   assert.equal(parse([...base, '--integrations', 'codex', '--container-engine', 'podman']).containerEngine, 'podman');
   for (const extra of [['--integrations', 'fleet'], ['--integrations', 'codex', '--mode', 'native'], ['--integrations', 'codex', '--fleet-settings', '/f.json'],
     ['--integrations', 'codex', '--name', 'A', '--surname', 'B', '--username', 'a'], ['--integrations', 'codex', '--cowork-port', '4000'],
-    ['--integrations', 'codex', '--migrate-from', '/home/me/.ours/config.json', '--compatible'], ['--integrations', 'codex', '--server-url', 'https://x.example']]) {
+    ['--integrations', 'codex', '--server-url', 'https://x.example']]) {
     assert.throws(() => parse([...base, ...extra]), extra.join(' '));
   }
   assert.throws(() => parse(['client', '--plugin-only', '--config', '/p.json', '--integrations', 'codex']), /client scope/);
