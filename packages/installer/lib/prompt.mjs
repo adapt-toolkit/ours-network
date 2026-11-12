@@ -132,11 +132,11 @@ function choose(write, fd, question, choices, defaults, multiple, {
     drawn = true;
     choices.forEach((choice, i) => {
       const marker = multiple ? (selected[i] ? c.green('[x]') : '[ ]') : (i === current ? c.green('(●)') : '( )');
-      write(`\r\x1b[K  ${i === current ? c.cyan('> ') : '  '}${marker} ${choice.label}\n`);
+      write(`\r\x1b[K  ${i === current ? c.cyan('> ') : '  '}${marker} ${i === current ? c.bold(choice.label) : choice.label}\n`);
     });
   };
   try {
-    write(`\x1b[?25l  ${question}\n  ${c.bold('↑/↓')} move${multiple ? ', ' + c.bold('Space') + ' toggle' : ''}, ${c.bold('Enter')} confirm\n`);
+    write(`\x1b[?25l\n  ${c.bold(question)}\n  ${c.gray(`↑/↓ move${multiple ? ', Space toggle' : ''}, Enter confirm`)}\n`);
     redraw();
     for (;;) {
       const byte = next();

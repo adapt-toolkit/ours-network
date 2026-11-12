@@ -93,10 +93,10 @@ New images use Node.js 24.22.1. Existing images, retained Dockerfiles, running p
 ## Install first, connect the App afterwards
 
 ```sh
-ours-install --username alex --name Alex --surname Taylor --disable-fleet-agents-setup
+ours-install --scope all --username alex --name Alex --surname Taylor --disable-fleet-agents-setup
 ```
 
-This permanent command contains no tunnel credentials or enrollment expiry. On a terminal it asks for the remaining installation choices, including Docker, Podman or native packages. The username is local and has no global uniqueness check. A fresh root is named `<username>@<hostname>`; the optional `--hostname` defaults to the machine name. Messenger stores Name and Surname through its supported profile API. Retried setup retains root identities and existing Messenger profiles.
+This permanent command contains no tunnel credentials or enrollment expiry. `--scope all` installs everything on this computer, so no server/client choice is asked. On a terminal it first offers **Install recommended setup** (the default: `~/.ours-install`, Docker, Fleet and the detected agent apps) or **Customize** (folder, Docker or Podman, apps, ports). An installation already found in `~/.ours-install` or another `~/.ours*` folder is updated in place with its runtime, ports and connected apps, after the usual recovery-backup consent; several installations, or one that cannot be read, are refused until `--state-dir` selects one. Valid supplied profile values are used without asking; missing or invalid ones are asked. The username is local and has no global uniqueness check. A fresh root is named `<username>@<hostname>`; the optional `--hostname` defaults to the machine name. Messenger stores Name and Surname through its supported profile API. Retried setup retains root identities and existing Messenger profiles.
 
 `--disable-fleet-agents-setup` installs the Fleet CLI and saves the choice without opening its agent/model wizard or rewriting existing Fleet configuration. Configure agents in the App after device linking. Complete presets still work unattended; partial presets require a terminal and cannot use `OURS_ASSUME_YES`.
 
