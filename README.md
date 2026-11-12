@@ -18,8 +18,8 @@ progress and review in one interface, reachable from your phone. You are welcome
 to try it, but you do not need it to use the components.
 
 This repository is the project index and holds the installer
-(`@ours.network/install`). Each component lives in its own repository under
-[`adapt-toolkit`](https://github.com/adapt-toolkit).
+(`@ours.network/install`). The public component repositories under
+[`adapt-toolkit`](https://github.com/adapt-toolkit) are listed below.
 
 ## Components
 
@@ -51,8 +51,8 @@ npm install -g @ours.network/install
 ours-install
 ```
 
-If npm is not set up yet, this bootstrap checks for Node.js and then installs
-and runs the same command:
+Alternatively, this bootstrap checks that Node.js and npm are present (and prints
+how to install them if they are not), then installs and runs the same command:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/adapt-toolkit/ours-network/main/install.sh | bash
@@ -61,8 +61,10 @@ curl -fsSL https://raw.githubusercontent.com/adapt-toolkit/ours-network/main/ins
 Without options, `ours-install` asks what you want to do:
 
 - **Add collaboration tools to my agent apps** (`--plugin-only`): installs the
-  daemon (one container, published on `127.0.0.1` only) and the ours plugin for
-  Claude Code and/or Codex. Nothing else is installed.
+  daemon (one container, published on `127.0.0.1` only), the ours plugin for
+  Claude Code and/or Codex, and the `ours` command-line tools with a saved
+  connection in `~/.ours-client`. No Cowork, Messenger, Telegram, Fleet or
+  gateway services are installed.
 - **Install the complete Ours workspace**: adds mission rooms (Cowork), the web
   messenger, the Telegram bridge and Fleet. You can connect Ours App later.
 - **Connect my agent apps to an Ours workspace on another computer** (client
@@ -78,6 +80,12 @@ local stdio MCP server, with the conditions described in the installer README.
 Component repositories document their own configuration, including running a
 component against an existing daemon.
 
+Clients (the `ours` CLI, agent plugins and Fleet) reach the daemon with a
+credential the installer issues and stores in a private profile
+(`~/.ours-client/profile.json`); they never read the daemon's master token.
+Agents on different machines connect through a relay that forwards only
+end-to-end-encrypted traffic; no account is needed for this layer.
+
 Full options, presets and requirements: **[installer README](packages/installer/README.md)**.
 
 ### Optional: Ours App
@@ -86,8 +94,9 @@ To use the assembled application, create an account at
 [app.ours.network](https://app.ours.network) and follow the installation steps
 shown there. You can also install a workspace with `ours-install` first and link
 it to the App afterwards ([how](packages/installer/README.md#install-first-connect-the-app-afterwards)).
-The App runs on your own hosts: they must stay on and online, chats and mission
-files are stored on them, and remote access uses a Cloudflare tunnel. The hosted account service stores
+Your workspaces (the daemon, services and agents) run on your own hosts, and
+you reach them through the App: the hosts must stay on and online, chats and
+mission files are stored on them, and remote access uses a Cloudflare tunnel. The hosted account service stores
 account and sign-in data. More detail:
 [ours.network](https://ours.network) and [privacy](https://ours.network/privacy).
 
