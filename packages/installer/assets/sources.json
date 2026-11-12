@@ -2,7 +2,7 @@
   "release": {
     "schema": 1,
     "channel": "stable",
-    "installerVersion": "2.1.4",
+    "installerVersion": "2.1.5",
     "packages": {
       "@ours.network/sdk": {
         "version": "5.2.0",
