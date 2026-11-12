@@ -220,7 +220,10 @@ jobs:
 
   npm-publish:
     needs: [test, version-bump, images]
-    if: needs.version-bump.outputs.bumped == 'true' && needs.images.result == 'success'
+    # images needs the main-skipped nightly-version, so the implicit success() would skip this job.
+    if: >-
+      !cancelled() && needs.test.result == 'success' && needs.version-bump.result == 'success' &&
+      needs.version-bump.outputs.bumped == 'true' && needs.images.result == 'success'
     runs-on: ubuntu-latest
     name: Publish stable installer
     timeout-minutes: 15
@@ -253,7 +256,10 @@ jobs:
 
   nightly-publish:
     needs: [test, nightly-version, images]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/prerelease' && needs.images.result == 'success'
+    # images needs the prerelease-skipped version-bump, so the implicit success() would skip this job.
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/prerelease' &&
+      needs.test.result == 'success' && needs.nightly-version.result == 'success' && needs.images.result == 'success'
     runs-on: ubuntu-latest
     name: Publish nightly installer
     timeout-minutes: 15
