@@ -179,11 +179,17 @@ export function defaultHostname() {
   return hostname().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 30) || 'workspace';
 }
 
+const personText = /[\\/\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
+const personPart = value => nonempty(value) && value.trim().length <= 100 && !personText.test(value.trim());
 const profileChecks = {
   localUsername: value => /^[a-z0-9][a-z0-9-]{0,29}$/.test(value),
-  name: value => nonempty(value) && value.trim().length <= 100,
-  surname: value => nonempty(value) && value.trim().length <= 100,
+  name: personPart, surname: personPart,
   hostname: value => value === '' || /^[a-z0-9][a-z0-9-]{0,29}$/.test(value.trim()),
+};
+// The same joined-name rule validateSetupOptions applies.
+const personValid = (name, surname) => {
+  const person = `${name.trim()} ${surname.trim()}`;
+  return [...person].length <= 64 && person === person.normalize('NFC') && !personText.test(person);
 };
 
 // Valid supplied profile values are used silently; only missing or invalid ones are asked.
@@ -191,16 +197,20 @@ async function collectProfile(effects, options) {
   const fields = [
     ['localUsername', 'Local username: ', () => (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30)],
     ['name', 'Name: ', () => ''], ['surname', 'Surname: ', () => ''], ['hostname', 'Host / machine name (optional): ', () => ''],
-  ].filter(([key]) => options[key] === undefined || typeof options[key] !== 'string' || !profileChecks[key](options[key]));
+  ];
+  const valid = key => typeof options[key] === 'string' && profileChecks[key](options[key]);
+  const joined = () => !valid('name') || !valid('surname') || personValid(options.name, options.surname);
+  fields.splice(0, fields.length, ...fields.filter(([key]) => !valid(key) || (!joined() && (key === 'name' || key === 'surname'))));
   if (!fields.length) return;
   const invalid = fields.filter(([key]) => options[key] !== undefined).map(([key]) => key);
   effects.out(invalid.length ? warn(`Not valid: ${invalid.map(key => ({ localUsername: 'Local username', name: 'Name', surname: 'Surname', hostname: 'Host name' })[key]).join(', ')}. Please enter again.`) : info('Your Ours identity: Name and Surname appear in Messenger.'));
   for (const [key, question, fallback] of fields) {
     for (let attempt = 1; ; attempt++) {
       const value = await effects.askLine(question, fallback());
-      if (profileChecks[key](value)) { options[key] = value; break; }
+      if (profileChecks[key](value) && (key !== 'surname' || personValid(options.name, value))) { options[key] = value; break; }
       if (attempt === 3) throw new Error(`Invalid ${key}; nothing was changed`);
-      effects.out(warn(key === 'localUsername' || key === 'hostname' ? 'Use 1–30 lowercase letters, digits or hyphens.' : 'Use 1–100 characters.'));
+      effects.out(warn(key === 'localUsername' || key === 'hostname' ? 'Use 1–30 lowercase letters, digits or hyphens.'
+        : 'Use up to 64 characters for Name and Surname together, without slashes or control characters.'));
     }
   }
 }

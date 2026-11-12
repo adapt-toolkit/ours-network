@@ -38,6 +38,8 @@ test('fresh native server uses supported create-root arguments and rereads root'
   assert.deepEqual(call.args.slice(0, 2), ['--input-type=module', '-e']);
   const selection = JSON.parse(call.args.at(-1));
   assert.equal(selection.operation, 'create-root'); assert.equal(selection.name, 'New Human');
+  // The supplied name appears once, as the result, not echoed before creating it.
+  assert.equal(f.messages.filter(line => line.includes('New Human')).length, 1); assert.match(f.messages.join('\n'), /Human identity New Human is ready/);
   assert.equal(selection.endpoint, 'http://127.0.0.1:3050');
   assert.equal(selection.instanceId, f.record.instanceId);
   assert.equal(selection.credentialPath, join(f.root, 'storage/state/daemon/daemon-token'));
@@ -96,6 +98,7 @@ test('a missing Messenger identity is created as a role under the retained root,
   assert.deepEqual(await f.helper().serverEnsureMessengerIdentity(f.record, own.name), { name: own.name, cid: own.cid, created: true });
   const selection = JSON.parse(f.calls[1].args.at(-1));
   assert.equal(selection.operation, 'create-role'); assert.equal(selection.name, own.name);
+  assert.equal(f.messages.filter(line => line.includes(own.name)).length, 1);
   assert.match(f.calls[1].args[2], /createIdentity\(/); assert.match(f.calls[1].args[2], /currentIdentity\(\)/); assert.match(f.calls[1].args[2], /releaseLease/);
   assert.equal(f.calls[1].options.sensitive, true); assert.equal(f.calls.length, 3);
 });

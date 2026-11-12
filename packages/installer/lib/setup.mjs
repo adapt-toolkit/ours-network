@@ -216,7 +216,7 @@ export async function runSetup(argv, effects) {
       const presets = parseSetupArgs(argv, { home: effects.home, validate: false });
       try { options = validateSetupOptions(presets, { interactive: false }); }
       catch (error) {
-        if (!effects.interactive || effects.env?.OURS_ASSUME_YES || !/^(Missing (required setup options|human profile option):|Local username must|Hostname must|(name|surname) must contain)/.test(error.message)) throw error;
+        if (!effects.interactive || effects.env?.OURS_ASSUME_YES || !/^(Missing (required setup options|human profile option):|Local username must|Hostname must|(name|surname) must contain|Name and Surname together)/.test(error.message)) throw error;
         options = await collectSetupOptions(effects, { ...presets, ...retainedRoot(presets, effects) });
       }
     }

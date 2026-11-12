@@ -123,7 +123,7 @@ process.stdout.write(JSON.stringify(output));
       const prior = await identities(record);
       if (prior.root) return retained(prior);
       if (prior.rows.some(row => row.name === name)) throw new Error('Requested Human identity name already exists; no identity was changed');
-      effects.out?.(`Creating Human identity ${name}; retaining ${prior.rows.length} existing identities.`);
+      effects.out?.(`Creating your Human identity; retaining ${prior.rows.length} existing identities.`);
       try {
         await identityCommand(record, 'create-root', name);
       } catch (error) {
@@ -169,7 +169,7 @@ process.stdout.write(JSON.stringify(output));
         effects.out?.(`Retained Messenger identity ${name}.`);
         return { name, cid: row.cid, created: false };
       }
-      effects.out?.(`Creating Messenger identity ${name} under ${prior.root.name}; retaining ${prior.rows.length} existing identities.`);
+      effects.out?.(`Creating your Messenger identity; retaining ${prior.rows.length} existing identities.`);
       let result;
       try {
         result = await identityCommand(record, 'create-role', name);

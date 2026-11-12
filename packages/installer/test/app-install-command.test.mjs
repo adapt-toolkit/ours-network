@@ -68,6 +68,16 @@ test('invalid supplied profile values are asked again; valid ones are not', asyn
   assert.match(t.transcript(), /Use 1–30 lowercase letters/);
 });
 
+test('Name and Surname are repaired under the joined-name rule; the valid username stays silent', async () => {
+  for (const [name, surname, answers] of [['A/B', 'Taylor', { 'Name: ': ['Alex'] }], ['A'.repeat(40), 'B'.repeat(40), { 'Name: ': ['Alex'], 'Surname: ': ['Taylor'] }]]) {
+    const t = terminal({ lines: answers });
+    const code = await runSetup(['--scope', 'all', '--username', 'alex', '--name', name, '--surname', surname, '--hostname', 'home', '--disable-fleet-agents-setup', '--dry-run'], t.effects);
+    assert.equal(code, 0, t.transcript());
+    assert.deepEqual(t.asked, ['How would you like to continue?', ...Object.keys(answers)]);
+    assert.match(t.transcript(), /Not valid: Name/);
+  }
+});
+
 test('re-running on the retained default installation updates it with its runtime, ports and apps', async () => {
   const root = `${home}/.ours-install`;
   const containerBinding = { version: 1, uid: 1000, graphRoot: '/podman/graph', runRoot: '/podman/run', socket: '/podman/podman.sock', provider: '/usr/bin/podman-compose', driver: 'overlay', namespaceDigest: 'a'.repeat(64) };
