@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { verifyOwnerAdmission } from './verify-owner-admission.mjs';
 
@@ -35,6 +36,11 @@ const { name, cid, humanProfile } = await response.json();
 process.stdout.write(JSON.stringify({ name, cid, humanProfile }));`;
   return JSON.parse(execFileSync('docker', ['exec', `${record.project}-messenger-1`, 'node', '--input-type=module', '-e', script], { encoding: 'utf8' }));
 }
+/** The daemon's own identity list, read through the installed installer. */
+async function identities(record) {
+  const { realEffects } = await import(pathToFileURL(join(prefix, 'lib/node_modules/@ours.network/install/lib/effects.mjs')).href);
+  return realEffects({ out() {}, write() {} }).serverListIdentities(record);
+}
 const args = ['--mode', 'docker', '--state-dir', stateDir, '--username', 'ci', '--name', 'Ada', '--surname', 'Lovelace', '--hostname', 'ci-host', '--integrations', 'fleet', '--disable-fleet-agents-setup'];
 const install = label => {
   console.log(`\n=== ${label}: ours-install ${args.join(' ')}`);
@@ -54,9 +60,11 @@ try {
   console.log('Messenger identity after fresh installation:', JSON.stringify(stored));
   assert.deepEqual({ name: stored.humanProfile?.name, surname: stored.humanProfile?.surname }, { name: 'Ada', surname: 'Lovelace' });
   assert.match(String(stored.cid), /^[0-9A-Fa-f]{64}$/);
-  assert.match(first, /Human identity ci@ci-host is ready\./, 'fresh root is <username>@<hostname>');
+  assert.ok((await identities(record)).some(row => row.kind === 'root' && row.name === 'ci@ci-host'), 'fresh root is <username>@<hostname>');
+  // Supplied profile values are used without being echoed back.
+  assert.doesNotMatch(first, /ci@ci-host|Ada Lovelace/);
+  assert.match(first, /Your Human identity is ready\./); assert.match(first, /Your Messenger identity is ready\./);
   // Messenger does not run as that root: it runs as the person's own identity, created under it.
-  assert.match(first, /Messenger identity Ada Lovelace is ready\./);
   assert.equal(record.messengerIdentity, 'Ada Lovelace'); assert.equal(stored.name, 'Ada Lovelace', 'Messenger is bound to the person\'s own identity');
   const again = install('Repeated installation');
   assert.match(again, /Retained Messenger Name and Surname\./, 'repeat keeps the stored profile, proving the first write reached Messenger');
@@ -64,7 +72,7 @@ try {
   assert.equal(readRecord().instanceId, record.instanceId, 'repeat retains the installation');
   const retained = messengerIdentity(readRecord());
   assert.equal(retained.cid, stored.cid, 'repeat retains the same identity');
-  assert.match(again, /Retained Messenger identity Ada Lovelace\./); assert.doesNotMatch(again, /Creating Messenger identity/);
+  assert.match(again, /Retained your Messenger identity\./); assert.doesNotMatch(again, /Creating your Messenger identity/);
   assert.equal(readRecord().messengerIdentity, 'Ada Lovelace'); assert.equal(retained.name, 'Ada Lovelace');
   assert.deepEqual(retained.humanProfile, stored.humanProfile, 'repeat retains the stored profile');
   execFileSync(join(prefix, 'bin', 'ours-fleet'), ['setup-tunnel', '--help'], { env, stdio: 'inherit' });

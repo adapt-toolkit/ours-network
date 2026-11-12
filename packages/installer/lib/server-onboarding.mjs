@@ -112,7 +112,7 @@ process.stdout.write(JSON.stringify(output));
     return { rows, root: roots[0] };
   }
   function retained({ rows, root }) {
-    effects.out?.(`Retained ${rows.length} existing ${rows.length === 1 ? 'identity' : 'identities'}; Human identity: ${root.name}.`);
+    effects.out?.(`Retained ${rows.length} existing ${rows.length === 1 ? 'identity' : 'identities'}, including your Human identity.`);
     return { name: root.name, cid: root.cid, created: false };
   }
   return {
@@ -137,7 +137,7 @@ process.stdout.write(JSON.stringify(output));
       const after = await identities(record);
       if (!after.root) throw new Error('Human identity creation completed without a visible root');
       if (after.root.name !== name) return retained(after);
-      effects.out?.(`Human identity ${after.root.name} is ready.`);
+      effects.out?.('Your Human identity is ready.');
       return { name: after.root.name, cid: after.root.cid, created: true };
     },
     /**
@@ -166,7 +166,7 @@ process.stdout.write(JSON.stringify(output));
       };
       if (prior.rows.some(row => row.name === name)) {
         const row = await adopt(prior);
-        effects.out?.(`Retained Messenger identity ${name}.`);
+        effects.out?.('Retained your Messenger identity.');
         return { name, cid: row.cid, created: false };
       }
       effects.out?.(`Creating your Messenger identity; retaining ${prior.rows.length} existing identities.`);
@@ -187,7 +187,7 @@ process.stdout.write(JSON.stringify(output));
       if (result?.created?.hierarchy !== 'role' || result.created.underRoot !== prior.root.name || after.root?.cid !== prior.root.cid
           || !listed(row) || result.created.info?.cid !== row.cid || !under(result.current, row))
         throw new Error('Messenger identity creation completed without a usable identity under the Human identity');
-      effects.out?.(`Messenger identity ${name} is ready.`);
+      effects.out?.('Your Messenger identity is ready.');
       return { name, cid: row.cid, created: true };
     },
     async serverEnsureHumanProfile(record, human) {
