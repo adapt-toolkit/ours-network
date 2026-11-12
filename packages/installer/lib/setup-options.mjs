@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { PRODUCTS, PLUGIN_ONLY, PLUGIN_ONLY_INTEGRATIONS } from './product.mjs';
 import { MIGRATE_FROM_UNSUPPORTED, refuseOldLayout } from './plan.mjs';
 import { InstallUsageError } from './target.mjs';
+import { heading, info, warn } from './ui.mjs';
 
 const scopes = ['all', 'server', 'client'];
 const integrations = ['codex', 'claude-code', 'fleet'];
@@ -178,6 +179,92 @@ export function defaultHostname() {
   return hostname().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 30) || 'workspace';
 }
 
+const personText = /[\\/\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
+const personPart = value => nonempty(value) && value.trim().length <= 100 && !personText.test(value.trim());
+const profileChecks = {
+  localUsername: value => /^[a-z0-9][a-z0-9-]{0,29}$/.test(value),
+  name: personPart, surname: personPart,
+  hostname: value => value === '' || /^[a-z0-9][a-z0-9-]{0,29}$/.test(value.trim()),
+};
+// The same joined-name rule validateSetupOptions applies.
+const personValid = (name, surname) => {
+  const person = `${name.trim()} ${surname.trim()}`;
+  return [...person].length <= 64 && person === person.normalize('NFC') && !personText.test(person);
+};
+
+// Valid supplied profile values are used silently; only missing or invalid ones are asked.
+async function collectProfile(effects, options) {
+  const fields = [
+    ['localUsername', 'Local username: ', () => (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30)],
+    ['name', 'Name: ', () => ''], ['surname', 'Surname: ', () => ''], ['hostname', 'Host / machine name (optional): ', () => ''],
+  ];
+  const valid = key => typeof options[key] === 'string' && profileChecks[key](options[key]);
+  const joined = () => !valid('name') || !valid('surname') || personValid(options.name, options.surname);
+  fields.splice(0, fields.length, ...fields.filter(([key]) => !valid(key) || (!joined() && (key === 'name' || key === 'surname'))));
+  if (!fields.length) return;
+  const invalid = fields.filter(([key]) => options[key] !== undefined).map(([key]) => key);
+  effects.out(invalid.length ? warn(`Not valid: ${invalid.map(key => ({ localUsername: 'Local username', name: 'Name', surname: 'Surname', hostname: 'Host name' })[key]).join(', ')}. Please enter again.`) : info('Your Ours identity: Name and Surname appear in Messenger.'));
+  for (const [key, question, fallback] of fields) {
+    for (let attempt = 1; ; attempt++) {
+      const value = await effects.askLine(question, fallback());
+      if (profileChecks[key](value) && (key !== 'surname' || personValid(options.name, value))) { options[key] = value; break; }
+      if (attempt === 3) throw new Error(`Invalid ${key}; nothing was changed`);
+      effects.out(warn(key === 'localUsername' || key === 'hostname' ? 'Use 1–30 lowercase letters, digits or hyphens.'
+        : 'Use up to 64 characters for Name and Surname together, without slashes or control characters.'));
+    }
+  }
+}
+
+async function integrationDefaults(effects, existing, fleetRequired) {
+  const detected = typeof effects.detectHarnesses === 'function' ? await effects.detectHarnesses() : [];
+  // A retained full setup keeps the apps it already connected.
+  let saved = null;
+  try { saved = existing ? effects.readManagedClientProfile?.() : null; } catch { saved = null; }
+  const keep = saved && saved.expectedInstanceId === existing.instanceId ? saved.installer?.integrations : undefined;
+  const choices = [{ value: 'codex', label: 'Codex' }, { value: 'claude-code', label: 'Claude Code' }, ...(fleetRequired ? [] : [{ value: 'fleet', label: 'Fleet — persistent agents' }])];
+  const selected = keep ?? integrations.filter(name => name === 'fleet' || detected.some(item => item.name === name && item.status === 'ok'));
+  return { choices, selected };
+}
+
+/** The recommended full local setup: a retained installation keeps its folder, runtime and apps; a fresh one uses the defaults. */
+async function recommendedSetup(effects, options, fleetRequired) {
+  const stateDir = expandPaths({ stateDir: options.stateDir ?? join(effects.home, '.ours-install') }, effects.home).stateDir;
+  const existing = refuseOldLayout(effects.readJson(join(stateDir, 'installation.json')), stateDir, effects.readJson);
+  if (existing?.mode === 'packages')
+    throw new Error('This installation runs natively, which supports the server only. Choose the server-only setup to maintain it (ours-install server); local clients need an installation that runs in Docker or Podman. Nothing was changed.');
+  const engine = existing ? (existing.containerEngine === 'podman' ? 'Podman' : 'Docker') : options.containerEngine === 'podman' ? 'Podman' : 'Docker';
+  effects.out(heading(existing ? 'Update Ours on this computer' : 'Install Ours on this computer'));
+  effects.out(info(existing ? `Recommended: update your existing Ours in ${stateDir} (${engine}), keeping its identities, data and apps.`
+    : `Recommended: the server, Fleet and your detected agent apps, in ${stateDir}, running in ${engine}.`));
+  const choice = await effects.select('How would you like to continue?', [
+    { value: 'recommended', label: existing ? 'Update with recommended setup' : 'Install recommended setup' },
+    { value: 'customize', label: 'Customize' },
+  ], 'recommended');
+  if (choice !== 'recommended') return null;
+  options.stateDir = stateDir;
+  options.operation ??= existing ? 'update' : 'install';
+  options.mode ??= 'docker';
+  if (existing) {
+    options.mode = existing.mode;
+    if (existing.containerEngine) options.containerEngine = existing.containerEngine;
+  }
+  const human = ['localUsername', 'name', 'surname'].some(key => options[key] !== undefined);
+  // Supplied profile inputs never rename a retained root.
+  if (existing?.messengerIdentity && !human) options.identityName ??= existing.messengerIdentity;
+  else if (human || options.identityName === undefined) await collectProfile(effects, options);
+  for (const [key, fallback] of Object.entries(defaults)) options[key] ??= existing?.[key] ?? fallback;
+  if (options.integrations === undefined) {
+    const { selected } = await integrationDefaults(effects, existing, fleetRequired);
+    options.integrations = fleetRequired || !existing ? [...selected.filter(name => name !== 'fleet'), 'fleet'] : selected;
+  }
+  if (options.operation === 'update') {
+    effects.out(info('The update keeps identities and messages and makes a recovery backup first.'));
+    options.compatible ??= await effects.ask('Update now and keep a recovery backup?', true);
+    if (!options.compatible) throw new Error('Update cancelled; nothing was changed');
+  }
+  return validateSetupOptions(expandPaths(options, effects.home), { interactive: true });
+}
+
 export async function collectSetupOptions(effects, presets = {}) {
   if (effects.interactive !== true) throw new Error('Interactive setup requires a TTY; provide the complete CLI options instead');
   const options = { ...presets, interactive: true, explicitPorts: presets.explicitPorts ?? [] };
@@ -186,99 +273,100 @@ export async function collectSetupOptions(effects, presets = {}) {
     { value: 'server', label: 'Server only' },
     { value: 'client', label: 'Connect this computer to an existing server' },
   ];
-  effects.out('Choose what this computer should do. Everything runs the server here and connects your selected apps; client-only uses a server you already have.');
-  options.scope ??= await effects.select('What would you like to set up?', scopeChoices, 'all');
+  if (options.scope === undefined) {
+    effects.out(info('Everything runs the server here and connects your apps; client-only uses a server you already have.'));
+    options.scope = await effects.select('What would you like to set up?', scopeChoices, 'all');
+  }
   if (!scopes.includes(options.scope)) throw new Error('Scope must be all, server, or client');
+  // A full local setup started for the complete workspace (--disable-fleet-agents-setup) always includes Fleet.
+  const fleetRequired = options.scope === 'all' && options.disableFleetAgentsSetup === true;
+  // A preset full local setup (the App command) starts with one choice: the recommended setup or Customize.
+  if (presets.scope === 'all') {
+    const recommended = await recommendedSetup(effects, options, fleetRequired);
+    if (recommended) return recommended;
+  }
   let existing;
   if (options.scope !== 'client') {
     const recommendedRoot = join(effects.home, '.ours-install');
-    effects.out(`Stores the server programs and data, including identities and messages. The recommended folder is ${recommendedRoot}; choose another only if you want to manage its location yourself.`);
-    const location = options.stateDir ? 'preset' : await effects.select('Where should server programs and data be stored?', [
-      { value: 'recommended', label: `Use the recommended folder (${recommendedRoot})` },
-      { value: 'custom', label: 'Choose another folder' },
-    ], 'recommended');
-    options.stateDir ??= location === 'recommended' ? recommendedRoot : await effects.askLine('Folder for server programs and data: ', recommendedRoot);
+    if (!options.stateDir) {
+      effects.out(info('Ours keeps its programs and data (identities, messages) in one folder.'));
+      const location = await effects.select('Where should server programs and data be stored?', [
+        { value: 'recommended', label: `${recommendedRoot} (recommended)` },
+        { value: 'custom', label: 'Choose another folder' },
+      ], 'recommended');
+      options.stateDir = location === 'recommended' ? recommendedRoot : await effects.askLine('Folder for server programs and data: ', recommendedRoot);
+    }
     options.stateDir = expandPaths({ stateDir: options.stateDir }, effects.home).stateDir;
     existing = refuseOldLayout(effects.readJson(join(options.stateDir, 'installation.json')), options.stateDir, effects.readJson);
   }
-  effects.out(existing
-    ? 'This folder already contains an installation. Update selects this installer’s release while retaining state; repair reinstalls the retained package selection.'
-    : options.scope === 'client' ? 'Install connects your selected apps. Update refreshes their packages while keeping the server connection.'
-      : 'Install creates a managed installation in the selected folder. Update requires an installation already recorded there.');
-  options.operation ??= !existing && options.scope !== 'client' ? 'install' : await effects.select('What should happen?', [
-    { value: 'install', label: existing ? 'Repair this installation' : 'Install and configure' },
-    { value: 'update', label: 'Update an existing installation' },
-  ], existing ? 'update' : 'install');
+  if (options.operation === undefined) {
+    if (existing || options.scope === 'client') {
+      effects.out(info(existing ? `Ours is already installed in ${options.stateDir}. Update keeps your identities and data; repair reruns setup.`
+        : 'Install connects your apps; update refreshes them and keeps the server connection.'));
+      options.operation = await effects.select('What should happen?', [
+        { value: 'install', label: existing ? 'Repair this installation' : 'Install and configure' },
+        { value: 'update', label: existing ? 'Update (recommended)' : 'Update an existing installation' },
+      ], existing ? 'update' : 'install');
+    } else options.operation = 'install';
+  }
   if (options.scope !== 'client') {
-    const recommendation = recommendedMode({ ...effects.platform, arch: effects.platform?.arch ?? process.arch });
     // Native runs the server only: local clients need the container gateway. A retained
     // native installation keeps its mode, so a full setup of it cannot finish.
     if (options.scope === 'all' && existing?.mode === 'packages')
       throw new Error('This installation runs natively, which supports the server only. Choose the server-only setup to maintain it (ours-install server); local clients need an installation that runs in Docker or Podman. Nothing was changed.');
-    const nativeOffered = options.scope === 'server' || existing?.mode === 'packages';
-    effects.out(nativeOffered
-      ? `${recommendation.reason} Native runs directly on this computer; Docker runs in containers and needs Docker installed and running. An existing installation must keep its current mode.`
-      : 'The server runs in containers. Docker and Podman both work; the one you choose must be installed and running. An existing installation must keep its current mode.');
-    const runtime = options.mode ?? await effects.select('How should the server run?', [
-      ...(nativeOffered ? [{ value: 'packages', label: 'Native packages' }] : []), { value: 'docker', label: 'Docker' }, { value: 'podman', label: 'Podman' },
-    ], existing?.mode === 'docker' && existing?.containerEngine === 'podman' ? 'podman' : existing?.mode ?? recommendation.mode);
+    // A retained installation keeps its runtime, so there is nothing to choose.
+    const retained = existing ? (existing.mode === 'docker' && existing.containerEngine === 'podman' ? 'podman' : existing.mode) : undefined;
+    let runtime = options.mode ?? retained;
+    if (runtime === undefined) {
+      const nativeOffered = options.scope === 'server';
+      effects.out(info(nativeOffered ? 'Native runs directly on this computer; Docker and Podman run in containers and must be installed and running.'
+        : 'Ours runs in containers; Docker or Podman must be installed and running.'));
+      runtime = await effects.select('How should the server run?', [
+        { value: 'docker', label: 'Docker (recommended)' }, { value: 'podman', label: 'Podman' },
+        ...(nativeOffered ? [{ value: 'packages', label: 'Native packages' }] : []),
+      ], recommendedMode({ ...effects.platform, arch: effects.platform?.arch ?? process.arch }).mode);
+    }
     options.mode = runtime === 'podman' ? 'docker' : runtime;
     if (runtime === 'podman') options.containerEngine = 'podman';
-    if (existing?.messengerIdentity) {
-      effects.out(`Existing Human identity ${existing.messengerIdentity} and Messenger profile will be retained.`);
-      // Supplied profile inputs never rename a retained root.
-      if (!['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) options.identityName ??= existing.messengerIdentity;
-    } else if (options.identityName === undefined || options.localUsername !== undefined) {
-      effects.out('Choose a local username (no global uniqueness check). Name and Surname appear in Messenger; the optional host name identifies this workspace.');
-      options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
-      options.name ??= await effects.askLine('Name: ', '');
-      options.surname ??= await effects.askLine('Surname: ', '');
-      options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
-    }
-    if (['localUsername', 'name', 'surname'].some(key => options[key] !== undefined)) {
-      // Partial profile presets still collect missing fields on the retained
-      // path; these inputs never replace its authoritative root.
-      effects.out('Name and Surname initialize a missing Messenger profile; an existing profile is retained.');
-      options.localUsername ??= await effects.askLine('Local username: ', (effects.username?.() ?? 'me').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30));
-      options.name ??= await effects.askLine('Name: ', '');
-      options.surname ??= await effects.askLine('Surname: ', '');
-      options.hostname ??= await effects.askLine('Host / machine name (optional): ', '');
-    }
+    const human = ['localUsername', 'name', 'surname'].some(key => options[key] !== undefined);
+    // Supplied profile inputs never rename a retained root.
+    if (existing?.messengerIdentity && !human) options.identityName ??= existing.messengerIdentity;
+    else if (human || options.identityName === undefined) await collectProfile(effects, options);
     for (const [key, fallback] of Object.entries(defaults)) options[key] ??= existing?.[key] ?? fallback;
     if (options.operation === 'update') {
-      effects.out('The update retains identities and messages and creates a recovery backup before changing stored state. Proceed only if you accept this release for your existing data; compatibility is not automatically guaranteed.');
+      effects.out(info('The update keeps identities and messages and makes a recovery backup first; compatibility with older data is not guaranteed.'));
       options.compatible ??= await effects.ask('Proceed with this update and keep a recovery backup?', false);
     }
   } else {
     const savedProfile = join(effects.home, '.ours-client', 'profile.json');
-    effects.out('A connection profile identifies the server and its private access credential. Reuse your saved connection or select a profile supplied by the server owner.');
-    const connection = options.config ? 'preset' : await effects.select('Which server connection should this computer use?', [
-      { value: 'saved', label: 'Use the saved server connection' }, { value: 'file', label: 'Choose a connection profile file' },
-    ], effects.readJson(savedProfile) ? 'saved' : 'file');
-    options.config ??= connection === 'saved' ? savedProfile : await effects.askLine('Connection profile file: ', savedProfile);
+    if (!options.config) {
+      effects.out(info('A connection profile names the server and its private access credential.'));
+      const connection = await effects.select('Which server connection should this computer use?', [
+        { value: 'saved', label: 'Use the saved server connection' }, { value: 'file', label: 'Choose a connection profile file' },
+      ], effects.readJson(savedProfile) ? 'saved' : 'file');
+      options.config = connection === 'saved' ? savedProfile : await effects.askLine('Connection profile file: ', savedProfile);
+    }
   }
-  if (options.scope !== 'server') {
-    const detected = typeof effects.detectHarnesses === 'function' ? await effects.detectHarnesses() : [];
-    const selected = integrations.filter(name => name === 'fleet' || detected.some(item => item.name === name && item.status === 'ok'));
-    effects.out('Choose the apps to connect. Detected agent apps are selected by default; Fleet configures persistent agents but leaves them stopped. Use Space to toggle choices, then Enter to continue. You can select none.');
-    options.integrations ??= await effects.multiselect('Which integrations should be configured?', [
-      { value: 'codex', label: 'Codex' }, { value: 'claude-code', label: 'Claude Code' }, { value: 'fleet', label: 'Fleet — persistent agents' },
-    ], selected);
+  if (options.scope !== 'server' && options.integrations === undefined) {
+    const { choices, selected } = await integrationDefaults(effects, existing, fleetRequired);
+    effects.out(info(fleetRequired ? 'Fleet is included. Choose agent apps to connect.' : 'Choose apps to connect. Fleet agents stay stopped until you start them.'));
+    const chosen = await effects.multiselect('Which integrations should be configured?', choices, selected.filter(name => choices.some(choice => choice.value === name)));
+    options.integrations = fleetRequired ? [...chosen.filter(name => name !== 'fleet'), 'fleet'] : chosen;
     if (options.integrations.includes('fleet') && !options.disableFleetAgentsSetup && !options.fleetSettingsPath) {
-      effects.out('Fleet needs model and agent settings. Its guided setup asks for these later; a prepared settings file applies your existing choices. Fleet roles will not start automatically.');
+      effects.out(info('Fleet needs model and agent settings; its roles will not start automatically.'));
       const fleetMode = await effects.select('How should Fleet be configured?', [
         { value: 'wizard', label: 'Configure interactively with Fleet' }, { value: 'file', label: 'Use a prepared settings file' },
       ], 'wizard');
       if (fleetMode === 'file') options.fleetSettingsPath = await effects.askLine('Fleet settings file: ', '');
     }
   }
-  effects.out('Recommended settings use the standard service ports and this installer’s packaged release. Customize only if you need different ports or a development package selection.');
+  effects.out(info('Recommended settings use the standard ports and this installer’s release.'));
   const advanced = await effects.select('Installation settings', [
     { value: 'recommended', label: 'Use recommended settings' }, { value: 'custom', label: 'Customize' },
   ], 'recommended');
   if (advanced === 'custom') {
     if (options.scope !== 'client') {
-      effects.out('Ports determine where local apps reach each service. Use three different available ports; an existing installation keeps its recorded ports.');
+      effects.out(info('Use three different available ports; an existing installation keeps its recorded ports.'));
       for (const key of Object.keys(defaults)) {
         const label = { port: 'Daemon', coworkPort: 'Cowork', messengerPort: 'Messenger' }[key];
         const value = await effects.askLine(`${label} port: `, String(options[key]));
@@ -286,14 +374,13 @@ export async function collectSetupOptions(effects, presets = {}) {
         options[key] = Number(value); options.explicitPorts.push(key);
       }
     }
-    effects.out('A source override replaces the packaged release selection. Leave it empty for the supported packaged release; use a file only for a deliberate development override.');
+    effects.out(info('A source override replaces the packaged release; leave it empty unless you are developing Ours.'));
     const sources = await effects.askLine('Source policy override file (optional): ', '');
     if (sources.trim()) options.sources = sources;
   }
   const validated = validateSetupOptions(expandPaths(options, effects.home), { interactive: true });
   const scopeLabel = scopeChoices.find(choice => choice.value === validated.scope).label;
-  effects.out(`Setup: ${scopeLabel}; ${validated.operation}${validated.mode ? ` using ${validated.mode === 'packages' ? 'native packages' : 'Docker'} in ${validated.stateDir}` : ` from ${validated.config}`}; integrations: ${validated.integrations?.join(', ') || 'none'}.`);
-  effects.out('Continue to apply these choices. Cancelling now leaves programs, services and data unchanged.');
-  if (!await effects.ask('Continue with this setup?', false)) throw new Error('Setup cancelled; nothing was changed');
+  effects.out(info(`Setup: ${scopeLabel}; ${validated.operation}${validated.mode ? ` using ${validated.mode === 'packages' ? 'native packages' : validated.containerEngine === 'podman' ? 'Podman' : 'Docker'} in ${validated.stateDir}` : ` from ${validated.config}`}; integrations: ${validated.integrations?.join(', ') || 'none'}. Nothing changes until you continue.`));
+  if (!await effects.ask('Continue with this setup?', true)) throw new Error('Setup cancelled; nothing was changed');
   return validated;
 }

@@ -106,7 +106,7 @@ test('recommended wizard flow uses menus and multiselect, collects local usernam
   assert.deepEqual(f.questions.filter(row => row[2] === 'text').map(row => row[0]), ['Local username: ', 'Name: ', 'Surname: ', 'Host / machine name (optional): ']);
   assert.equal(f.questions.filter(row => row[2] === 'multiselect').length, 1);
   assert.equal(options.fleetSettingsPath, undefined);
-  assert(f.output.some(line => line.includes('Stores the server programs and data')));
+  assert(f.output.some(line => line.includes('keeps its programs and data')));
   assert.equal(f.questions.at(-1)[0], 'Continue with this setup?');
 });
 
@@ -211,7 +211,7 @@ test('full setup offers only runtimes that can finish; native stays for server-o
  const full=interactiveFixture();await collectSetupOptions(full.effects);
  assert.deepEqual(runtimes(full),['docker','podman']);
  const server=interactiveFixture({selections:{'What would you like to set up?':'server'}});await collectSetupOptions(server.effects);
- assert.deepEqual(runtimes(server),['packages','docker','podman']);
+ assert.deepEqual(runtimes(server),['docker','podman','packages']);
  const retainedServer=interactiveFixture({existing:{mode:'packages'},selections:{'What would you like to set up?':'server','What should happen?':'install'}});
  assert.equal((await collectSetupOptions(retainedServer.effects)).mode,'packages');
  const retainedFull=interactiveFixture({existing:{mode:'packages'},selections:{'What should happen?':'install'}});
