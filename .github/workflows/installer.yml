@@ -222,7 +222,8 @@ jobs:
     needs: [test, version-bump, images]
     # images needs the main-skipped nightly-version, so the implicit success() would skip this job.
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.version-bump.result == 'success' &&
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.test.result == 'success' && needs.version-bump.result == 'success' &&
       needs.version-bump.outputs.bumped == 'true' && needs.images.result == 'success'
     runs-on: ubuntu-latest
     name: Publish stable installer
