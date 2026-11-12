@@ -1,9 +1,9 @@
 import { validateGatewayClientProfile } from './target.mjs';
 import { gatewayAddress } from './gateway.mjs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { parseSetupArgs, collectSetupOptions, validateSetupOptions } from './setup-options.mjs';
 import { parseNetworkArgs, validateHostProfile, InstallUsageError } from './target.mjs';
-import { clientPackageNames, validateInstallation, refuseOldLayout } from './plan.mjs';
+import { clientPackageNames, validateInstallation, refuseOldLayout, installationPaths, unitNameForStateDir, launchdLabelForStateDir } from './plan.mjs';
 import { runServerCommand, runClientCommand } from './orchestrate.mjs';
 import { banner, c, heading, info, ok, warn, progress } from './ui.mjs';
 import { isCancel } from './prompt.mjs';
@@ -184,14 +184,49 @@ function preparedClaudeMarketplace(effects) {
 }
 
 /** Partial presets without --state-dir reuse the one installation already here, as the welcome screen does. */
-function retainedRoot(presets, effects) {
+async function retainedRoot(presets, effects) {
   if (!['all', 'server'].includes(presets.scope) || presets.stateDir !== undefined) return {};
   const found = findInstallations(effects);
   const usable = found.filter(item => !item.invalid);
   if (usable.length === 1) return { stateDir: usable[0].root };
   if (usable.length > 1) throw new InstallUsageError(`Several Ours installations are on this computer (${usable.map(item => item.root).join(', ')}). Choose one with --state-dir; nothing was changed.`);
   if (found.length) throw new InstallUsageError(`An Ours installation here could not be read (${found.map(item => item.root).join(', ')}). Run ours-install without options to review it; nothing was changed.`);
-  return {};
+  return outsideRoot(effects);
+}
+
+/**
+ * An installation in a folder outside ~/.ours*, found from what it runs: Compose labels name its
+ * runtime folder (<root>/runtime), and every native installation uses the same daemon service name.
+ */
+async function outsideRoot(effects) {
+  const daemon = installationPaths({ root: effects.home }).daemon;
+  const service = effects.platform?.platform === 'darwin'
+    ? join(effects.home, 'Library/LaunchAgents', `${launchdLabelForStateDir(daemon).label}.plist`)
+    : join(effects.home, '.config/systemd/user', unitNameForStateDir(daemon).unit);
+  if (effects.exists?.(service)) throw new InstallUsageError(`An Ours service from another folder is set up for your user (${service}). Re-run with --state-dir <its folder> to update it; nothing was changed.`);
+  const roots = new Set(), unknown = new Set();
+  for (const engine of ['docker', 'podman']) {
+    let listed;
+    try { listed = await effects.run(engine, ['ps', '-a', '--format', '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.project.working_dir"}}']); }
+    catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      // An installed engine that cannot be inspected could hide an installation: never assume there is none.
+      throw new InstallUsageError(`Could not check ${engine === 'docker' ? 'Docker' : 'Podman'} for an existing Ours installation. Start it (or fix access for your user) and retry, or re-run with --state-dir <folder>; nothing was changed.`);
+    }
+    for (const line of listed.stdout.split('\n')) {
+      const [project = '', workDir = ''] = line.trim().split('\t');
+      // Only Compose-created containers name a project folder; images inherit the project label alone.
+      if (!/^ours-/.test(project) || !workDir) continue;
+      const root = dirname(workDir);
+      let record = null;
+      try { record = validateInstallation(effects.readJson(join(root, 'installation.json')), root); } catch { record = null; }
+      if (record?.project === project && record.workDir === workDir) roots.add(root);
+      else unknown.add(project);
+    }
+  }
+  if (unknown.size) throw new InstallUsageError(`Ours containers without a readable installation are on this computer (${[...unknown].join(', ')}). Re-run with --state-dir <its folder> to update it; nothing was changed.`);
+  if (roots.size > 1) throw new InstallUsageError(`Several Ours installations are on this computer (${[...roots].join(', ')}). Choose one with --state-dir; nothing was changed.`);
+  return roots.size ? { stateDir: [...roots][0] } : {};
 }
 
 /** The sole executable entry: manual answers and CLI presets share one plan/executor. */
@@ -217,7 +252,7 @@ export async function runSetup(argv, effects) {
       try { options = validateSetupOptions(presets, { interactive: false }); }
       catch (error) {
         if (!effects.interactive || effects.env?.OURS_ASSUME_YES || !/^(Missing (required setup options|human profile option):|Local username must|Hostname must|(name|surname) must contain|Name and Surname together)/.test(error.message)) throw error;
-        options = await collectSetupOptions(effects, { ...presets, ...retainedRoot(presets, effects) });
+        options = await collectSetupOptions(effects, { ...presets, ...await retainedRoot(presets, effects) });
       }
     }
     const plan = { ...await prepareSetupPlan(options, effects), ...extra };

@@ -11,7 +11,7 @@ const instanceId = '12345678-1234-1234-1234-123456789abc';
 const installation = (root, extra = {}) => ({ schema: 2, mode: 'docker', root, workDir: `${root}/runtime`, sourcesPath: `${root}/sources.json`, configPath: `${root}/storage/state/daemon/config.json`,
   instanceId, project: 'ours-test', services: ['daemon', 'telegram', 'cowork', 'messenger'], port: 4050, coworkPort: 4052, messengerPort: 9420, uid: 1000, gid: 1000, messengerIdentity: 'Retained Person', ...extra });
 
-function terminal({ roots = {}, saved = null, answers = {}, lines = {}, selections = {} } = {}) {
+function terminal({ roots = {}, saved = null, answers = {}, lines = {}, selections = {}, containers = {}, paths = [] } = {}) {
   const files = new Map(Object.entries(roots).flatMap(([root, record]) => [[`${root}/installation.json`, record], [`${root}/sources.json`, policy]]));
   const asked = [], output = [], events = [];
   const effects = {
@@ -25,6 +25,14 @@ function terminal({ roots = {}, saved = null, answers = {}, lines = {}, selectio
     multiselect: async (question, _choices, fallback) => { asked.push(question); return fallback; },
     askLine: async (question, fallback) => { asked.push(question); return Object.hasOwn(lines, question) ? lines[question].shift() : fallback; },
     ask: async (question, fallback) => { asked.push(question); return answers[question] ?? fallback; },
+    // Read-only engine listing of Compose labels; an absent engine fails like a missing CLI.
+    run: async (engine, args) => {
+      assert.deepEqual(args.slice(0, 3), ['ps', '-a', '--format']);
+      if (!Object.hasOwn(containers, engine)) throw Object.assign(new Error(`${engine}: not found`), { code: 'ENOENT' });
+      if (containers[engine] === 'unreachable') throw Object.assign(new Error(`${engine} exited 125`), { code: undefined });
+      return { code: 0, stdout: containers[engine].map(([project, dir]) => `${project}\t${dir}`).join('\n') };
+    },
+    exists: path => paths.includes(path),
     resolveSourcePolicy: async () => { events.push('resolve'); },
     serverLifecycle: async () => ['daemon'],
   };
@@ -124,6 +132,37 @@ test('several installations, an unreadable one, or a native one are refused befo
     assert.equal(code, 2, text);
     assert.match(text, message);
     assert.deepEqual(t.asked, asked);
+    assert.deepEqual(t.events, []);
+  }
+});
+
+test('an installation in a folder outside ~/.ours* is found from its containers and updated, not duplicated', async () => {
+  const root = '/srv/ours-custom';
+  // A stopped installation lists one row per container (ps -a); an image-inherited label has no folder.
+  const t = terminal({ containers: { docker: [['ours-test', `${root}/runtime`], ['ours-test', `${root}/runtime`], ['ours-test', ''], ['unrelated', '/srv/other']], podman: [] } });
+  t.effects.readJson = path => path === `${root}/installation.json` ? installation(root) : path === `${root}/sources.json` ? policy : null;
+  const { code, text } = await plan(t);
+  assert.equal(code, 0, text);
+  assert.deepEqual(t.asked, ['How would you like to continue?', 'Update now and keep a recovery backup?']);
+  assert.match(text, /directory: \/srv\/ours-custom/);
+  assert.doesNotMatch(text, /\.ours-install/);
+});
+
+test('a native service or unreadable Ours containers from another folder are refused before any question', async () => {
+  for (const [options, message] of [
+    [{ paths: [`${home}/.config/systemd/user/ours-daemon.service`] }, /Ours service from another folder.*ours-daemon\.service.*--state-dir/],
+    [{ containers: { podman: [['ours-old', '/srv/gone/runtime']] } }, /Ours containers without a readable installation.*ours-old/],
+    [{ containers: { docker: [['ours-other', '/srv/ours-custom/runtime']] }, records: ['/srv/ours-custom'] }, /without a readable installation.*ours-other/],
+    [{ containers: { docker: [], podman: 'unreachable' } }, /Could not check Podman.*--state-dir/],
+    [{ containers: { docker: 'unreachable', podman: [] } }, /Could not check Docker/],
+    [{ containers: { docker: [['ours-test', '/srv/a/runtime']], podman: [['ours-test', '/srv/b/runtime']] }, records: ['/srv/a', '/srv/b'] }, /Several Ours installations.*\/srv\/a.*\/srv\/b/],
+  ]) {
+    const t = terminal(options);
+    if (options.records) t.effects.readJson = path => options.records.some(root => path === `${root}/installation.json`) ? installation(path.slice(0, -'/installation.json'.length)) : null;
+    const { code, text } = await plan(t);
+    assert.equal(code, 2, text);
+    assert.match(text, message);
+    assert.deepEqual(t.asked, []);
     assert.deepEqual(t.events, []);
   }
 });
