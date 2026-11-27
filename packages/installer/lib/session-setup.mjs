@@ -12,7 +12,7 @@ export function planSessionSettings({harness,packageCapabilities,daemonCapabilit
  if(harness==='claude-code'){
   const merged=mergeClaudeApprovals(claudeSettings);
   if(merged.added.length)writes.push({kind:'claude-settings',value:merged.settings});
-  notes.push(`Exact Claude MCP grants added: ${merged.added.join(', ')||'none'}. Existing deny/ask rules retained.`);
+  notes.push(merged.reason??`Exact Claude MCP grants added: ${merged.added.join(', ')||'none'}. Existing deny/ask rules retained.`);
  }else{
   const merged=mergeCodexApprovals(codexText,{supported:codexApprovalQualified});
   if(merged.added.length)writes.push({kind:'codex-settings',text:merged.text});

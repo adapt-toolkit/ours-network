@@ -1,19 +1,21 @@
+import { createHash } from 'node:crypto';
 // Exact MCP tool grants only. No shell, command runner, file transfer or destructive identity tools.
-export const APPROVED_OURS_TOOLS = Object.freeze(['current_identity','list_identities','list_local_contact_book','list_local_sessions','get_messages','send_message']);
+export const APPROVED_OURS_TOOLS = Object.freeze(['current_identity','list_identities','list_local_contact_book','list_local_sessions']);
 const unsafe = new Set(['send_file','save_file','send_command','remove_identity','close_temporary_identity','keep_identity','choose_identity','create_identity','create_root_identity','create_temporary_identity']);
 const rulePattern = rule => new RegExp('^'+rule.split('(')[0].replace(/[.+?^${}()|[\]\\]/g,'\\$&').replaceAll('*','.*')+'$');
-export function mergeClaudeApprovals(input, { server = 'ours' } = {}) {
+export function mergeClaudeApprovals(input, { server = 'plugin_ours_ours', qualified = false } = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Claude settings must be a JSON object');
   if (!/^[a-zA-Z0-9_-]+$/.test(server)) throw new Error('Invalid MCP server name');
   const output = structuredClone(input), permissions = output.permissions ?? {};
   if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) throw new Error('Claude permissions must be an object');
   for (const key of ['allow','ask','deny']) if (permissions[key] !== undefined && (!Array.isArray(permissions[key]) || permissions[key].some(v=>typeof v!=='string'))) throw new Error(`Claude permissions.${key} must be an array of rules`);
+  if (!qualified) return {settings:output,added:[],preservedRestrictions:[],reason:'Claude plugin-qualified tool names have not been qualified in this CLI; existing prompts retained.'};
   const existing = permissions.allow ?? [], restricted = [...(permissions.ask??[]),...(permissions.deny??[])];
   const added=[],kept=[];
   for (const tool of APPROVED_OURS_TOOLS) {
     if(unsafe.has(tool))throw new Error('Destructive or arbitrary-operation grant refused');
     const rule=`mcp__${server}__${tool}`;
-    if(restricted.some(r=>rulePattern(r).test(rule))){kept.push(rule);continue;}
+    if(restricted.some(r=>rulePattern(r).test(rule) || r.split('(')[0] === `mcp__${server}` || r.split('(')[0] === 'mcp__ours')){kept.push(rule);continue;}
     if(!existing.includes(rule))added.push(rule);
   }
   if(added.length)output.permissions={...permissions,allow:[...existing,...added]};
@@ -38,6 +40,5 @@ export function mergeCodexApprovals(text, { plugin = 'ours@ours-codex-marketplac
 
 export function privateLocalLabel(username, hostname, override) {
   if(override!==undefined){if(typeof override!=='string'||!override.trim()||override.length>80||/[\p{C}\p{Zl}\p{Zp}]/u.test(override))throw new Error('Local label must contain 1–80 characters without controls');return override.trim().normalize('NFC');}
-  const clean=value=>String(value??'').normalize('NFKC').replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,30);
-  return `${clean(username)||'local-user'}@${clean(hostname)||'local-host'}`;
+  return 'local-' + createHash('sha256').update(String(username??'')+'\0'+String(hostname??'')).digest('hex').slice(0,12);
 }

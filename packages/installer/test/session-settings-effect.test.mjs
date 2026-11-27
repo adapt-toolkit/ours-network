@@ -11,8 +11,8 @@ test('actual Claude settings write is scoped, private local label and repeat lea
  const f=fixture();packageCaps(f,'claude-code');mkdirSync(join(f.home,'.claude'));
  const file=join(f.home,'.claude/settings.json');writeFileSync(file,JSON.stringify({permissions:{deny:['mcp__ours__send_message']},env:{KEEP:'yes'}}));
  const first=await configureSessionSettings({...f,harness:'claude-code'});assert.equal(first.configured,true);
- const bytes=readFileSync(file,'utf8');assert.equal(JSON.parse(bytes).env.KEEP,'yes');assert.ok(!JSON.parse(bytes).permissions.allow.includes('mcp__ours__send_message'));
- const policy=JSON.parse(readFileSync(join(f.home,'.ours-mcp/session-policy.json'),'utf8'));assert.equal(policy.localLabel,'local-user@host-name');assert.equal(policy.localAutoAccept,false);
+ const bytes=readFileSync(file,'utf8');assert.equal(JSON.parse(bytes).env.KEEP,'yes');assert.ok(!(JSON.parse(bytes).permissions.allow??[]).includes('mcp__ours__send_message'));
+ const policy=JSON.parse(readFileSync(join(f.home,'.ours-mcp/session-policy.json'),'utf8'));assert.match(policy.localLabel,/^local-[a-f0-9]{12}$/);assert.ok(!policy.localLabel.includes('host-name'));assert.equal(policy.localAutoAccept,false);
  const repeat=await configureSessionSettings({...f,harness:'claude-code'});assert.equal(repeat.writes.length,0);assert.equal(readFileSync(file,'utf8'),bytes);
 });
 test('capability mismatch never writes configuration, unknown Codex keeps approval prompts',async()=>{

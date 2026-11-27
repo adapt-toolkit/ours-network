@@ -1,8 +1,8 @@
 # Exact Ours tool approvals
 
-Only current_identity, list_identities, list_local_contact_book, list_local_sessions, get_messages and send_message are eligible. They expose bounded identity/inbox/message operations, never arbitrary shell/daemon commands. File transfer, send_command, identity deletion/rebinding and keep_identity are not granted automatically. User/managed restrictions remain authoritative.
+Only current_identity, list_identities, list_local_contact_book and list_local_sessions metadata operations are eligible. Reading messages and sending messages always retain upstream prompts. File transfer, send_command, identity deletion/rebinding and keep_identity are not granted automatically. User/managed restrictions remain authoritative.
 
-Claude settings merge appends exact mcp__ours__<tool> entries, preserving unrelated fields and deny/ask rules; wildcard ask/deny blocks an added grant. It does not set permissionMode, allow Bash/node or alter authentication. Official syntax: https://code.claude.com/docs/en/permissions . The development host reports Claude2.1.330; compiled hook payloads were tested in an isolated fixture, not an installed live Claude model turn.
+Claude automatic grants are disabled pending real native qualification of plugin-qualified tool names; existing settings and prompts remain unchanged. The test-only qualified merger preserves server-wide and wildcard ask/deny rules. No permissionMode, shell allowance or authentication changes. The development host reports Claude2.1.330; compiled hook payloads were tested in an isolated fixture, not an installed live Claude model turn.
 
 Codex qualification is exact0.162.1, not a universal floor. The generated [plugins."ours@ours-codex-marketplace".mcp_servers.ours.tools.<tool>] approval_mode="approve" entries were accepted and retained by installed0.162.1 app-server initialize/config-read in private CODEX_HOME. No thread/inference was started. Runtime semantics were inspected at immutable upstream tag rust-v0.162.1, commit7a078f6bb4ce0dc2a81408b334ce52979d92c603:
 
