@@ -1,3 +1,4 @@
+import { pluginCliCompatibility } from './harness-compatibility.mjs';
 import { selectServerPorts } from './server-ports.mjs';
 import { qualifyPodman } from './podman-preflight.mjs';
 import { engineName, bindPodman, runContainer, nativeBuildCommands } from './container-engine.mjs';
@@ -242,6 +243,10 @@ function detectDrivenHarness({ name, command, label }, env) {
   const verdict = classifyHarnessProbe({
     onPath, versionOk, timedOut: probe.timedOut, shellType: (typeProbe.stdout || '').trim(),
   });
+  if (verdict.status === 'ok') {
+    const compatibility = pluginCliCompatibility(name, capture(command, ['plugin', '--help'], { timeout: 6000, env }));
+    if (!compatibility.ok) return { name, command, label, status: 'unsafe', detail: compatibility.detail };
+  }
   return { name, command, label, ...verdict };
 }
 

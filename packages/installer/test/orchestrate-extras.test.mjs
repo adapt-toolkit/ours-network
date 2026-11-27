@@ -79,8 +79,8 @@ test('a harness we cannot drive is never called, and never dead-ends either', as
   });
   const rows = await runHarnessPhase(ARGS, e, { target: AT_DEFAULT, isDefaultStateDir: true });
   assert.deepEqual(ranAsText(e), [], 'an alias is never invoked');
-  assert.match(said(e), /\/plugin marketplace add adapt-toolkit\/ours-claude-marketplace/, 'manual steps are still printed');
-  assert.match(said(e), /\/plugin install ours/);
+  assert.match(said(e), /ours-install client --integrations claude-code/, 'manual steps are still printed');
+  assert.doesNotMatch(said(e), /ours-claude-marketplace/);
   assert.equal(rows.find((r) => r.key === 'claude-code').state, 'skipped');
   assert.equal(rows.find((r) => r.key === 'codex').state, 'skipped');
 });
@@ -94,18 +94,12 @@ test('a manual host-profile harness gets a safely quoted native-launch export', 
   assert.match(said(e), /export OURS_CONFIG='\/home\/me\/private\/profile with '\"'\"'quote'\"'\"'\.json'/);
 });
 
-test('a drivable harness is installed automatically, in order', async () => {
-  const e = fx({
-    answers: [true],
-    harnesses: [{ name: 'codex', command: 'codex', label: 'Codex', status: 'ok' }],
-  });
-  const rows = await runHarnessPhase(ARGS, e, { target: AT_DEFAULT, isDefaultStateDir: true });
-  assert.deepEqual(ranAsText(e), [
-    'codex plugin marketplace add adapt-toolkit/ours-codex-marketplace',
-    'codex plugin add ours@ours-codex-marketplace',
-    'npm i -g @ours.network/codex@latest',
-  ], 'the plugin and the ours-codex launcher, in the Product requirement order');
-  assert.equal(rows[0].state, 'installed');
+test('generic Codex path refuses a moving marketplace and prints the safe installer route', async () => {
+  const e = fx({harnesses:[{name:'codex',command:'codex',label:'Codex',status:'ok'}]});
+  const rows=await runHarnessPhase(ARGS,e,{target:AT_DEFAULT,isDefaultStateDir:true});
+  assert.deepEqual(ranAsText(e),[]);
+  assert.equal(rows[0].state,'failed');
+  assert.match(said(e),/ours-install client --integrations codex/);
 });
 
 test('an exact suite writes local marketplaces and installs exact plugin versions', async () => {
@@ -127,7 +121,7 @@ test('an exact suite writes local marketplaces and installs exact plugin version
 
 test('detected safe harnesses are not gated by package-selection questions', async () => {
   const e = fx({ answers: [false], harnesses: [{ name: 'codex', command: 'codex', label: 'Codex', status: 'ok' }] });
-  const rows = await runHarnessPhase(ARGS, e, { target: AT_DEFAULT, isDefaultStateDir: true });
+  const rows = await runHarnessPhase(ARGS, e, { target: AT_DEFAULT, isDefaultStateDir: true, exactSuite: {channel:'latest',packages:{codex:'2.0.4'}} });
   assert.ok(ranAsText(e).some((line) => line.startsWith('codex plugin add')));
   assert.equal(rows[0].state, 'installed');
   assert.deepEqual(e.recorder.asked, []);
@@ -141,8 +135,8 @@ test('a harness whose install fails still gets its manual path, and the run cont
   });
   const rows = await runHarnessPhase(ARGS, e, { target: AT_DEFAULT, isDefaultStateDir: true });
   assert.equal(rows[0].state, 'failed');
-  assert.match(said(e), /can still be installed by hand/);
-  assert.match(said(e), /\/plugin install ours/);
+  assert.match(said(e), /verified local marketplace/);
+  assert.doesNotMatch(said(e), /ours-claude-marketplace/);
 });
 
 test('a non-default state directory: Hermes carries the whole pair, Claude and Codex promise nothing', async () => {
@@ -164,11 +158,11 @@ test('a non-default state directory: Hermes carries the whole pair, Claude and C
   assert.ok(isWholeDaemonEnv(hermesEnv), 'Hermes gets a WHOLE pair or none of one');
   assert.equal(hermesEnv.OURS_CONFIG, join(TG, 'config.json'));
   assert.equal(hermesEnv.OURS_PORT, '3051');
-  assert.equal(envFor(e, 'claude plugin install'), null, 'Claude gets no environment, because it cannot carry one');
+  assert.equal(envFor(e, 'claude plugin install'), undefined, 'Claude gets no environment, because it cannot carry one');
 
   const out = said(e);
-  assert.match(out, /Claude Code's registration cannot carry a value/, 'says so plainly');
-  assert.match(out, new RegExp(`export OURS_CONFIG=${join(TG, 'config.json')}`), 'and gives the exact line');
+  assert.match(out, /verified local marketplace/, 'requires the installer local acquisition');
+  assert.doesNotMatch(out, /ours-claude-marketplace/);
   assert.doesNotMatch(out, /Hermes.*cannot carry a value/, 'Hermes is not disclaimed — for Hermes the pair is real');
 });
 
@@ -548,4 +542,22 @@ test('deferring Fleet agents installs CLI without init, prompts or config writes
  },{target:AT_DEFAULT,isDefaultStateDir:true});
  assert.equal(row.state,'installed');assert.equal(calls.length,1);assert.equal(calls[0][0],'npm');
  assert(!calls.some(call=>call[1].includes('init')));
+});
+
+test('plugin-only acquired packages register local Claude and Codex without global CLI installs', async () => {
+  const e = fx({harnesses: [
+    {name:'claude-code',command:'claude',label:'Claude Code',status:'ok'},
+    {name:'codex',command:'codex',label:'Codex',status:'ok'},
+  ]});
+  e.prepareClientMarketplace = async name => `/private cache/marketplaces/${name}`;
+  const exactSuite = {channel:'latest',packages:{'claude-code':'2.0.4',codex:'2.0.4'},localPackages:{'claude-code':'/acquired/claude-code',codex:'/acquired/codex'}};
+  const rows = await runHarnessPhase(ARGS,e,{target:{mode:'host-profile',managed:true,configPath:'/private profile/profile.json'},isDefaultStateDir:false,exactSuite});
+  assert.deepEqual(ranAsText(e),[
+    'claude plugin marketplace add /private cache/marketplaces/claude-code',
+    'claude plugin install ours@ours.network',
+    'codex plugin marketplace add /private cache/marketplaces/codex',
+    'codex plugin add ours@ours-codex-marketplace',
+  ]);
+  assert.ok(rows.every(row=>row.state==='installed'));
+  assert.ok(!ranAsText(e).some(command=>command.startsWith('npm i -g')));
 });

@@ -85,9 +85,9 @@ test('a harness we cannot drive NEVER dead-ends — it always gets manual steps'
     }
   }
   assert.ok(by(planHarnessPlugins({ harnesses: all('alias'), stateDir: OURS, isDefaultStateDir: true }), 'claude-code')
-    .manual.some((s) => s.includes(CLAUDE_MARKET)));
+    .manual.some((s) => s === 'ours-install client --integrations claude-code'));
   assert.ok(by(planHarnessPlugins({ harnesses: all('alias'), stateDir: OURS, isDefaultStateDir: true }), 'codex')
-    .manual.some((s) => s.includes(CODEX_MARKET)));
+    .manual.some((s) => s === 'ours-install client --integrations codex'));
 });
 
 test('an absent harness is skipped, and a declined one is offered again on re-run', () => {
