@@ -1,6 +1,6 @@
 # Exact Ours tool approvals
 
-Only current_identity, list_identities, list_local_contact_book and list_local_sessions metadata operations are eligible. Reading messages and sending messages always retain upstream prompts. File transfer, send_command, identity deletion/rebinding and keep_identity are not granted automatically. User/managed restrictions remain authoritative.
+Only current_identity, list_identities, list_local_contact_book and list_local_sessions metadata operations are eligible. The installer leaves reading/sending message approval settings unchanged. File transfer, send_command, identity deletion/rebinding and keep_identity are not granted automatically. User/managed restrictions remain authoritative.
 
 Claude automatic grants are disabled pending real native qualification of plugin-qualified tool names; existing settings and prompts remain unchanged. The test-only qualified merger preserves server-wide and wildcard ask/deny rules. No permissionMode, shell allowance or authentication changes. The development host reports Claude2.1.330; compiled hook payloads were tested in an isolated fixture, not an installed live Claude model turn.
 
