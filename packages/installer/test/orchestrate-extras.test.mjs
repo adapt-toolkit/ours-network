@@ -561,3 +561,19 @@ test('plugin-only acquired packages register local Claude and Codex without glob
   assert.ok(rows.every(row=>row.state==='installed'));
   assert.ok(!ranAsText(e).some(command=>command.startsWith('npm i -g')));
 });
+
+test('custom qualified client paths drive exact local registration and scoped settings',async()=>{
+ const command='/custom path/codex-cli';const e=fx({harnesses:[{name:'codex',command,label:'Codex',status:'ok'}]});
+ e.prepareClientMarketplace=async()=>'/cache/codex';const settings=[];
+ e.configureStandaloneSessions=async options=>{settings.push(options);return {configured:true,notes:['exact tools only']};};
+ const rows=await runHarnessPhase(ARGS,e,{target:{mode:'host-profile',managed:true,configPath:'/profile.json'},isDefaultStateDir:false,exactSuite:{channel:'latest',packages:{codex:'next'},localPackages:{codex:'/package/codex'}}});
+ assert.ok(e.recorder.ran.every(step=>step[0]===command));assert.equal(settings.length,1);assert.equal(settings[0].command,command);assert.equal(settings[0].packagePath,'/package/codex');assert.equal(rows[0].state,'installed');
+});
+
+test('explicit disabled Ours plugin policy is retained before any marketplace/settings mutation',async()=>{
+ const e=fx({harnesses:[{name:'codex',command:'codex',status:'ok'}]});
+ e.standaloneIntegrationRestriction=()=> 'Ours explicitly disabled';
+ e.prepareClientMarketplace=()=>assert.fail('disabled plugin must not be re-enabled');
+ const rows=await runHarnessPhase(ARGS,e,{target:{mode:'host-profile',managed:true,configPath:'/profile.json'},isDefaultStateDir:false,exactSuite:{channel:'latest',packages:{codex:'next'},localPackages:{codex:'/package/codex'}}});
+ assert.equal(rows[0].state,'skipped');assert.equal(e.recorder.ran.length,0);
+});

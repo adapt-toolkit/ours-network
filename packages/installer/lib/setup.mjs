@@ -160,7 +160,11 @@ export async function executeSetupPlan(plan, effects, { server = runServerComman
   else if (plan.disableFleetAgentsSetup && plan.integrations?.includes('fleet')) effects.out(`\n  ${c.bold('Next:')} return to the Ours App in your browser and continue to connect this workspace. Agents and models are configured there.\n`);
   if (plan.integrations?.includes('fleet') && !plan.disableFleetAgentsSetup) effects.out(info('Fleet is configured but stopped. Review its settings, then run ours-fleet doctor, ours-fleet config and ours-fleet up.'));
   if (isPluginOnly(plan.product) && plan.scope === 'all') {
-    effects.out(info('Collaboration tools are ready. Restart Claude Code and start a new Codex session so they load the Ours tools; then ask your agent to create its Ours identity.'));
+    const automatic = (plan.integrations ?? []).length > 0 && plan.integrations.every(name => effects.standaloneSessionSetup?.get(name)?.configured);
+    if (automatic) {
+      const label = effects.standaloneSessionSetup.get(plan.integrations[0]).localLabel;
+      effects.out(info(`Local label: ${label}. Configured clients: ${plan.integrations.join(', ')}. Open two new sessions of any configured client; each receives a distinct temporary identity. Ask to list local sessions, choose the exact CID/handle, and keep the existing Ours Monitor workflow.`));
+    } else effects.out(info('Collaboration tools are configured. Restart the selected agent app to load Ours. Automatic identity setup was not qualified or is disabled; existing user settings and prompts are retained.'));
     effects.out(info(KEEPS_YOUR_SETUP));
   }
   if (plan.customHarness) {
