@@ -139,3 +139,15 @@ test('an update moves the Codex plugin source from an earlier download folder, a
   assert.ok(!foreignRuns.some(line => line.startsWith('codex plugin marketplace')), foreignRuns.join('\n'));
   assert.match(foreign.effects.recorder.out.join('\n'), /did not create\. It was left unchanged/);
 });
+test('exact printed resume argv selects a managed plugin-only profile for either integration',async()=>{
+ for(const integration of ['claude-code','codex']) {
+  const f=fixture();
+  f.effects.detectHarnesses=()=>[{name:integration,command:integration==='codex'?'codex':'claude',status:'ok'}];
+  f.effects.acquireClientPackages=async()=>({localPackages:{[integration]:`/exact/${integration}`},packages:{}});
+  const options=parseSetupArgs(['client','--config',f.path,'--integrations',integration],{home:'/home/me'});
+  assert.equal(options.config,f.path);
+  assert.equal(await runClientCommand(options,f.effects),0,f.effects.recorder.out.join('\n'));
+  assert.ok(f.effects.recorder.ran.some(args=>args[1]==='plugin' && args[2]==='marketplace'));
+  assert.ok(!f.effects.recorder.ran.some(args=>args.includes('adapt-toolkit/ours-codex-marketplace') || args.includes('adapt-toolkit/ours-claude-marketplace')));
+ }
+});

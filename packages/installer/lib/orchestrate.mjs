@@ -928,6 +928,12 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
       continue;
     }
 
+    if (plan.requiresExactMarketplace && !exactSuite) {
+      effects.out(warn(`${plan.label} requires a verified local marketplace; resume with ours-install client --config ~/.ours-client/profile.json --integrations ${plan.name}.`));
+      rows.push({ ...row, state: 'failed', note: 'verified local marketplace required', manual: true });
+      continue;
+    }
+
     let steps = plan.steps;
     let manual = plan.manual;
     if (exactSuite?.localPackages?.[plan.name]) {
