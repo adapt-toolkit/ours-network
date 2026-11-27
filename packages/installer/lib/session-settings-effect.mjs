@@ -3,7 +3,7 @@ import {join,dirname,resolve} from 'node:path';
 import {atomicWriteConfig,snapshotConfig,restoreConfig} from './config.mjs';
 import {planSessionSettings} from './session-setup.mjs';
 const read=(path,fallback)=>{try{const st=lstatSync(path);if(!st.isFile()||st.isSymbolicLink())throw new Error(`Refusing non-regular settings file: ${path}`);return readFileSync(path,'utf8');}catch(error){if(error.code==='ENOENT')return fallback;throw error;}};
-const json=(path,fallback)=>{const text=read(path,null);return text===null?fallback:JSON.parse(text);};
+const json=(path,fallback)=>{const text=read(path,null);if(text===null)return fallback;try{return JSON.parse(text);}catch{throw new Error('Existing settings JSON is invalid; no settings were changed.');}};
 /** Only called for an explicitly selected, successfully installed native integration. */
 export async function configureSessionSettings({home,env,username,hostname,harness,packagePath,profile,codexApprovalQualified=false,fetchImpl=fetch}){
  const capabilities=json(join(packagePath,'integration-capabilities.json'),null);

@@ -26,3 +26,9 @@ test('qualified Codex appends only exact tool tables, preserves restrictions and
  const g=fixture();packageCaps(g,'claude-code');mkdirSync(join(g.home,'.claude'));const target=join(g.home,'unrelated.json');writeFileSync(target,'{"kept":true}');symlinkSync(target,join(g.home,'.claude/settings.json'));
  await assert.rejects(()=>configureSessionSettings({...g,harness:'claude-code'}),/non-regular/);assert.equal(readFileSync(target,'utf8'),'{"kept":true}');assert.ok(!existsSync(join(g.home,'.ours-mcp')));
 });
+
+test('malformed existing JSON never echoes authentication/settings contents or writes lifecycle policy',async()=>{
+ const f=fixture();packageCaps(f,'claude-code');mkdirSync(join(f.home,'.claude'));const path=join(f.home,'.claude/settings.json');writeFileSync(path,'{"secret":"synthetic-private-value", invalid}');
+ await assert.rejects(()=>configureSessionSettings({...f,harness:'claude-code'}),error=>/Existing settings JSON is invalid/.test(error.message)&&!error.message.includes('synthetic-private-value'));
+ assert.ok(!existsSync(join(f.home,'.ours-mcp')));assert.equal(readFileSync(path,'utf8'),'{"secret":"synthetic-private-value", invalid}');
+});

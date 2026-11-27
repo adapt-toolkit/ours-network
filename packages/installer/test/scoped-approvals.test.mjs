@@ -34,3 +34,8 @@ test('capability gate precedes all settings and user labels, existing lifecycle 
  const repeat=planSessionSettings({...base,sessionPolicy:policy,claudeSettings:first.writes[1].value});assert.equal(repeat.configured,false);assert.equal(repeat.writes.length,0);assert.equal(repeat.localLabel,'Existing private label');
  assert.throws(()=>planSessionSettings({...base,sessionPolicy:{version:99}}));
 });
+
+test('alternative TOML quoting and explicit MCP tool restrictions retain original prompts',()=>{
+ const input="[plugins.'ours@ours-codex-marketplace'.mcp_servers.ours.tools.send_message]\nenabled = false\n";
+ assert.equal(mergeCodexApprovals(input,{supported:true}).text,input);
+});

@@ -28,7 +28,7 @@ export function mergeCodexApprovals(text, { plugin = 'ours@ours-codex-marketplac
   if(text.includes(marker))return {text,added:[],reason:'Existing Ours approval block retained.'};
   // Explicit restrictions and inline/multiline parents require human-owned policy, not an installer rewrite.
   const active=text.split('\n').map(line=>line.replace(/\s+#.*$/,'')).filter(line=>!/^\s*#/.test(line)).join('\n');
-  if(/approval_policy\s*=|default_tools_approval_mode\s*=|approval_mode\s*=|enabled_tools\s*=|disabled_tools\s*=|^\s*(?:plugins|mcp_servers)\s*=|"""|'''/m.test(active))return {text,added:[],reason:'Explicit or ambiguous existing tool policy retained; no approval rules changed.'};
+  if(/mcp_servers|approval_policy\s*=|default_tools_approval_mode\s*=|approval_mode\s*=|enabled_tools\s*=|disabled_tools\s*=|^\s*(?:plugins|mcp_servers)\s*=|"""|'''/m.test(active))return {text,added:[],reason:'Explicit or ambiguous existing tool policy retained; no approval rules changed.'};
   if(/^\s*\[\[/.test(active))return {text,added:[],reason:'Complex existing TOML retained; no approval rules changed.'};
   const prefix=`plugins."${plugin}".mcp_servers.ours.tools.`;
   if(active.includes(prefix))return {text,added:[],reason:'Existing per-tool settings retained.'};
