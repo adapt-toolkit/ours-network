@@ -79,7 +79,7 @@ test('a harness we cannot drive is never called, and never dead-ends either', as
   });
   const rows = await runHarnessPhase(ARGS, e, { target: AT_DEFAULT, isDefaultStateDir: true });
   assert.deepEqual(ranAsText(e), [], 'an alias is never invoked');
-  assert.match(said(e), /ours-install client --integrations claude-code/, 'manual steps are still printed');
+  assert.match(said(e), /ours-install client .*--integrations claude-code/, 'manual steps are still printed');
   assert.doesNotMatch(said(e), /ours-claude-marketplace/);
   assert.equal(rows.find((r) => r.key === 'claude-code').state, 'skipped');
   assert.equal(rows.find((r) => r.key === 'codex').state, 'skipped');
@@ -99,7 +99,7 @@ test('generic Codex path refuses a moving marketplace and prints the safe instal
   const rows=await runHarnessPhase(ARGS,e,{target:AT_DEFAULT,isDefaultStateDir:true});
   assert.deepEqual(ranAsText(e),[]);
   assert.equal(rows[0].state,'failed');
-  assert.match(said(e),/ours-install client --integrations codex/);
+  assert.match(said(e),/ours-install client .*--integrations codex/);
 });
 
 test('an exact suite writes local marketplaces and installs exact plugin versions', async () => {

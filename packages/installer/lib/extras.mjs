@@ -73,10 +73,10 @@ export const HARNESS_ENV_SUPPORT = {
 
 const manualSteps = {
   'claude-code': (channel) => [
-    'ours-install client --integrations claude-code',
+    'ours-install client --config ~/.ours-client/profile.json --integrations claude-code',
   ],
   codex: (channel) => [
-    'ours-install client --integrations codex',
+    'ours-install client --config ~/.ours-client/profile.json --integrations codex',
   ],
   hermes: (channel) => [
     `npm i -g ${pkgSpec('hermes', channel)}`,

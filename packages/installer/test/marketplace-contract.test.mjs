@@ -7,7 +7,7 @@ test('generic Claude guidance and README require installer local acquisition', (
   assert.match(readme,/Do not use the public GitHub marketplace/);
   for(const status of ['ok','alias','unsafe']) {
     const [plan]=planHarnessPlugins({harnesses:[{name:'claude-code',status}]});
-    assert.ok(plan.manual.includes('ours-install client --integrations claude-code'));
+    assert.ok(plan.manual.includes('ours-install client --config ~/.ours-client/profile.json --integrations claude-code'));
     assert.ok(!JSON.stringify(plan).includes('ours-claude-marketplace'));
     if(status==='ok') {assert.deepEqual(plan.steps,[]);assert.equal(plan.requiresExactMarketplace,true);}
   }
