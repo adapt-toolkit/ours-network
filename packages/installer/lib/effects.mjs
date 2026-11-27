@@ -1,3 +1,5 @@
+import { configureSessionSettings } from './session-settings-effect.mjs';
+import { pluginCliCompatibility } from './harness-compatibility.mjs';
 import { selectServerPorts } from './server-ports.mjs';
 import { qualifyPodman } from './podman-preflight.mjs';
 import { engineName, bindPodman, runContainer, nativeBuildCommands } from './container-engine.mjs';
@@ -17,8 +19,8 @@ import { engineName, bindPodman, runContainer, nativeBuildCommands } from './con
 import { publishClientCli } from './client-cli.mjs';
 import { commandFailure } from './diagnostics.mjs';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, userInfo, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
+import { accessSync, chmodSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, userInfo, hostname, platform as osPlatform, release as osRelease, arch as osArch } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
@@ -184,16 +186,16 @@ function resolvePackageVersion(pkg, channel, npmBin = 'npm') {
   }
 }
 
-function codexMarketplace() {
-  const probe = capture('codex', ['plugin', 'marketplace', 'list', '--json'], { timeout: 6_000 });
+function codexMarketplace(command = 'codex', env = process.env) {
+  const probe = capture(command, ['plugin', 'marketplace', 'list', '--json'], { timeout: 6_000, env });
   if (!probe.ok) return null;
   try {
     return JSON.parse(probe.stdout)?.marketplaces?.find((m) => m?.name === 'ours-codex-marketplace') ?? null;
   } catch { return null; }
 }
 
-function hasClaudePlugin() {
-  const probe = capture('claude', ['plugin', 'list', '--json'], { timeout: 6_000 });
+function hasClaudePlugin(command = 'claude', env = process.env) {
+  const probe = capture(command, ['plugin', 'list', '--json'], { timeout: 6_000, env });
   if (!probe.ok) return false;
   try { return JSON.parse(probe.stdout)?.some((p) => p?.id === 'ours@ours.network') ?? false; }
   catch { return false; }
@@ -234,14 +236,21 @@ export const DRIVEN_HARNESSES = [
  * timeout, and the shell `type` lookup is timeout-guarded too.
  */
 function detectDrivenHarness({ name, command, label }, env) {
-  const onPath = capture('bash', ['-c', `command -v ${command}`], { env }).ok;
+  const explicit = name === 'claude-code' ? env.CLAUDE_CODE_EXECUTABLE : name === 'codex' ? env.CODEX_PATH : undefined;
+  if (explicit?.trim()) command = resolve(explicit);
+  const executable = path => { try { accessSync(path, constants.X_OK); return statSync(path).isFile(); } catch { return false; } };
+  const onPath = command.includes('/') ? executable(command) : (env.PATH || '').split(':').some(dir => executable(join(dir, command)));
   const probe = capture(command, ['--version'], { timeout: 6000, env });
   const versionOk = probe.ok && /\d+\.\d+/.test(probe.stdout);
   const shell = env.SHELL || '/bin/bash';
-  const typeProbe = capture(shell, ['-ic', `type -t ${command} 2>/dev/null`], { timeout: 4000, env });
+  const typeProbe = explicit?.trim() ? { stdout: 'file' } : capture(shell, ['-ic', `type -t ${command} 2>/dev/null`], { timeout: 4000, env });
   const verdict = classifyHarnessProbe({
     onPath, versionOk, timedOut: probe.timedOut, shellType: (typeProbe.stdout || '').trim(),
   });
+  if (verdict.status === 'ok') {
+    const compatibility = pluginCliCompatibility(name, capture(command, ['plugin', '--help'], { timeout: 6000, env }));
+    if (!compatibility.ok) return { name, command, label, status: 'unsafe', detail: compatibility.detail };
+  }
   return { name, command, label, ...verdict };
 }
 
@@ -432,6 +441,39 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
       renameSync(temp, path);
     },
     username: () => { try { return userInfo().username || 'me'; } catch { return 'me'; } },
+    standaloneIntegrationRestriction(harness) {
+      if (harness === 'claude-code') {
+        const path = join(resolve(env.CLAUDE_CONFIG_DIR || join(home,'.claude')),'settings.json');
+        if (!existsSync(path)) return null;
+        const value = readJsonFile(path);
+        if (!value) return 'Existing Claude settings are unreadable; they were not changed.';
+        if (value.enabledPlugins?.['ours@ours.network'] === false) return 'Ours is explicitly disabled in Claude settings; that choice was retained.';
+      } else if (harness === 'codex') {
+        const path = join(resolve(env.CODEX_HOME || join(home,'.codex')),'config.toml');
+        if (!existsSync(path)) return null;
+        const text = readTextFile(path);
+        if (text === null) return 'Existing Codex settings are unreadable; they were not changed.';
+        let ours = false;
+        for (const line of text.split('\n')) {
+          const table = line.match(/^\s*\[([^\]]+)\]/);
+          if (table) ours = ['plugins."ours@ours-codex-marketplace"', "plugins.'ours@ours-codex-marketplace'"].includes(table[1].trim());
+          else if (ours && /^\s*enabled\s*=\s*false\b/.test(line)) return 'Ours is explicitly disabled in Codex settings; that choice was retained.';
+        }
+        if (/^\s*plugins\s*=/m.test(text)) return 'Existing inline Codex plugin policy retained; use the client UI to enable Ours explicitly.';
+      }
+      return null;
+    },
+    standaloneSessionSetup: new Map(),
+    async configureStandaloneSessions({ harness, packagePath, configPath, command }) {
+      const profile = readHostProfileFile(configPath);
+      if (!profile) throw new Error('Selected native client profile is unavailable; no session settings changed');
+      const version = capture(command, ['--version'], { timeout: 6000, env });
+      const result = await configureSessionSettings({ home, env, username: (()=>{try{return userInfo().username;}catch{return 'local-user';}})(), hostname: hostname(), harness, packagePath, profile,
+        // Qualified against exact installed parser and immutable upstream source; unknown releases retain prompts.
+        codexApprovalQualified: version.ok && /^codex-cli 0\.162\.1(?:\s|$)/.test(version.stdout.trim()) });
+      effects.standaloneSessionSetup.set(harness, result);
+      return result;
+    },
     detectHarnesses: () => [
       ...DRIVEN_HARNESSES.map((h) => detectDrivenHarness(h, env)),
       detectHermesHarness(env, home),
@@ -506,8 +548,8 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
     installedVersion: (pkg) => installedVersionOf(pkg, npmBin),
     packageDependencies: (spec) => packageDependenciesOf(spec, npmBin),
     resolvePackageVersion: (pkg, channel) => resolvePackageVersion(pkg, channel, npmBin),
-    codexMarketplace,
-    hasClaudePlugin,
+    codexMarketplace: command => codexMarketplace(command, env),
+    hasClaudePlugin: command => hasClaudePlugin(command, env),
     out: out ?? ((line) => process.stdout.write(`${line}\n`)),
     // Never called when assumeYes: the orchestrator takes the default itself.
     select: async (question, choices, def) => selectOnTty(write, ttyFd, question, choices, def),
@@ -518,7 +560,7 @@ export function realEffects({ write, ttyFd, env = process.env, home = homedir(),
   return Object.assign(effects, networkEffects(effects));
 }
 
-export const __testables = { probePort, portState, portTakenSync, readJsonFile, readTextFile, readHostProfileFile, verifyHostProfile, installedVersionOf, packageDependenciesOf, resolvePackageVersion, codexMarketplace, hasClaudePlugin, knownStateDirsIn };
+export const __testables = { detectDrivenHarness, probePort, portState, portTakenSync, readJsonFile, readTextFile, readHostProfileFile, verifyHostProfile, installedVersionOf, packageDependenciesOf, resolvePackageVersion, codexMarketplace, hasClaudePlugin, knownStateDirsIn };
 
 // -----------------------------------------------------------------------------
 // THE PAIR

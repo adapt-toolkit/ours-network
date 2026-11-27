@@ -928,15 +928,24 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
       continue;
     }
 
+    if (plan.requiresExactMarketplace && !exactSuite) {
+      effects.out(warn(`${plan.label} requires a verified local marketplace; resume with ours-install client --config ~/.ours-client/profile.json --integrations ${plan.name}.`));
+      rows.push({ ...row, state: 'failed', note: 'verified local marketplace required', manual: true });
+      continue;
+    }
+
     let steps = plan.steps;
     let manual = plan.manual;
     if (exactSuite?.localPackages?.[plan.name]) {
+      const restricted = effects.standaloneIntegrationRestriction?.(plan.name);
+      if (restricted) { effects.out(warn(restricted)); rows.push({ ...row, state: 'skipped', note: restricted }); continue; }
+      const selectedCommand = detected.find(h => h.name === plan.name)?.command || (plan.name === 'codex' ? 'codex' : 'claude');
       const registration = await effects.prepareClientMarketplace(plan.name, exactSuite.localPackages[plan.name]);
       // Codex refuses to re-add a marketplace name from a new folder. An update
       // moves it to a new download folder: replace only a registration that
       // points into an earlier download folder of this installer.
       if (plan.name === 'codex') {
-        const current = await effects.codexMarketplace?.();
+        const current = await effects.codexMarketplace?.(detected.find(h => h.name === plan.name)?.command);
         const source = current?.marketplaceSource;
         if (current && !(source?.sourceType === 'local' && source?.source === registration)) {
           const earlier = source?.sourceType === 'local' && typeof source.source === 'string'
@@ -948,7 +957,7 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
             rows.push({ ...row, state: 'failed', failedCommand: ['codex', 'plugin', 'marketplace', 'add', registration], failedStep: `Register ${plan.label} marketplace`, detail: `a different ours-codex-marketplace source (${where}) is registered` });
             continue;
           }
-          const moved = await attempt(effects, false, 'codex plugin marketplace remove ours-codex-marketplace (earlier download folder)', () => effects.run('codex', ['plugin', 'marketplace', 'remove', 'ours-codex-marketplace'], { env: profileEnv(target) }), clientDiagnostic);
+          const moved = await attempt(effects, false, 'codex plugin marketplace remove ours-codex-marketplace (earlier download folder)', () => effects.run(selectedCommand, ['plugin', 'marketplace', 'remove', 'ours-codex-marketplace'], { env: profileEnv(target) }), clientDiagnostic);
           if (!moved.ok) {
             rows.push({ ...row, state: 'failed', failedCommand: ['codex', 'plugin', 'marketplace', 'remove', 'ours-codex-marketplace'], failedStep: `Move ${plan.label} marketplace`, detail: clientDiagnostic(moved.error) });
             continue;
@@ -956,14 +965,23 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
         }
       }
       const steps = plan.name === 'codex'
-        ? [['codex', 'plugin', 'marketplace', 'add', registration], ['codex', 'plugin', 'add', 'ours@ours-codex-marketplace']]
-        : [['claude', 'plugin', 'marketplace', 'add', registration], ['claude', 'plugin', await effects.hasClaudePlugin() ? 'update' : 'install', 'ours@ours.network']];
+        ? [[selectedCommand, 'plugin', 'marketplace', 'add', registration], [selectedCommand, 'plugin', 'add', 'ours@ours-codex-marketplace']]
+        : [[selectedCommand, 'plugin', 'marketplace', 'add', registration], [selectedCommand, 'plugin', await effects.hasClaudePlugin(selectedCommand) ? 'update' : 'install', 'ours@ours.network']];
       let failure = null;
       for (const step of steps) {
         const outcome = await attempt(effects, false, step.join(' '), () => effects.run(step[0], step.slice(1), { env: profileEnv(target) }), clientDiagnostic);
         if (!outcome.ok) {
           failure = { failedCommand: step, failedStep: step[2] === 'marketplace' ? `Register ${plan.label} marketplace` : `Install ${plan.label} plugin`, detail: clientDiagnostic(outcome.error) };
           break;
+        }
+      }
+      if (!failure && effects.configureStandaloneSessions) {
+        const setup = await attempt(effects, false, 'Configure exact Ours session lifecycle and MCP tool grants',
+          () => effects.configureStandaloneSessions({ harness: plan.name, packagePath: exactSuite.localPackages[plan.name], configPath: target.configPath, command: detected.find(h => h.name === plan.name)?.command || (plan.name === 'codex' ? 'codex' : 'claude') }), clientDiagnostic);
+        if (!setup.ok) failure = { failedStep: 'Standalone session settings', detail: clientDiagnostic(setup.error) };
+        else {
+          if (setup.reason) effects.out(info(setup.reason));
+          for (const note of setup.notes ?? []) effects.out(info(note));
         }
       }
       effects.out(info(target.managed ? `Native ${plan.name} launches use the saved client default.` : `Native ${plan.name} launches must retain OURS_CONFIG=${target.configPath}.`));
@@ -1262,6 +1280,13 @@ export async function runFleetPhase(args, effects, { target, isDefaultStateDir }
   // settings, its wizard keeps the user's terminal while this invocation carries
   // the selected daemon; --settings makes the same call strictly noninteractive.
   const initEnv = target.mode === 'host-profile' ? profileEnv(target) : daemonEnv(target.stateDir, target.port);
+  if(args.fleetSettingsPath && effects.readJson(args.fleetSettingsPath)?.runtimePolicy!==undefined) {
+    const capabilities=await effects.fleetCapabilities(args.acquiredFleet || plan.init[0],initEnv);
+    if(!capabilities.includes('init.runtime-policy-v1')) {
+      effects.out(warn('Selected Fleet does not support explicit runtime policy (init.runtime-policy-v1); no Fleet configuration was initialized. Use a qualified Fleet release or deliberately remove runtimePolicy to retain legacy behavior.'));
+      return {key:'fleet',label:plan.label,state:'failed',note:'runtime policy capability unavailable'};
+    }
+  }
   const initRunner = args.fleetSettingsPath ? effects.run : effects.runInteractive;
   const init = install.ok
     ? await attempt(effects, args.dryRun, `${plan.init.join(' ')} (${args.fleetSettingsPath ? 'prepared' : 'interactive'} Fleet configuration)`, async () => {

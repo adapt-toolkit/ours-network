@@ -854,3 +854,11 @@ The published no-policy core delivery is a verified recovery omission that
 reproduces the reported symptom. The original incident cause remains unconfirmed:
 actual host Engine availability, installed policies and pre-reboot stopped state
 still require Owner confirmation.
+
+### Agent executable compatibility (next installer release)
+
+Ours integration package versions identify Ours code, not upstream Claude Code or Codex. The installer uses the installed real executable on PATH; it never installs or upgrades either upstream CLI. Before registration it checks `plugin --help` under a timeout for the marketplace and install/add commands it needs. A missing command, failed capability check or older CLI without those features gets an actionable prerequisite and resume command. This feature policy does not promise universal future compatibility or change your PATH, authentication or existing model choices.
+
+The verified local marketplace prepared by the installer is the supported registration source for both agents. The public GitHub marketplaces select older packages. Generic fallback paths refuse automatic registration rather than selecting those moving sources. Release assets remain pinned to published package versions and integrity values; shipping a new integration requires a coordinated manifest refresh after its approved publication.
+
+Agent-run standalone setup using existing flags and checked defaults: [agent quickstart](docs/standalone-agent-quickstart.md). The guide labels the coordinated release target and capability limits explicitly.
