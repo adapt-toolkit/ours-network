@@ -19,20 +19,25 @@ function uniqueSelection(value, choices, label) {
 }
 
 export function validateFleetSettings(value) {
-  exactKeys(value, ['subscriptions', 'assignmentStrategy', 'models', 'reasoning'], 'answers');
+  if(!value || typeof value!=='object')fail('answers must be an object');
+  const legacy=Object.hasOwn(value,'reasoning');
+  exactKeys(value, ['subscriptions','assignmentStrategy','models',...(legacy?['reasoning']:[]),...(Object.hasOwn(value,'runtimePolicy')?['runtimePolicy']:[])], 'answers');
+  if(value.runtimePolicy!==undefined && !['installed-v1','bundled','legacy'].includes(value.runtimePolicy))fail('runtimePolicy must be installed-v1, bundled or legacy');
   uniqueSelection(value.subscriptions, ['codex', 'claude'], 'subscriptions');
   if (!['one-model', 'per-job'].includes(value.assignmentStrategy)) fail('assignmentStrategy must be one-model or per-job');
-  if (typeof value.reasoning !== 'string' || !Object.hasOwn(REASONING, value.reasoning)) fail('reasoning must be quick, balanced, or thorough');
+  if (legacy && (typeof value.reasoning !== 'string' || !Object.hasOwn(REASONING, value.reasoning))) fail('reasoning must be quick, balanced, or thorough');
   exactKeys(value.models, WORKS, 'models');
   const tuples = new Set();
   for (const work of WORKS) {
     const model = value.models[work];
-    exactKeys(model, ['harness', 'session', 'model', 'efforts'], `${work} model`);
+    exactKeys(model, ['harness', 'session', 'model',legacy?'efforts':'effort'], `${work} model`);
     if (!['codex', 'claude-code'].includes(model.harness)) fail(`${work} harness must be codex or claude-code`);
     if (model.session !== 'acp') fail(`${work} session must be acp`);
     if (typeof model.model !== 'string' || !model.model.trim()) fail(`${work} model must be a nonempty string`);
-    uniqueSelection(model.efforts, EFFORTS, `${work} efforts`);
-    if (!model.efforts.includes(REASONING[value.reasoning])) fail(`${work} efforts do not support the selected reasoning`);
+    if(legacy){
+      uniqueSelection(model.efforts,EFFORTS,`${work} efforts`);
+      if(!model.efforts.includes(REASONING[value.reasoning]))fail(`${work} efforts do not support the selected reasoning`);
+    } else if(model.effort!==null && !EFFORTS.includes(model.effort))fail(`${work} effort is unsupported`);
     if (!value.subscriptions.includes(model.harness === 'codex' ? 'codex' : 'claude'))
       fail(`${work} uses a harness outside the selected subscriptions`);
     tuples.add(JSON.stringify([model.harness, model.session, model.model]));

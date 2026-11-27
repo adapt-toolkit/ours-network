@@ -928,6 +928,12 @@ export async function runHarnessPhase(args, effects, { target, isDefaultStateDir
       continue;
     }
 
+    if (plan.requiresExactMarketplace && !exactSuite) {
+      effects.out(warn(`${plan.label} requires a verified local marketplace; resume with ours-install client --config ~/.ours-client/profile.json --integrations ${plan.name}.`));
+      rows.push({ ...row, state: 'failed', note: 'verified local marketplace required', manual: true });
+      continue;
+    }
+
     let steps = plan.steps;
     let manual = plan.manual;
     if (exactSuite?.localPackages?.[plan.name]) {
@@ -1262,6 +1268,13 @@ export async function runFleetPhase(args, effects, { target, isDefaultStateDir }
   // settings, its wizard keeps the user's terminal while this invocation carries
   // the selected daemon; --settings makes the same call strictly noninteractive.
   const initEnv = target.mode === 'host-profile' ? profileEnv(target) : daemonEnv(target.stateDir, target.port);
+  if(args.fleetSettingsPath && effects.readJson(args.fleetSettingsPath)?.runtimePolicy!==undefined) {
+    const capabilities=await effects.fleetCapabilities(args.acquiredFleet || plan.init[0],initEnv);
+    if(!capabilities.includes('init.runtime-policy-v1')) {
+      effects.out(warn('Selected Fleet does not support explicit runtime policy (init.runtime-policy-v1); no Fleet configuration was initialized. Use a qualified Fleet release or deliberately remove runtimePolicy to retain legacy behavior.'));
+      return {key:'fleet',label:plan.label,state:'failed',note:'runtime policy capability unavailable'};
+    }
+  }
   const initRunner = args.fleetSettingsPath ? effects.run : effects.runInteractive;
   const init = install.ok
     ? await attempt(effects, args.dryRun, `${plan.init.join(' ')} (${args.fleetSettingsPath ? 'prepared' : 'interactive'} Fleet configuration)`, async () => {

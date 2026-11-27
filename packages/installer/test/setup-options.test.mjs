@@ -245,3 +245,11 @@ for(const key of ['name','surname'])for(const fresh of [false,true])test(`${key}
  assert.equal(options[key],'Supplied');assert.equal(options.localUsername,'Taylor'.toLowerCase());assert(options.name);assert(options.surname);
  if(fresh)assert.equal(options.identityName,`taylor@${defaultHostname()}`);
 });
+test('printed integration resume argv uses the existing managed profile with the managed profile path',()=>{
+ for(const harness of ['claude-code','codex']) {
+  const options=parse(['client','--config','~/.ours-client/profile.json','--integrations',harness]);
+  assert.equal(options.scope,'client');assert.equal(options.operation,'install');
+  assert.deepEqual(options.integrations,[harness]);assert.equal(options.config,'/home/fixture/.ours-client/profile.json');
+  assert.deepEqual(validateSetupOptions(options,{interactive:false}).integrations,[harness]);
+ }
+});

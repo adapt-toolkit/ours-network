@@ -22,8 +22,9 @@ export const shellQuote = (value) => /^[A-Za-z0-9_./:@%+=,-]+$/.test(value)
 // Harness plugins
 // -----------------------------------------------------------------------------
 
-export const CLAUDE_MARKET = 'adapt-toolkit/ours-claude-marketplace';
-export const CODEX_MARKET = 'adapt-toolkit/ours-codex-marketplace';
+// A Claude marketplace must come from the installer's verified local acquisition.
+export const CLAUDE_MARKET = null;
+export const CODEX_MARKET = null;
 
 export const HARNESSES = [
   { name: 'claude-code', label: 'Claude Code' },
@@ -72,13 +73,10 @@ export const HARNESS_ENV_SUPPORT = {
 
 const manualSteps = {
   'claude-code': (channel) => [
-    `/plugin marketplace add ${CLAUDE_MARKET}`,
-    '/plugin install ours',
+    'ours-install client --config ~/.ours-client/profile.json --integrations claude-code',
   ],
   codex: (channel) => [
-    `codex plugin marketplace add ${CODEX_MARKET}`,
-    'codex plugin add ours@ours-codex-marketplace',
-    `npm i -g ${pkgSpec('codex', channel)}`,
+    'ours-install client --config ~/.ours-client/profile.json --integrations codex',
   ],
   hermes: (channel) => [
     `npm i -g ${pkgSpec('hermes', channel)}`,
@@ -88,16 +86,10 @@ const manualSteps = {
 
 const driveSteps = {
   'claude-code': (channel) => [
-    ['claude', 'plugin', 'marketplace', 'add', CLAUDE_MARKET],
-    ['claude', 'plugin', 'install', 'ours@ours.network'],
+    // No generic marketplace is safe. The orchestrator must supply exactSuite.
+
   ],
-  codex: (channel) => [
-    ['codex', 'plugin', 'marketplace', 'add', CODEX_MARKET],
-    ['codex', 'plugin', 'add', 'ours@ours-codex-marketplace'],
-    // Product requirement in v2 and kept: choosing the Codex plugin also installs the
-    // ours-codex live launcher, in the same step.
-    ['npm', 'i', '-g', pkgSpec('codex', channel)],
-  ],
+  codex: () => [],
   // Hermes has no driven CLI: nothing here ever calls a `hermes` binary. Its
   // plugin install is npm + ours-hermes-install, which writes ~/.hermes.
   // --skip-daemon because in v3 the daemon is emphatically not ours-mcp's.
@@ -165,7 +157,7 @@ export function planHarnessPlugins({
     const wanted = assumeYes ? true : answers[name] !== false;
     if (!wanted) return { ...base, action: 'skip', reason: 'declined', offerOnRerun: true };
 
-    if (status === 'ok') return { ...base, action: 'drive', steps: driveSteps[name](channel) };
+    if (status === 'ok') return { ...base, action: 'drive', steps: driveSteps[name](channel), ...(['claude-code','codex'].includes(name) ? { requiresExactMarketplace: true } : {}) };
     return {
       ...base,
       action: 'manual',

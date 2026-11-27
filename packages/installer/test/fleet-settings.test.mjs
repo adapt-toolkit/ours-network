@@ -62,3 +62,11 @@ test('per-job allows distinct models and subscribed harnesses', () => {
   value.models.review = { harness: 'claude-code', session: 'acp', model: 'claude-opus-5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] };
   assert.equal(validateFleetSettings(value), value);
 });
+test('optional runtime choice supports legacy and current init settings without rewriting them',()=>{
+ for(const policy of ['installed-v1','bundled','legacy']) {
+  const legacy={...fixture(),runtimePolicy:policy};assert.equal(validateFleetSettings(legacy),legacy);
+  const modern={subscriptions:['codex'],assignmentStrategy:'one-model',runtimePolicy:policy,models:Object.fromEntries(['development','review','coordination'].map(work=>[work,{harness:'codex',session:'acp',model:'gpt-6.1-sol',effort:'medium'}]))};
+  assert.equal(validateFleetSettings(modern),modern);
+ }
+ assert.throws(()=>validateFleetSettings({...fixture(),runtimePolicy:'automatic-latest'}),/runtimePolicy/);
+});
